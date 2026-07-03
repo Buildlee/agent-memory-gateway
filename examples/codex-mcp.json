@@ -1,0 +1,12 @@
+{
+  "mcp_servers": {
+    "shared-memory": {
+      "command": "memory-sidecar-mcp",
+      "env": {
+        "MEMORY_GATEWAY_URL": "http://127.0.0.1:8787",
+        "MEMORY_AGENT_ID": "codex",
+        "MEMORY_PROFILE": "default"
+      }
+    }
+  }
+}
