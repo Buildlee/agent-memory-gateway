@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-memory-gateway"
+version = "0.1.0"
+description = "面向 Codex、Hermes Agent、OpenClaw 等多 Agent 的共享记忆 Gateway 原型"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Agent Memory Gateway contributors" }]
+keywords = ["agent", "memory", "mcp", "hermes", "codex", "openclaw"]
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0.0"]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+memory-gateway = "agent_memory_gateway.gateway:main"
+memory-sidecar-mcp = "agent_memory_gateway.sidecar_mcp:main"
+memory-import = "agent_memory_gateway.importer:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
