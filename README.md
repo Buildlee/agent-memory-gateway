@@ -181,7 +181,7 @@ memory-import scan --source .\some-memory-folder --batch import_2026_07_03
 
 ## 设计文档
 
-- `docs/design.md`
+- `docs/design-v2.md`：生产化设计、权限模型、同步协议与实施顺序
 - `docs/rationale.md`
 - `docs/importing-existing-memory.md`
 
