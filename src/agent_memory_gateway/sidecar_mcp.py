@@ -18,10 +18,22 @@ def main() -> None:
     client = get_shared_sidecar()
 
     @mcp.tool()
-    def memory_context(query: str, workspace_id: str = "default", max_items: int = 8) -> str:
+    def memory_context(
+        query: str,
+        workspace_id: str = "default",
+        max_items: int = 8,
+        max_tokens: int = 1200,
+    ) -> str:
         """获取当前任务可注入的共享记忆上下文。"""
 
-        result = client.context({"query": query, "workspace_id": workspace_id, "max_items": max_items})
+        result = client.context(
+            {
+                "query": query,
+                "workspace_id": workspace_id,
+                "max_items": max_items,
+                "max_tokens": max_tokens,
+            }
+        )
         return result.get("context_pack", json.dumps(result, ensure_ascii=False))
 
     @mcp.tool()
