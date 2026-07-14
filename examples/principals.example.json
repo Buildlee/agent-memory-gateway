@@ -1,0 +1,19 @@
+{
+  "principals": [
+    {
+      "token_sha256": "REPLACE_WITH_SHA256_OF_A_RANDOM_TOKEN",
+      "tenant_id": "personal",
+      "user_id": "default",
+      "device_id": "windows-pc",
+      "agent_installation_id": "codex-windows",
+      "workspace_ids": ["HermesStudio"],
+      "capabilities": [
+        "memory.read_context",
+        "memory.search",
+        "memory.write_event",
+        "memory.feedback",
+        "memory.forget"
+      ]
+    }
+  ]
+}

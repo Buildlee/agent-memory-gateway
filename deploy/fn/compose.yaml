@@ -1,0 +1,111 @@
+name: memory-gateway
+
+x-gateway-security: &gateway-security
+  user: "1000:1001"
+  read_only: true
+  tmpfs:
+    - /tmp:mode=1777,size=32m
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  pids_limit: 128
+  logging:
+    driver: local
+    options:
+      max-size: 10m
+      max-file: "3"
+
+x-gateway-secret: &gateway-secret
+  volumes:
+    - type: bind
+      source: ${MEMORY_GATEWAY_SECRETS_FILE:?必须指定宿主机上的只读 Gateway secret 文件}
+      target: /run/secrets/metadata.env
+      read_only: true
+
+services:
+  gateway:
+    <<: [*gateway-security, *gateway-secret]
+    build:
+      context: ../..
+      dockerfile: deploy/fn/Dockerfile
+    image: agent-memory-gateway:0.1.0
+    restart: unless-stopped
+    command: ["memory-gateway", "--host", "0.0.0.0", "--port", "8787"]
+    environment:
+      MEMORY_GATEWAY_SECRETS_FILE: /run/secrets/metadata.env
+      MEMORY_METADATA_POOL_MIN_SIZE: "1"
+      MEMORY_METADATA_POOL_MAX_SIZE: "4"
+      MEMORY_GBRAIN_POOL_MIN_SIZE: "1"
+      MEMORY_GBRAIN_POOL_MAX_SIZE: "2"
+      MEMORY_WORKER_HEARTBEAT_MAX_SECONDS: ${MEMORY_WORKER_HEARTBEAT_MAX_SECONDS:-30}
+    expose:
+      - "8787"
+    networks:
+      - backend
+      - ingress
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "from urllib.request import urlopen; response=urlopen('http://127.0.0.1:8787/health/ready', timeout=2); assert response.status == 200"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+
+  worker:
+    <<: [*gateway-security, *gateway-secret]
+    image: agent-memory-gateway:0.1.0
+    restart: unless-stopped
+    command: ["memory-gateway", "reconcile", "--forever", "--poll-interval-seconds", "5"]
+    environment:
+      MEMORY_GATEWAY_SECRETS_FILE: /run/secrets/metadata.env
+      MEMORY_WORKER_METADATA_POOL_MIN_SIZE: "1"
+      MEMORY_WORKER_METADATA_POOL_MAX_SIZE: "2"
+      MEMORY_WORKER_GBRAIN_POOL_MIN_SIZE: "1"
+      MEMORY_WORKER_GBRAIN_POOL_MAX_SIZE: "2"
+    networks:
+      - backend
+
+  proxy:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    pids_limit: 128
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    environment:
+      MEMORY_GATEWAY_PUBLIC_NAME: ${MEMORY_GATEWAY_PUBLIC_NAME:?必须指定内网 HTTPS 名称或地址}
+    ports:
+      - "${MEMORY_GATEWAY_BIND_ADDRESS:-127.0.0.1}:${MEMORY_GATEWAY_HTTPS_PORT:-8443}:8443"
+    volumes:
+      - type: bind
+        source: ./Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+      - caddy_data:/data
+      - caddy_config:/config
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 33554432
+    networks:
+      - ingress
+
+networks:
+  backend:
+    external: true
+    name: ${MEMORY_GATEWAY_BACKEND_NETWORK:-memory-backend}
+  ingress:
+    name: memory-gateway-ingress
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

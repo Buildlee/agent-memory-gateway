@@ -1,198 +1,146 @@
 # Agent Memory Gateway
 
-一个面向多 Agent、多设备的共享记忆系统原型。
+一个可自托管的多 Agent 共享记忆底座。它让 Codex、Hermes、OpenClaw、Cursor、Claude Code 或自研 Agent 在明确授权的前提下，共用长期记忆，同时保留设备、工作区和 Agent 的边界。
 
-这个项目来自一个很直接的问题：当同一个人同时使用 Hermes Agent、Codex、OpenClaw、Claude Code、Cursor 或自研 agent 时，记忆很快会被拆散在不同电脑、不同工具、不同会话里。每个 agent 都“记得一点”，但没有一个地方能统一判断哪些记忆可靠、哪些已经过期、哪些只属于某台电脑、哪些可以跨 agent 共享。
+## 它解决什么问题
 
-本项目的目标是做一个通用、低配置、可自托管的共享记忆底座：
+多 Agent 工作时，长期记忆通常散落在不同工具、电脑和会话里。直接共用一个数据库又会带来三个问题：权限无法控制、过时信息无法处理、Agent 可能把不可信文本当成指令。
+
+Agent Memory Gateway 将这件事拆开处理：
+
+- Agent 通过 MCP 或 HTTP 写入和检索记忆；
+- 本机 Sidecar 保存离线队列并管理本机凭据；
+- Gateway 负责身份、授权、审计、幂等和同步；
+- 记忆进入长期库前可经过敏感信息过滤、冲突审核和人工确认；
+- 每次召回都先按主体和作用域过滤，不能越权读取。
 
 ```text
-Codex / Hermes Agent / OpenClaw / 其他 Agent
-        |
-        | MCP / HTTP
-        v
-本机 Memory Sidecar
-        |
-        | 局域网 / Tailscale / WireGuard / SSH Tunnel
-        v
-私有 Memory Gateway
-        |
-        +-- 作用域隔离
-        +-- 冲突处理
-        +-- 遗忘曲线
-        +-- 记忆结晶
-        +-- 本地旧记忆导入
-        |
-        +-- SQLite 原型存储
-        +-- 后续可接 PostgreSQL + pgvector / Mem0 / Graphiti
+任意 MCP Agent
+       |
+       | 本机 MCP / HTTP
+       v
+Memory Sidecar
+       |
+       | HTTPS 或受保护的内网连接
+       v
+Memory Gateway  ---->  元数据与审计库
+       |
+       +------------->  长期记忆后端（可选）
 ```
 
-## 为什么做这个
+## 已实现的能力
 
-我们萌生这个想法，是因为多 agent 工作流里出现了几个反复问题：
+- HTTP Gateway：健康检查、事件写入、搜索、上下文包、反馈和遗忘接口。
+- MCP 工具：上下文、写入、搜索、反馈、遗忘、同步状态、清理确认、审核和结晶重算。
+- 设备配对、Ed25519 设备证明、短期访问令牌、刷新轮换和撤销 epoch。
+- SQLite 本地原型，以及 PostgreSQL 元数据库、迁移检查和连接池。
+- 加密事件账本、固定终态回执、重复提交幂等、跨库对账和死信重试。
+- 加密 Sidecar outbox、离线 push/pull、同步游标、墓碑和近期缓存。
+- 候选审核、冲突处理、补偿撤销、生命周期历史和记忆结晶。
+- 敏感信息分类、拒绝指纹、命令式内容隔离和结构化引用返回。
+- 可选的 PostgreSQL 长期记忆后端适配器与迁移校验。
 
-- Hermes、Codex、OpenClaw 等工具各自有上下文，但长期记忆不共享。
-- 多台电脑上安装 agent 后，设备路径、端口、项目状态容易混在一起。
-- 旧记忆可能和新决策冲突，例如之前考虑 Obsidian 同步，后来决定不把 Obsidian 放进核心链路。
-- 直接共享一个向量库太危险，缺少权限、来源、作用域、冲突退役和遗忘机制。
-- 用户希望配置尽量简单：本机只接一个 MCP，中心服务放在 NAS 或内网机器上。
+这是一套可运行的基础设施，不是“自动把所有聊天记录存起来”的工具。是否形成长期记忆，始终应由规则和用户确认控制。
 
-所以这里选择了 **Memory Gateway + Memory Sidecar + MCP/HTTP** 的组合式架构。
+## 快速开始：本地原型
 
-## 当前状态
-
-这是一个最小可运行原型，适合用于验证架构和继续开发。
-
-已包含：
-
-- HTTP Memory Gateway。
-- SQLite 存储。
-- 简单记忆写入、搜索、上下文包生成。
-- 遗忘曲线评分。
-- 记忆反馈与遗忘接口。
-- 本地 Sidecar outbox。
-- MCP server 入口。
-- 本地 Markdown / Hermes 记忆导入扫描器。
-
-尚未包含：
-
-- PostgreSQL + pgvector 正式后端。
-- Mem0 adapter。
-- Graphiti / Zep 时间图谱 adapter。
-- Web UI。
-- 完整权限 UI。
-
-## 快速开始
-
-### 1. 创建虚拟环境
+要求：Python 3.10 或更高版本。Windows 环境可直接使用 PowerShell。
 
 ```powershell
-cd agent-memory-gateway
+git clone https://github.com/Buildlee/agent-memory-gateway.git
+Set-Location agent-memory-gateway
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[mcp]"
 ```
 
-### 2. 启动 Gateway
+创建一个仅在本机保存的主体配置。先生成随机令牌及其 SHA-256：
 
 ```powershell
-memory-gateway --host 127.0.0.1 --port 8787 --db .\memory.db
+$token = [guid]::NewGuid().ToString("N")
+$bytes = [Text.Encoding]::UTF8.GetBytes($token)
+$tokenHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+$tokenHash
 ```
 
-健康检查：
+将 `examples/principals.example.json` 复制为 `principals.local.json`，填入令牌哈希以及你的设备、Agent、工作区边界。该文件已被忽略，不能提交。
+
+启动本地 Gateway：
 
 ```powershell
-curl http://127.0.0.1:8787/v1/health
+memory-gateway --host localhost --port 8787 --db .\memory.db --principals-file .\principals.local.json
 ```
 
-### 3. 启动 MCP Sidecar
+另开一个终端做健康检查：
 
 ```powershell
-$env:MEMORY_GATEWAY_URL="http://127.0.0.1:8787"
-memory-sidecar-mcp
+Invoke-WebRequest http://localhost:8787/v1/health
 ```
 
-在支持 MCP 的 agent 中，将它配置为一个 stdio MCP server。
+SQLite 模式用于开发和演示。多设备或生产部署请使用 PostgreSQL 元数据库，并先执行显式的 `check`、`apply`、`verify` 迁移流程，详见 [部署说明](docs/deployment.md)。
 
-示例见：
+## 接入 MCP Agent
 
-- `examples/codex-mcp.json`
-- `examples/hermes-mcp.json`
-
-## HTTP API
-
-### 写入事件
-
-```http
-POST /v1/events
-```
-
-```json
-{
-  "content": "用户默认要求文档、报告、代码注释使用中文，除非特别说明。",
-  "scope": "user",
-  "kind": "preference",
-  "agent_id": "codex",
-  "device_id": "desktop-4090",
-  "workspace_id": "HermesStudio"
-}
-```
-
-### 搜索记忆
-
-```http
-POST /v1/memories/search
-```
-
-```json
-{
-  "query": "共享记忆系统的默认架构是什么？",
-  "workspace_id": "HermesStudio",
-  "limit": 8
-}
-```
-
-### 获取上下文包
-
-```http
-POST /v1/context
-```
-
-```json
-{
-  "query": "帮我继续设计多 agent 共享记忆系统",
-  "agent_id": "hermes-agent",
-  "device_id": "desktop-4090",
-  "workspace_id": "HermesStudio",
-  "max_items": 8
-}
-```
-
-## MCP Tools
-
-MCP server 暴露以下工具：
-
-- `memory_context`
-- `memory_remember`
-- `memory_search`
-- `memory_feedback`
-- `memory_forget`
-- `memory_sync_status`
-
-## 本地旧记忆导入
-
-大量旧记忆不能直接写入 active memory。本项目提供导入扫描器，先进入暂存预览。
+先启动唯一的本机 Sidecar：
 
 ```powershell
-memory-import scan --source .\some-memory-folder --batch import_2026_07_03
+.\scripts\start-sidecar.ps1 `
+  -GatewayUrl "https://memory-gateway.example.internal" `
+  -DeviceId "your-registered-device-id" `
+  -AllowedAgents "your-agent-installation-id"
 ```
 
-导入流程：
+然后复制一个示例配置并替换两处占位符：项目路径和 Agent 安装实例 ID。
 
-```text
-本地已有记忆
-  -> 扫描
-  -> 切块
-  -> 敏感信息检测
-  -> 作用域推断
-  -> 生成预览 JSONL
-  -> 后续人工确认或批量导入
+- Codex：`examples/codex-mcp.json`
+- Hermes：`examples/hermes-mcp.json`
+
+MCP 配置只引用启动脚本和 Agent 标识，不能保存 Gateway 令牌、刷新凭据、数据库连接串或 outbox 密钥。Sidecar 只监听本机回环地址；多个 Agent 共用一个 Sidecar，避免产生互相竞争的离线队列。
+
+## MCP 工具
+
+| 工具 | 用途 |
+|---|---|
+| `memory_context` | 按当前任务召回经过授权的上下文包 |
+| `memory_remember` | 提交一条候选记忆或明确记忆 |
+| `memory_search` | 搜索当前作用域内的记忆 |
+| `memory_feedback` / `memory_forget` | 调整记忆质量或请求遗忘 |
+| `memory_sync_status` | 查看本机同步状态 |
+| `memory_cleanup_confirmed` | 用户确认后清理已同步的本地密文 |
+| `memory_list_reviews` / `memory_resolve_review` / `memory_revert_review` | 审核、处理和撤销候选 |
+| `memory_rebuild_crystal` | 显式重建一页结晶记忆 |
+
+## 安全边界
+
+- 不把密码、令牌、私钥、连接串或本机凭据写入 Git、MCP 配置、日志或长期记忆。
+- Gateway 不信任请求体里自称的用户、设备、Agent 或工作区；这些身份由凭据和绑定关系决定。
+- 记忆先过权限过滤，再进入检索候选集。
+- 不可信的命令式文本不会作为系统指令返回给 Agent。
+- 本地离线队列必须加密；缺少密钥时拒绝启动，而不是退回为明文存储。
+- 内网部署也使用 HTTPS。外网访问应走 VPN、零信任网络或受控隧道，不直接暴露数据库。
+
+## 运行与验证
+
+安装开发依赖后执行完整测试：
+
+```powershell
+pip install -e ".[mcp,postgres,dev]"
+python -m unittest discover -s tests
+python -m compileall -q src
 ```
 
-## 设计文档
+对 PostgreSQL 或外部记忆后端执行变更前，先运行只读检查；确认后再执行迁移。迁移脚本只允许新增，不应改写已经在现场登记的版本。
 
-- `docs/design-v2.md`：生产化设计、权限模型、同步协议与实施顺序
-- `docs/rationale.md`
-- `docs/importing-existing-memory.md`
+## 文档
 
-## 默认安全原则
+- [总体设计](docs/design-v2.md)：职责边界、数据流、安全模型和同步协议。
+- [部署说明](docs/deployment.md)：本地、容器化和生产部署检查表。
+- `schema/`：元数据库与可选后端适配器的基线和增量迁移。
+- `scripts/`：密钥准备、数据库迁移、部署和验证脚本。
 
-- Gateway 默认只监听 `127.0.0.1`。
-- NAS 或内网部署时，不建议直接暴露公网。
-- 远程访问建议使用 Tailscale、WireGuard 或 SSH tunnel。
-- API key、token、密码、私钥不会进入长期记忆。
-- 当前用户指令优先于所有历史记忆。
-- 不同 device/workspace/agent scope 默认隔离。
+## 不提交的本地文件
+
+`.gitignore` 已排除本机环境文件、证书和密钥、数据库文件、主体配置以及现场操作记录。请只提交示例文件和脱敏后的配置说明。
 
 ## 许可证
 
