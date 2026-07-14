@@ -12,5 +12,16 @@ dist/
 build/
 *.egg-info/
 .env
+.env.*
+!.env.example
+!**/.env.example
 outbox.db
 import-preview-*.jsonl
+principals.json
+principals.*.local.json
+*.pem
+*.key
+*.pfx
+*.p12
+docs/operation-log.md
+docs/stage-status.md

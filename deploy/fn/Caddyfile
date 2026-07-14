@@ -1,0 +1,11 @@
+{
+  admin off
+  auto_https disable_redirects
+  default_sni {$MEMORY_GATEWAY_PUBLIC_NAME}
+  skip_install_trust
+}
+
+https://{$MEMORY_GATEWAY_PUBLIC_NAME}:8443 {
+  tls internal
+  reverse_proxy gateway:8787
+}
