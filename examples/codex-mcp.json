@@ -7,9 +7,9 @@
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "C:\\path\\to\\agent-memory-gateway\\scripts\\start-sidecar-mcp.ps1",
+        "C:\\work\\agent-memory-gateway\\scripts\\start-sidecar-mcp.ps1",
         "-AgentInstallationId",
-        "codex-your-agent-installation-id"
+        "codex-desktop"
       ]
     }
   }

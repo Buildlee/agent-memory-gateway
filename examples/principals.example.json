@@ -1,12 +1,27 @@
 {
   "principals": [
     {
-      "token_sha256": "REPLACE_WITH_SHA256_OF_A_RANDOM_TOKEN",
+      "token_sha256": "REPLACE_WITH_A_64_CHARACTER_LOWERCASE_SHA256_HEX_VALUE",
       "tenant_id": "personal",
       "user_id": "default",
-      "device_id": "windows-pc",
-      "agent_installation_id": "codex-windows",
-      "workspace_ids": ["HermesStudio"],
+      "device_id": "local-pc",
+      "agent_installation_id": "codex-desktop",
+      "workspace_ids": ["shared-workspace"],
+      "capabilities": [
+        "memory.read_context",
+        "memory.search",
+        "memory.write_event",
+        "memory.feedback",
+        "memory.forget"
+      ]
+    },
+    {
+      "token_sha256": "REPLACE_WITH_A_SECOND_64_CHARACTER_LOWERCASE_SHA256_HEX_VALUE",
+      "tenant_id": "personal",
+      "user_id": "default",
+      "device_id": "local-pc",
+      "agent_installation_id": "hermes-desktop",
+      "workspace_ids": ["shared-workspace"],
       "capabilities": [
         "memory.read_context",
         "memory.search",
