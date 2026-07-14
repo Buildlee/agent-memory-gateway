@@ -90,7 +90,7 @@ SQLite 模式用于开发和演示。多设备或生产部署请使用 PostgreSQ
   -AllowedAgents "your-agent-installation-id"
 ```
 
-然后复制一个示例配置并替换两处占位符：项目路径和 Agent 安装实例 ID。
+然后从 `examples/` 选择与你的使用方式相符的配置。先看 [示例使用说明](examples/README.md)，再替换项目路径和 Agent 安装实例 ID。
 
 - Codex：`examples/codex-mcp.json`
 - Hermes：`examples/hermes-mcp.json`
@@ -110,7 +110,7 @@ MCP 配置只引用启动脚本和 Agent 标识，不能保存 Gateway 令牌、
 | `memory_list_reviews` / `memory_resolve_review` / `memory_revert_review` | 审核、处理和撤销候选 |
 | `memory_rebuild_crystal` | 显式重建一页结晶记忆 |
 
-## 安全边界
+## 使用时要守住的安全规则
 
 - 不把密码、令牌、私钥、连接串或本机凭据写入 Git、MCP 配置、日志或长期记忆。
 - Gateway 不信任请求体里自称的用户、设备、Agent 或工作区；这些身份由凭据和绑定关系决定。
@@ -135,8 +135,9 @@ python -m compileall -q src
 
 - [总体设计](docs/design-v2.md)：职责边界、数据流、安全模型和同步协议。
 - [部署说明](docs/deployment.md)：本地、容器化和生产部署检查表。
+- [配置示例](examples/README.md)：本地原型、Codex、Hermes 与 OpenClaw 的接入方式。
 - `schema/`：元数据库与可选后端适配器的基线和增量迁移。
-- `scripts/`：密钥准备、数据库迁移、部署和验证脚本。
+- `scripts/`：Sidecar 启动、MCP 接入、部署与验证脚本。
 
 ## 不提交的本地文件
 
