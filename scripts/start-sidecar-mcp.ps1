@@ -3,6 +3,9 @@ param(
     [Parameter(Mandatory)]
     [string]$AgentInstallationId,
 
+    [Parameter(Mandatory)]
+    [string]$DefaultWorkspace,
+
     [string]$SidecarKeyFile = "$env:LOCALAPPDATA\memory-gateway\secrets\pc-sidecar.env",
 
     [int]$Port = 8766,
@@ -14,6 +17,9 @@ $ErrorActionPreference = "Stop"
 
 if ($AgentInstallationId -notmatch "^[A-Za-z0-9_.@:-]+$") {
     throw "AgentInstallationId 必须是已登记的 Agent 安装实例 ID"
+}
+if ($DefaultWorkspace -notmatch "^[A-Za-z0-9_.@:-]+$") {
+    throw "DefaultWorkspace 必须是已登记的工作区 ID"
 }
 if ($Port -lt 1024 -or $Port -gt 65535) {
     throw "Port 必须在 1024 到 65535 之间"
@@ -47,6 +53,7 @@ if (-not $keyValues.ContainsKey("MEMORY_OUTBOX_KEY")) {
 }
 
 $env:MEMORY_AGENT_INSTALLATION_ID = $AgentInstallationId
+$env:MEMORY_DEFAULT_WORKSPACE = $DefaultWorkspace
 $env:MEMORY_OUTBOX_KEY = $keyValues["MEMORY_OUTBOX_KEY"]
 $env:MEMORY_SIDECAR_PORT = [string]$Port
 

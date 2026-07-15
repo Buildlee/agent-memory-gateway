@@ -9,6 +9,9 @@ param(
     [Parameter(Mandatory)]
     [string]$DeviceId,
 
+    [Parameter(Mandatory)]
+    [string]$DefaultWorkspace,
+
     [string]$CredentialTarget = "AgentMemoryGateway/local-device",
 
     [string]$SidecarKeyFile = "$env:LOCALAPPDATA\memory-gateway\secrets\pc-sidecar.env",
@@ -38,6 +41,9 @@ if ($AllowedAgents -notmatch "^[A-Za-z0-9_.@,:-]+$") {
 if ($DeviceId -notmatch "^[A-Za-z0-9_.@:-]+$") {
     throw "DeviceId 必须是已登记的设备 ID"
 }
+if ($DefaultWorkspace -notmatch "^[A-Za-z0-9_.@:-]+$") {
+    throw "DefaultWorkspace 必须是已登记的工作区 ID"
+}
 if ($Port -lt 1024 -or $Port -gt 65535) {
     throw "Port 必须在 1024 到 65535 之间"
 }
@@ -66,6 +72,7 @@ if ($gatewayUri.Scheme -eq "https" -and -not [string]::IsNullOrWhiteSpace($Gatew
 $env:MEMORY_REFRESH_CREDENTIAL_TARGET = $CredentialTarget
 $env:MEMORY_SIDECAR_ALLOWED_AGENTS = $AllowedAgents
 $env:MEMORY_DEVICE_ID = $DeviceId
+$env:MEMORY_DEFAULT_WORKSPACE = $DefaultWorkspace
 $env:MEMORY_OUTBOX_KEY = $keyValues["MEMORY_OUTBOX_KEY"]
 $env:MEMORY_OUTBOX_KEY_VERSION = $keyValues["MEMORY_OUTBOX_KEY_VERSION"]
 $env:MEMORY_HOME = $MemoryHome

@@ -11,6 +11,9 @@ param(
     [Parameter(Mandatory)]
     [string]$DeviceId,
 
+    [Parameter(Mandatory)]
+    [string]$DefaultWorkspace,
+
     [string]$CredentialTarget = "AgentMemoryGateway/local-device",
 
     [string]$SidecarKeyFile = "$env:LOCALAPPDATA\memory-gateway\secrets\pc-sidecar.env",
@@ -38,6 +41,9 @@ if ($AllowedAgents -notmatch "^[A-Za-z0-9_.@,:-]+$") {
 }
 if ($DeviceId -notmatch "^[A-Za-z0-9_.@:-]+$") {
     throw "DeviceId 必须是已登记的设备 ID"
+}
+if ($DefaultWorkspace -notmatch "^[A-Za-z0-9_.@:-]+$") {
+    throw "DefaultWorkspace 必须是已登记的工作区 ID"
 }
 if ($Port -lt 1024 -or $Port -gt 65535) {
     throw "Port 必须在 1024 到 65535 之间"
@@ -75,6 +81,7 @@ $arguments = @(
     "-GatewayUrl", (Quote-TaskArgument $GatewayUrl),
     "-AllowedAgents", (Quote-TaskArgument $AllowedAgents),
     "-DeviceId", (Quote-TaskArgument $DeviceId),
+    "-DefaultWorkspace", (Quote-TaskArgument $DefaultWorkspace),
     "-CredentialTarget", (Quote-TaskArgument $CredentialTarget),
     "-SidecarKeyFile", (Quote-TaskArgument $SidecarKeyFile),
     "-MemoryHome", (Quote-TaskArgument $MemoryHome),
@@ -102,6 +109,7 @@ Register-ScheduledTask @registration | Out-Null
     user = $taskUser
     trigger = "AtLogOn"
     gateway_url = $GatewayUrl
+    default_workspace = $DefaultWorkspace
     gateway_ca_certificate = $GatewayCaCertificate
     listener = "localhost:$Port"
 }

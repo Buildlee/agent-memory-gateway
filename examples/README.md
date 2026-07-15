@@ -1,6 +1,8 @@
 # 从这里选择你的接入方式
 
-`examples/` 里的文件都使用虚构的名称和路径，不含任何真实账号、地址或密钥。第一次配置时，先确定你是在做本地原型，还是接入已经部署好的共享服务；两种方式的准备工作不同。
+`examples/` 里的文件都使用虚构的名称和路径，不含任何真实账号、地址或密钥。第一次使用时，建议先跑一遍 [快速上手](../docs/quickstart.md) 的本地演示：它会自动验证两个模拟 Agent 的共享检索，不需要手工生成令牌哈希。
+
+这里的示例用于两类情况：想研究本地原型的 HTTP 请求，或把真实 Codex、Hermes、OpenClaw 接到已经部署好的共享服务。真实服务的设备登记、凭据和工作区授权始终由管理端完成，示例文件只描述客户端如何连接本机 Sidecar。
 
 ## 先分清三个名字
 
@@ -60,7 +62,8 @@
    .\scripts\start-sidecar.ps1 `
      -GatewayUrl "https://memory-gateway.example.internal" `
      -DeviceId "local-pc" `
-     -AllowedAgents "codex-desktop,hermes-desktop"
+     -AllowedAgents "codex-desktop,hermes-desktop" `
+     -DefaultWorkspace "shared-workspace"
    ```
 
 4. Sidecar 保持运行后，再把对应 MCP 配置复制到 Agent 的设置中。MCP 进程只连本机 Sidecar，不应看到 Gateway 的刷新凭据、数据库地址或证书私钥。
@@ -71,10 +74,12 @@
 
 | 使用者 | 复制的文件 | 需要改的两项 |
 |---|---|---|
-| Codex | [codex-mcp.json](codex-mcp.json) | `start-sidecar-mcp.ps1` 的真实路径、`codex-desktop` 的真实安装实例 ID。 |
-| Hermes | [hermes-mcp.json](hermes-mcp.json) | `start-sidecar-mcp.ps1` 的真实路径、`hermes-desktop` 的真实安装实例 ID。 |
+| Codex | [codex-mcp.json](codex-mcp.json) | `start-sidecar-mcp.ps1` 的真实路径、`codex-desktop` 的真实安装实例 ID、已登记的 `shared-workspace`。 |
+| Hermes | [hermes-mcp.json](hermes-mcp.json) | `start-sidecar-mcp.ps1` 的真实路径、`hermes-desktop` 的真实安装实例 ID、已登记的 `shared-workspace`。 |
 
 两份 JSON 都只描述怎样启动 MCP 桥接进程。替换完成后重启对应 Agent，并调用 `memory_sync_status`。如果 Sidecar 没有运行、密钥文件缺失或 Agent 安装实例 ID 未登记，MCP 会明确报错；先修正这些前置条件，不要把密钥加到 JSON 里。
+
+`DefaultWorkspace` 要和启动 Sidecar 时使用的值完全一致。工具没有传 `workspace_id` 时，这个值就是请求使用的工作区；它不能写成 `default` 之类的占位文本。
 
 ## OpenClaw 的 HTTP 接入
 

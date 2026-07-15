@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib import error, request
 
-from .sidecar_client import SidecarClient
+from .sidecar_client import GatewayHTTPError, GatewayTransportError, SidecarClient
 from .sidecar_auth import SidecarAuthError, WindowsRefreshTokenProvider
 
 
@@ -112,6 +112,13 @@ class _SidecarRPCHandler(BaseHTTPRequestHandler):
             self._json({"result": result})
         except SidecarAuthError as exc:
             self._json({"error": str(exc)}, status=503)
+        except GatewayHTTPError as exc:
+            self._json(
+                {"error": exc.code, "retryable": exc.retryable},
+                status=503 if exc.retryable else 400,
+            )
+        except GatewayTransportError:
+            self._json({"error": "GATEWAY_UNAVAILABLE", "retryable": True}, status=503)
         except (UnicodeError, ValueError, SidecarDaemonError) as exc:
             code = str(exc)
             if not code.isupper():

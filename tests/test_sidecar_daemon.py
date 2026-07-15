@@ -10,6 +10,7 @@ from agent_memory_gateway.sidecar_daemon import (
     create_sidecar_server,
     daemon_auth_token,
 )
+from agent_memory_gateway.sidecar_client import GatewayHTTPError
 
 
 class FakeClient:
@@ -89,6 +90,14 @@ class SidecarDaemonTests(unittest.TestCase):
         self.assertFalse(wrong.health())
         with self.assertRaises(SidecarDaemonError):
             wrong.search({"query": "x"})
+
+    def test_gateway_error_code_is_not_hidden_as_local_internal_error(self):
+        def raise_workspace_error(_payload):
+            raise GatewayHTTPError("WORKSPACE_FORBIDDEN", status=403, retryable=False)
+
+        self.client.search = raise_workspace_error
+        with self.assertRaisesRegex(SidecarDaemonError, "WORKSPACE_FORBIDDEN"):
+            self.proxy.search({"query": "x"})
 
     def test_concurrent_rpc_is_serialized_at_state_owner(self):
         with ThreadPoolExecutor(max_workers=20) as executor:

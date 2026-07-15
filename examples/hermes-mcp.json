@@ -9,7 +9,9 @@
         "-File",
         "C:\\work\\agent-memory-gateway\\scripts\\start-sidecar-mcp.ps1",
         "-AgentInstallationId",
-        "hermes-desktop"
+        "hermes-desktop",
+        "-DefaultWorkspace",
+        "shared-workspace"
       ]
     }
   }
