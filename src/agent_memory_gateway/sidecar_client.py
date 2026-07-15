@@ -206,6 +206,18 @@ class SidecarClient:
     def rebuild_crystal(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/v1/crystals/rebuild", payload)
 
+    def admin_overview(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/v1/admin/overview", payload)
+
+    def list_admin_devices(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/v1/admin/devices/list", payload)
+
+    def list_admin_audit(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/v1/admin/audit/list", payload)
+
+    def list_admin_dead_letters(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/v1/admin/dead-letters/list", payload)
+
     def sync(self, workspace_id: str | None = None) -> dict[str, Any]:
         target_workspace = str(workspace_id or self.default_workspace)
         events = self.outbox.list_events()

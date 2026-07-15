@@ -80,6 +80,8 @@ docker compose --env-file "<受保护环境文件路径>" -f deploy/fn/compose.y
 
 Sidecar 必须只监听本机回环地址。局域网内直连内部 HTTPS 地址；外网访问通过 VPN、零信任网络或受控隧道回到同一网络边界。无论何种网络路径，都不要关闭 TLS 证书校验。
 
+升级 Gateway 管理能力时，要让 Gateway、Worker 和每台需要使用新功能的 Sidecar 使用兼容的发布版本。先完成服务端升级和健康检查，再在维护窗口逐台重启 Sidecar；每台重启后立刻运行只读健康检查。不要用浏览器、脚本或数据库直连绕过旧 Sidecar。
+
 `DefaultWorkspace` 不是示例名称，而是正式登记过的工作区 ID。MCP 配置启动时也要传入同一个值；否则工具没有指定工作区时会直接报错，不会猜测或改用别的工作区。
 
 Codex、Hermes 和 OpenClaw 的配置文件与字段说明见 [examples/README.md](../examples/README.md)。MCP 配置中只保留脚本路径和 Agent 安装实例 ID，密钥仍由本机受保护存储和 Sidecar 管理。

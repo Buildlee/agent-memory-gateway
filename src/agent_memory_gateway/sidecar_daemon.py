@@ -82,6 +82,15 @@ class _SidecarRPCHandler(BaseHTTPRequestHandler):
                 method_impl = getattr(self.client, review_method, None)
                 if callable(method_impl):
                     allowed[review_method] = method_impl
+            for admin_method in (
+                "admin_overview",
+                "list_admin_devices",
+                "list_admin_audit",
+                "list_admin_dead_letters",
+            ):
+                method_impl = getattr(self.client, admin_method, None)
+                if callable(method_impl):
+                    allowed[admin_method] = method_impl
             with self.operation_lock:
                 previous_token = getattr(self.client, "token", None)
                 previous_agent_id = getattr(self.client, "agent_id", None)
@@ -216,6 +225,18 @@ class LocalSidecarProxy:
 
     def rebuild_crystal(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("rebuild_crystal", payload)
+
+    def admin_overview(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("admin_overview", payload)
+
+    def list_admin_devices(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("list_admin_devices", payload)
+
+    def list_admin_audit(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("list_admin_audit", payload)
+
+    def list_admin_dead_letters(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("list_admin_dead_letters", payload)
 
     def sync(self, workspace_id: str | None = None) -> dict[str, Any]:
         return self._call("sync", {"workspace_id": workspace_id})

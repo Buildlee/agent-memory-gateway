@@ -50,6 +50,18 @@ class FakeClient:
     def cleanup_confirmed(self, *, confirmed_by_user):
         return {"status": "cleaned" if confirmed_by_user else "confirmation_required"}
 
+    def admin_overview(self, payload):
+        return {"workspace_id": payload["workspace_id"], "counts": {"pending_reviews": 0}}
+
+    def list_admin_devices(self, payload):
+        return {"workspace_id": payload["workspace_id"], "devices": []}
+
+    def list_admin_audit(self, payload):
+        return {"workspace_id": payload["workspace_id"], "entries": []}
+
+    def list_admin_dead_letters(self, payload):
+        return {"workspace_id": payload["workspace_id"], "dead_letters": []}
+
 
 class FakeTokenProvider:
     def __init__(self):
@@ -98,6 +110,17 @@ class SidecarDaemonTests(unittest.TestCase):
         self.client.search = raise_workspace_error
         with self.assertRaisesRegex(SidecarDaemonError, "WORKSPACE_FORBIDDEN"):
             self.proxy.search({"query": "x"})
+
+    def test_proxy_forwards_read_only_admin_methods(self):
+        overview = self.proxy.admin_overview({"workspace_id": "workspace-a"})
+        devices = self.proxy.list_admin_devices({"workspace_id": "workspace-a"})
+        audit = self.proxy.list_admin_audit({"workspace_id": "workspace-a", "limit": 10})
+        dead_letters = self.proxy.list_admin_dead_letters({"workspace_id": "workspace-a", "limit": 10})
+
+        self.assertEqual(overview["counts"]["pending_reviews"], 0)
+        self.assertEqual(devices["devices"], [])
+        self.assertEqual(audit["entries"], [])
+        self.assertEqual(dead_letters["dead_letters"], [])
 
     def test_concurrent_rpc_is_serialized_at_state_owner(self):
         with ThreadPoolExecutor(max_workers=20) as executor:

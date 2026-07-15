@@ -14,6 +14,14 @@ python -m compileall -q src tests
 
 修改功能前先确认这两项通过。修改后至少运行受影响模块的测试，再跑完整测试集。数据库迁移、容器部署和真实凭据验证属于单独步骤，不能用本地测试代替。
 
+## 持续验证与发布边界
+
+GitHub Actions 会在功能分支和 Pull Request 上运行完整测试、Python 编译、所有公开 PowerShell 脚本的语法检查、公开文件敏感信息扫描和补丁格式检查。它不读取环境文件、证书、数据库、Windows 凭据或现场运维脚本。
+
+安全分类器的专用语料包含故意无效的私钥、令牌和连接串形状，用来证明拦截规则有效。CI 的字面扫描只排除这一份固定测试语料，其他公开文件仍会扫描；对应单元测试会确认这些样例带有明确的无效标记。
+
+CI 通过说明公开代码可合并，不代表已把功能装到正在运行的 Sidecar。需要管理页等新本机能力时，仍要按部署说明在维护窗口更新对应设备，并运行实际只读健康检查。
+
 ## 本地体验脚本
 
 `scripts/setup-local-demo.ps1` 是给第一次体验准备的入口。它会建立仓库内忽略的 `.local-demo-venv`，安装当前项目，然后调用 `scripts/start-local-demo.ps1` 启动只监听 `127.0.0.1` 的 SQLite Gateway。演示主体、随机令牌、数据库和日志都保存在仓库外的 `DemoHome` 中。
@@ -81,3 +89,22 @@ python -m compileall -q src tests
 ```
 
 测试覆盖中文匹配、文本归一化去重、排序稳定性、多样性、预算上限、未授权事实过滤和离线 Sidecar 行为。提交前还要运行 `git diff --check`，并扫描本次改动是否带入真实域名、内网地址、账号、令牌、私钥或本机路径。
+
+## 第八阶段：管理接口的回归点
+
+管理端的数据先由 Gateway 统一授权，再通过现有 Sidecar 取回。浏览器或 MCP 不能绕过这条路径直接读 PostgreSQL。
+
+```powershell
+python -m unittest tests.test_admin_service tests.test_gateway_admin
+python -m unittest tests.test_sidecar_daemon tests.test_sidecar_mcp
+python -m unittest tests.test_admin_check tests.test_admin_console
+python -m compileall -q src tests
+```
+
+- 管理接口都要求 `memory.manage`，没有该权限必须返回 `CAPABILITY_FORBIDDEN`。
+- 概览只返回数量和 worker 心跳；设备列表不返回公钥或任何凭据；审计列表不返回 `details_json` 和记忆正文；死信列表只返回稳定 ID、错误码、类别和时间。
+- 每个查询都按调用者的租户、用户和工作区过滤。工作区缺失或不在授权范围内时，不能退回任何默认工作区。
+- Sidecar RPC 只允许已声明的管理方法，并继续使用现有短期令牌和本机回环鉴权。
+- `memory-admin-console` 只能监听回环地址。首次 URL 里的 session token 只换取一次 HttpOnly Cookie；页面源码、API 响应和测试断言都不能包含本机 key、Gateway 令牌或刷新凭据。会改变审核状态的请求必须带 `confirmed_by_user=true`、revision 和幂等键。
+
+`memory-admin-check` 是给计划任务或外部监控使用的只读命令。它从 Sidecar 获取概览，检测 worker 心跳、待重试事件和未处理死信，并输出不含正文或凭据的 JSON。状态正常时退出码为 `0`；发现运行问题时为 `1`；本机 Sidecar、配置或授权不可用时为 `2`。Windows 可通过 `scripts/check-admin-health.ps1` 启动它；脚本只从受保护的本机文件读取 Sidecar key，不会把 key 写入输出。

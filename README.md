@@ -8,6 +8,7 @@
 <p align="center">
   <a href="#三分钟体验"><img src="https://img.shields.io/badge/本地体验-无需_API_key-2ea44f" alt="本地体验无需 API key"></a>
   <a href="#支持的接入方式"><img src="https://img.shields.io/badge/MCP-Codex%20%7C%20Hermes-5a67d8" alt="支持 MCP"></a>
+  <a href="https://github.com/Buildlee/agent-memory-gateway/actions/workflows/validate.yml"><img src="https://github.com/Buildlee/agent-memory-gateway/actions/workflows/validate.yml/badge.svg" alt="自动验证"></a>
   <a href="#许可证"><img src="https://img.shields.io/badge/license-MIT-4b5563" alt="MIT License"></a>
   <a href="#三分钟体验"><img src="https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white" alt="Python 3.10 or newer"></a>
 </p>
@@ -23,6 +24,7 @@ Agent Memory Gateway 是一个可自托管的共享记忆服务。它适合 Code
 | 先验证两个 Agent 能否共用一条记忆 | [三分钟体验](#三分钟体验) | Python 3.10 或更高版本 |
 | 把 Codex、Hermes 或 OpenClaw 接到已部署的 Gateway | [连接正式共享服务](#连接正式共享服务) | 已登记的设备、Agent 和工作区 |
 | 在自己的服务器或内网部署服务 | [部署说明](docs/deployment.md) | PostgreSQL、HTTPS 入口和管理权限 |
+| 日常查看运行状态、排查重试或死信 | [运维与恢复](docs/operations.md) | 已授权的管理 Agent 与本机 Sidecar |
 | 修改功能、运行回归测试 | [开发与验证](docs/development.md) | Python 开发环境 |
 
 ## 三分钟体验
@@ -99,6 +101,16 @@ Stop-Process -Id <脚本输出的 process_id>
 
 4. 在 Agent 中先调用 `memory_sync_status`，确认本机 Sidecar 在线；再由一个 Agent 写入经过确认的信息，另一个已获授权的 Agent 使用 `memory_search` 或 `memory_context` 检索它。
 
+5. 需要人工审核或排查运行状态时，启动本机管理页。页面只监听 `127.0.0.1`，浏览器不保存 Gateway 令牌。
+
+   ```powershell
+   .\scripts\start-admin-console.ps1 `
+     -AgentInstallationId "codex-admin" `
+     -DefaultWorkspace "shared-workspace"
+   ```
+
+   脚本会打印一个只能使用一次的本机地址。打开后可以查看概览、待审核候选、设备授权、近期审计和未处理死信；确认、拒绝、归档、保留双方或取代冲突记忆时，页面会再次要求明确确认。
+
 `DefaultWorkspace` 必须是已经授权给当前设备和 Agent 的工作区。MCP 调用省略 `workspace_id` 时，会使用这个值；若未配置，工具会明确返回 `WORKSPACE_ID_REQUIRED`，不会猜测一个工作区。
 
 完整的参数说明、内部 CA、容器部署、迁移检查和上线核对见 [部署说明](docs/deployment.md) 与 [示例说明](examples/README.md)。
@@ -151,6 +163,7 @@ flowchart LR
 - [快速上手](docs/quickstart.md)：本地体验、正式接入和常见问题。
 - [总体设计](docs/design-v2.md)：身份、权限、同步、审核和检索的实现边界。
 - [部署说明](docs/deployment.md)：PostgreSQL、容器、HTTPS、迁移和上线核对。
+- [日常运维与恢复](docs/operations.md)：本机管理页、只读运行检查、死信排查和恢复演练。
 - [开发与验证](docs/development.md)：测试命令、检索口径和修改约定。
 - [导入已有记忆](docs/importing-existing-memory.md)：把已确认的既有资料迁入共享库。
 - [接入示例](examples/README.md)：Codex、Hermes、OpenClaw 与本地原型配置。
