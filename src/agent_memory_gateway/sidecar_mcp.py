@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 
 from .sidecar_daemon import get_shared_sidecar
+
+
+def _active_workspace_id(workspace_id: str | None) -> str:
+    """解析 MCP 请求的工作区，缺省时使用 Sidecar 的明确配置。"""
+
+    selected = str(workspace_id or os.environ.get("MEMORY_DEFAULT_WORKSPACE") or "").strip()
+    if not selected:
+        raise ValueError("WORKSPACE_ID_REQUIRED")
+    return selected
 
 
 def main() -> None:
@@ -20,7 +30,7 @@ def main() -> None:
     @mcp.tool()
     def memory_context(
         query: str,
-        workspace_id: str = "default",
+        workspace_id: str | None = None,
         max_items: int = 8,
         max_tokens: int = 1200,
     ) -> str:
@@ -29,7 +39,7 @@ def main() -> None:
         result = client.context(
             {
                 "query": query,
-                "workspace_id": workspace_id,
+                "workspace_id": _active_workspace_id(workspace_id),
                 "max_items": max_items,
                 "max_tokens": max_tokens,
             }
@@ -41,7 +51,7 @@ def main() -> None:
         content: str,
         scope: str = "workspace",
         kind: str = "note",
-        workspace_id: str = "default",
+        workspace_id: str | None = None,
         confirmed_by_user: bool = False,
         metadata: dict[str, str] | None = None,
     ) -> str:
@@ -51,7 +61,7 @@ def main() -> None:
             "content": content,
             "scope": scope,
             "kind": kind,
-            "workspace_id": workspace_id,
+            "workspace_id": _active_workspace_id(workspace_id),
         }
         if metadata:
             payload["metadata"] = metadata
@@ -61,10 +71,16 @@ def main() -> None:
         return json.dumps(result, ensure_ascii=False)
 
     @mcp.tool()
-    def memory_search(query: str, workspace_id: str = "default", limit: int = 8) -> str:
+    def memory_search(query: str, workspace_id: str | None = None, limit: int = 8) -> str:
         """搜索共享记忆。"""
 
-        result = client.search({"query": query, "workspace_id": workspace_id, "limit": limit})
+        result = client.search(
+            {
+                "query": query,
+                "workspace_id": _active_workspace_id(workspace_id),
+                "limit": limit,
+            }
+        )
         return json.dumps(result, ensure_ascii=False, indent=2)
 
     @mcp.tool()
@@ -80,10 +96,12 @@ def main() -> None:
         return json.dumps(client.forget({"memory_id": memory_id, "hard_delete": hard_delete}), ensure_ascii=False)
 
     @mcp.tool()
-    def memory_sync_status(workspace_id: str = "default") -> str:
+    def memory_sync_status(workspace_id: str | None = None) -> str:
         """同步本地 outbox，并返回队列状态。"""
 
-        return json.dumps(client.sync(workspace_id=workspace_id), ensure_ascii=False)
+        return json.dumps(
+            client.sync(workspace_id=_active_workspace_id(workspace_id)), ensure_ascii=False
+        )
 
     @mcp.tool()
     def memory_cleanup_confirmed(confirmed_by_user: bool = False) -> str:
@@ -92,11 +110,13 @@ def main() -> None:
         return json.dumps(client.cleanup_confirmed(confirmed_by_user=confirmed_by_user), ensure_ascii=False)
 
     @mcp.tool()
-    def memory_list_reviews(workspace_id: str = "default", limit: int = 30) -> str:
+    def memory_list_reviews(workspace_id: str | None = None, limit: int = 30) -> str:
         """列出当前用户待审核记忆。仅在用户要求查看审核列表时调用。"""
 
         return json.dumps(
-            client.list_reviews({"workspace_id": workspace_id, "limit": limit}),
+            client.list_reviews(
+                {"workspace_id": _active_workspace_id(workspace_id), "limit": limit}
+            ),
             ensure_ascii=False,
             indent=2,
         )
@@ -106,7 +126,7 @@ def main() -> None:
         review_id: str,
         expected_revision: int,
         action: str,
-        workspace_id: str = "default",
+        workspace_id: str | None = None,
         target_ref: str = "",
         edited_content: str = "",
         approve_instruction_like: bool = False,
@@ -118,7 +138,7 @@ def main() -> None:
             "review_id": review_id,
             "expected_revision": expected_revision,
             "action": action,
-            "workspace_id": workspace_id,
+            "workspace_id": _active_workspace_id(workspace_id),
             "idempotency_key": idempotency_key or f"mcp_review_{uuid.uuid4().hex}",
             "approve_instruction_like": approve_instruction_like,
         }
@@ -133,7 +153,7 @@ def main() -> None:
         review_id: str,
         operation_id: str,
         expected_revision: int,
-        workspace_id: str = "default",
+        workspace_id: str | None = None,
         idempotency_key: str = "",
     ) -> str:
         """撤销最近一次错误审核，创建补偿记录并保留历史。"""
@@ -144,7 +164,7 @@ def main() -> None:
                     "review_id": review_id,
                     "operation_id": operation_id,
                     "expected_revision": expected_revision,
-                    "workspace_id": workspace_id,
+                    "workspace_id": _active_workspace_id(workspace_id),
                     "idempotency_key": idempotency_key or f"mcp_revert_{uuid.uuid4().hex}",
                 }
             ),
@@ -156,7 +176,7 @@ def main() -> None:
     def memory_rebuild_crystal(
         scope: str,
         namespace_key: str,
-        workspace_id: str = "default",
+        workspace_id: str | None = None,
         idempotency_key: str = "",
     ) -> str:
         """重算指定授权范围的结晶页；只在用户要求更新汇总记忆时调用。"""
@@ -166,7 +186,7 @@ def main() -> None:
                 {
                     "scope": scope,
                     "namespace_key": namespace_key,
-                    "workspace_id": workspace_id,
+                    "workspace_id": _active_workspace_id(workspace_id),
                     "idempotency_key": idempotency_key or f"mcp_crystal_{uuid.uuid4().hex}",
                 }
             ),

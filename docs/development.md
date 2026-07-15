@@ -14,6 +14,34 @@ python -m compileall -q src tests
 
 修改功能前先确认这两项通过。修改后至少运行受影响模块的测试，再跑完整测试集。数据库迁移、容器部署和真实凭据验证属于单独步骤，不能用本地测试代替。
 
+## 本地体验脚本
+
+`scripts/setup-local-demo.ps1` 是给第一次体验准备的入口。它会建立仓库内忽略的 `.local-demo-venv`，安装当前项目，然后调用 `scripts/start-local-demo.ps1` 启动只监听 `127.0.0.1` 的 SQLite Gateway。演示主体、随机令牌、数据库和日志都保存在仓库外的 `DemoHome` 中。
+
+脚本默认会让两个模拟 Agent 完成一次交叉检索。修改演示脚本时，至少检查下面四项：
+
+```powershell
+$tokens = $null
+$errors = $null
+[void][System.Management.Automation.Language.Parser]::ParseFile(
+  (Resolve-Path .\scripts\start-local-demo.ps1),
+  [ref]$tokens,
+  [ref]$errors
+)
+$errors
+```
+
+- `DemoHome` 位于仓库外，且已有目录时拒绝覆盖。
+- Gateway 只绑定 `127.0.0.1`，端口占用时拒绝启动。
+- 随机令牌不会写入终端、日志、仓库或示例文件。
+- 第二个演示 Agent 能检索到第一个 Agent 写入的无敏感信息测试记录。
+
+完整使用方式见 [快速上手](quickstart.md)。
+
+## Sidecar 的默认工作区
+
+`start-sidecar.ps1`、`install-sidecar-autostart.ps1` 和 `start-sidecar-mcp.ps1` 都要求传入 `DefaultWorkspace`。它必须是已经登记的工作区 ID。MCP 调用没有写 `workspace_id` 时会使用这个值；没有配置就报错，不会把占位文本当成可访问的工作区。
+
 ## 混合检索怎么工作
 
 检索代码位于 `src/agent_memory_gateway/hybrid_retrieval.py`。它接收已经完成授权过滤的候选，而不是自己决定谁能读取记忆。

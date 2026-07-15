@@ -2,6 +2,12 @@
 
 本文给出不包含现场信息的通用部署流程。所有示例中的域名、路径、设备 ID、数据库连接串和密钥都必须替换为你自己的本地配置；不要把真实值提交到 Git。
 
+## 先选一条合适的路径
+
+- 只是想确认共享记忆的读写效果，先运行 [快速上手](quickstart.md) 中的本地演示。它只启动本机 SQLite Gateway，不会修改现有服务。
+- 已有 Gateway，只需要让一台电脑上的 Agent 接入，直接阅读本文的“在每台客户端设备上运行 Sidecar”。
+- 准备上线新的服务，再从下面的环境检查、迁移和容器启动依次完成。
+
 ## 开始前先确认几件事
 
 - Python 版本不低于 3.10。
@@ -68,10 +74,13 @@ docker compose --env-file "<受保护环境文件路径>" -f deploy/fn/compose.y
 .\scripts\start-sidecar.ps1 `
   -GatewayUrl "https://memory-gateway.example.internal" `
   -DeviceId "your-registered-device-id" `
-  -AllowedAgents "your-agent-installation-id"
+  -AllowedAgents "your-agent-installation-id" `
+  -DefaultWorkspace "your-workspace-id"
 ```
 
 Sidecar 必须只监听本机回环地址。局域网内直连内部 HTTPS 地址；外网访问通过 VPN、零信任网络或受控隧道回到同一网络边界。无论何种网络路径，都不要关闭 TLS 证书校验。
+
+`DefaultWorkspace` 不是示例名称，而是正式登记过的工作区 ID。MCP 配置启动时也要传入同一个值；否则工具没有指定工作区时会直接报错，不会猜测或改用别的工作区。
 
 Codex、Hermes 和 OpenClaw 的配置文件与字段说明见 [examples/README.md](../examples/README.md)。MCP 配置中只保留脚本路径和 Agent 安装实例 ID，密钥仍由本机受保护存储和 Sidecar 管理。
 
