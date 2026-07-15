@@ -14,6 +14,7 @@ RUN chmod -R a+rX /app/schema \
     && python -m pip install --no-cache-dir ".[postgres]"
 
 COPY deploy/fn/entrypoint.sh /usr/local/bin/memory-gateway-entrypoint
-RUN chmod 0555 /usr/local/bin/memory-gateway-entrypoint
+RUN sed -i 's/\r$//' /usr/local/bin/memory-gateway-entrypoint \
+    && chmod 0555 /usr/local/bin/memory-gateway-entrypoint
 
 ENTRYPOINT ["/usr/local/bin/memory-gateway-entrypoint"]
