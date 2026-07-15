@@ -14,6 +14,7 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from .access_token import AccessTokenSigner
+from .admin_service import PostgresAdminService
 from .auth import AuthError, PostgresTokenAuthenticator, TokenAuthenticator
 from .crypto import EventCipher
 from .crystal_service import PostgresCrystalService
@@ -44,6 +45,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
     review_service: PostgresReviewService | None = None
     crystal_service: PostgresCrystalService | None = None
     sync_service: PostgresSyncService | None = None
+    admin_service: PostgresAdminService | None = None
     readiness_probe: Callable[[], None] | None = None
 
     def do_GET(self) -> None:
@@ -104,6 +106,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 "/v1/reviews/resolve": "memory.manage",
                 "/v1/reviews/revert": "memory.manage",
                 "/v1/crystals/rebuild": "memory.manage",
+                "/v1/admin/overview": "memory.manage",
+                "/v1/admin/devices/list": "memory.manage",
+                "/v1/admin/audit/list": "memory.manage",
+                "/v1/admin/dead-letters/list": "memory.manage",
             }.get(path)
             if capability is None:
                 self._json({"error": "not_found"}, status=404)
@@ -163,6 +169,22 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 if self.crystal_service is None:
                     raise ValueError("NOT_IMPLEMENTED")
                 self._json(self.crystal_service.rebuild(payload, principal))
+            elif path == "/v1/admin/overview":
+                if self.admin_service is None:
+                    raise ValueError("NOT_IMPLEMENTED")
+                self._json(self.admin_service.overview(payload, principal))
+            elif path == "/v1/admin/devices/list":
+                if self.admin_service is None:
+                    raise ValueError("NOT_IMPLEMENTED")
+                self._json(self.admin_service.list_devices(payload, principal))
+            elif path == "/v1/admin/audit/list":
+                if self.admin_service is None:
+                    raise ValueError("NOT_IMPLEMENTED")
+                self._json(self.admin_service.list_audit(payload, principal))
+            elif path == "/v1/admin/dead-letters/list":
+                if self.admin_service is None:
+                    raise ValueError("NOT_IMPLEMENTED")
+                self._json(self.admin_service.list_dead_letters(payload, principal))
         except AuthError as exc:
             self._json({"error": exc.code}, status=exc.status)
         except DatabasePoolBusy as exc:
@@ -264,6 +286,7 @@ def main() -> None:
     GatewayHandler.crystal_service = None
     GatewayHandler.identity_service = None
     GatewayHandler.sync_service = None
+    GatewayHandler.admin_service = None
     GatewayHandler.readiness_probe = None
     if args.metadata_dsn and args.gbrain_dsn:
         metadata_pool = PostgresConnectionPool.from_environment(
@@ -328,6 +351,10 @@ def main() -> None:
         GatewayHandler.crystal_service = PostgresCrystalService(
             args.metadata_dsn,
             gbrain,
+            connection_factory=metadata_pool.connection,
+        )
+        GatewayHandler.admin_service = PostgresAdminService(
+            args.metadata_dsn,
             connection_factory=metadata_pool.connection,
         )
 

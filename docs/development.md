@@ -81,3 +81,22 @@ python -m compileall -q src tests
 ```
 
 测试覆盖中文匹配、文本归一化去重、排序稳定性、多样性、预算上限、未授权事实过滤和离线 Sidecar 行为。提交前还要运行 `git diff --check`，并扫描本次改动是否带入真实域名、内网地址、账号、令牌、私钥或本机路径。
+
+## 第八阶段：管理接口的回归点
+
+管理端的数据先由 Gateway 统一授权，再通过现有 Sidecar 取回。浏览器或 MCP 不能绕过这条路径直接读 PostgreSQL。
+
+```powershell
+python -m unittest tests.test_admin_service tests.test_gateway_admin
+python -m unittest tests.test_sidecar_daemon tests.test_sidecar_mcp
+python -m unittest tests.test_admin_check tests.test_admin_console
+python -m compileall -q src tests
+```
+
+- 管理接口都要求 `memory.manage`，没有该权限必须返回 `CAPABILITY_FORBIDDEN`。
+- 概览只返回数量和 worker 心跳；设备列表不返回公钥或任何凭据；审计列表不返回 `details_json` 和记忆正文；死信列表只返回稳定 ID、错误码、类别和时间。
+- 每个查询都按调用者的租户、用户和工作区过滤。工作区缺失或不在授权范围内时，不能退回任何默认工作区。
+- Sidecar RPC 只允许已声明的管理方法，并继续使用现有短期令牌和本机回环鉴权。
+- `memory-admin-console` 只能监听回环地址。首次 URL 里的 session token 只换取一次 HttpOnly Cookie；页面源码、API 响应和测试断言都不能包含本机 key、Gateway 令牌或刷新凭据。会改变审核状态的请求必须带 `confirmed_by_user=true`、revision 和幂等键。
+
+`memory-admin-check` 是给计划任务或外部监控使用的只读命令。它从 Sidecar 获取概览，检测 worker 心跳、待重试事件和未处理死信，并输出不含正文或凭据的 JSON。状态正常时退出码为 `0`；发现运行问题时为 `1`；本机 Sidecar、配置或授权不可用时为 `2`。Windows 可通过 `scripts/check-admin-health.ps1` 启动它；脚本只从受保护的本机文件读取 Sidecar key，不会把 key 写入输出。

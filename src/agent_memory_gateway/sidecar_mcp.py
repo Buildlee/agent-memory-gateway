@@ -194,6 +194,50 @@ def main() -> None:
             indent=2,
         )
 
+    @mcp.tool()
+    def memory_admin_overview(workspace_id: str | None = None) -> str:
+        """查看当前工作区的审核、重试、死信和设备概览。只读。"""
+
+        return json.dumps(
+            client.admin_overview({"workspace_id": _active_workspace_id(workspace_id)}),
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.tool()
+    def memory_admin_devices(workspace_id: str | None = None) -> str:
+        """列出当前工作区内已绑定的设备和 Agent。只读，不返回凭据。"""
+
+        return json.dumps(
+            client.list_admin_devices({"workspace_id": _active_workspace_id(workspace_id)}),
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.tool()
+    def memory_admin_audit(workspace_id: str | None = None, limit: int = 50) -> str:
+        """查看当前工作区的近期审计记录。只读，不返回记忆正文。"""
+
+        return json.dumps(
+            client.list_admin_audit(
+                {"workspace_id": _active_workspace_id(workspace_id), "limit": limit}
+            ),
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.tool()
+    def memory_admin_dead_letters(workspace_id: str | None = None, limit: int = 50) -> str:
+        """列出当前工作区未处理的死信。只读，不返回记忆正文。"""
+
+        return json.dumps(
+            client.list_admin_dead_letters(
+                {"workspace_id": _active_workspace_id(workspace_id), "limit": limit}
+            ),
+            ensure_ascii=False,
+            indent=2,
+        )
+
     mcp.run()
 
 
