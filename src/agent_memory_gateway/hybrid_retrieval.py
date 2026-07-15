@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 import unicodedata
@@ -14,6 +15,10 @@ from typing import Any, Mapping, Sequence
 _CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 _WORD_PATTERN = re.compile(r"[a-z0-9][a-z0-9_.-]{1,}")
 _SPACE_PATTERN = re.compile(r"\s+")
+
+DEFAULT_CONTEXT_TOKEN_BUDGET = 1200
+MIN_CONTEXT_TOKEN_BUDGET = 64
+MAX_CONTEXT_TOKEN_BUDGET = 12_000
 
 
 @dataclass(frozen=True)
@@ -66,6 +71,35 @@ def estimate_tokens(value: str, *, item_overhead: int = 8) -> int:
             estimate += 1
         index += 1
     return estimate
+
+
+def normalize_context_token_budget(value: Any | None) -> int:
+    """校验调用方给出的记忆预算，拒绝静默放大过小预算。"""
+
+    if value is None:
+        return DEFAULT_CONTEXT_TOKEN_BUDGET
+    if isinstance(value, bool):
+        raise ValueError("MAX_TOKENS_INVALID")
+    try:
+        budget = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("MAX_TOKENS_INVALID") from exc
+    if not MIN_CONTEXT_TOKEN_BUDGET <= budget <= MAX_CONTEXT_TOKEN_BUDGET:
+        raise ValueError("MAX_TOKENS_OUT_OF_RANGE")
+    return budget
+
+
+def build_context_pack(items: Sequence[Mapping[str, Any]], *, policy: str) -> str:
+    """只把经过选择的引用和固定安全说明序列化为可注入上下文。"""
+
+    return json.dumps(
+        {
+            "policy": policy,
+            "memory_references": [dict(item) for item in items],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def _feature_counts(value: str) -> Counter[str]:
@@ -182,17 +216,20 @@ def select_hybrid_memories(
     budget_skipped_count = 0
     remaining_budget = budget
     while remaining and len(selected) < bounded_limit:
-        def mmr(candidate: _ScoredCandidate) -> tuple[float, str]:
+        def mmr_score(candidate: _ScoredCandidate) -> float:
             similarity = max((_cosine(candidate.vector, existing.vector) for existing in selected), default=0.0)
-            group_penalty = 0.04 if any(candidate.group == existing.group for existing in selected) else 0.0
-            return (0.80 * candidate.base_score - 0.20 * similarity - group_penalty, str(candidate.record.get("memory_id") or ""))
+            group_bonus = 0.04 if selected and not any(candidate.group == existing.group for existing in selected) else 0.0
+            return 0.80 * candidate.base_score - 0.20 * similarity + group_bonus
 
-        candidate = max(remaining, key=mmr)
+        candidate = min(
+            remaining,
+            key=lambda item: (-mmr_score(item), str(item.record.get("memory_id") or "")),
+        )
         remaining.remove(candidate)
         if remaining_budget is not None and candidate.tokens > remaining_budget:
             budget_skipped_count += 1
             continue
-        adjusted_score = mmr(candidate)[0]
+        adjusted_score = mmr_score(candidate)
         item = dict(candidate.record)
         item["retrieval_score"] = round(adjusted_score, 6)
         item["token_estimate"] = candidate.tokens
