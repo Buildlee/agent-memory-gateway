@@ -1,6 +1,7 @@
 import json
 import threading
 import unittest
+from datetime import datetime, timezone
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
@@ -13,11 +14,12 @@ from agent_memory_gateway.admin_console import (
 class FakeSidecar:
     def __init__(self):
         self.resolve_payloads = []
+        self.search_payloads = []
 
     def admin_overview(self, payload):
         return {
             "workspace_id": payload["workspace_id"],
-            "worker_heartbeat_at": "2026-07-15T12:00:00+00:00",
+            "worker_heartbeat_at": datetime.now(timezone.utc).isoformat(),
             "counts": {
                 "pending_reviews": 1,
                 "retryable_events": 0,
@@ -51,6 +53,23 @@ class FakeSidecar:
 
     def list_admin_dead_letters(self, payload):
         return {"workspace_id": payload["workspace_id"], "dead_letters": []}
+
+    def search(self, payload):
+        self.search_payloads.append(payload)
+        return {
+            "workspace_id": payload["workspace_id"],
+            "memories": [
+                {
+                    "memory_id": "gbrain:fact:1",
+                    "content": "已经确认的发布流程",
+                    "kind": "decision",
+                    "confidence": 0.94,
+                    "scope": "workspace",
+                    "status": "confirmed",
+                }
+            ],
+            "retrieval": {"candidate_count": 1},
+        }
 
     def resolve_review(self, payload):
         self.resolve_payloads.append(payload)
@@ -115,6 +134,11 @@ class AdminConsoleTests(unittest.TestCase):
         html = urlopen(Request(self.url + "/", headers={"Cookie": cookie}), timeout=2).read().decode("utf-8")  # noqa: S310
         self.assertIn("Memory Admin", html)
         self.assertIn('id="confirm-dialog"', html)
+        self.assertIn('data-view="memories"', html)
+        self.assertIn('data-view="activity"', html)
+        self.assertIn("LOCAL_METHOD_UNSUPPORTED", html)
+        self.assertIn('aria-current="page"', html)
+        self.assertIn('for="memory-query"', html)
         self.assertNotIn("window.confirm", html)
         self.assertNotIn("launch-token", html)
         self.assertNotIn("session-token", html)
@@ -134,11 +158,25 @@ class AdminConsoleTests(unittest.TestCase):
         overview = self._json("/api/overview", cookie)
         health = self._json("/api/health", cookie)
         reviews = self._json("/api/reviews", cookie)
+        memories = self._json("/api/memories?q=%E5%8F%91%E5%B8%83", cookie)
 
         self.assertEqual(overview["workspace_id"], "workspace-a")
         self.assertTrue(health["ok"])
         self.assertEqual(reviews["count"], 1)
-        self.assertNotIn("MEMORY_OUTBOX_KEY", json.dumps([overview, health, reviews], ensure_ascii=False))
+        self.assertEqual(memories["memories"][0]["memory_id"], "gbrain:fact:1")
+        self.assertEqual(
+            self.sidecar.search_payloads,
+            [{"workspace_id": "workspace-a", "query": "发布", "limit": 20}],
+        )
+        self.assertNotIn("MEMORY_OUTBOX_KEY", json.dumps([overview, health, reviews, memories], ensure_ascii=False))
+
+    def test_memory_search_rejects_empty_or_too_short_queries(self):
+        cookie = self._open_session()
+        for path in ("/api/memories", "/api/memories?q=x"):
+            with self.assertRaises(HTTPError) as context:
+                self._json(path, cookie)
+            self.assertEqual(context.exception.code, 400)
+            self.assertIn("MEMORY_QUERY_INVALID", context.exception.read().decode("utf-8"))
 
     def test_resolve_requires_explicit_page_confirmation(self):
         cookie = self._open_session()

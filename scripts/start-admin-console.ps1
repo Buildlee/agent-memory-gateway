@@ -12,7 +12,9 @@ param(
 
     [int]$AdminPort = 8767,
 
-    [string]$ConsoleExecutable = "memory-admin-console"
+    [string]$ConsoleExecutable = "memory-admin-console",
+
+    [string]$PythonExecutable = "python"
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,7 +64,39 @@ $env:MEMORY_DEFAULT_WORKSPACE = $DefaultWorkspace
 $env:MEMORY_OUTBOX_KEY = $keyValues["MEMORY_OUTBOX_KEY"]
 $env:MEMORY_SIDECAR_PORT = [string]$SidecarPort
 
-& $ConsoleExecutable --workspace $DefaultWorkspace --host 127.0.0.1 --port $AdminPort
+$consoleCommand = Get-Command -Name $ConsoleExecutable -ErrorAction SilentlyContinue
+if ($consoleCommand) {
+    & $ConsoleExecutable --workspace $DefaultWorkspace --host 127.0.0.1 --port $AdminPort
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    exit 0
+}
+
+if ($ConsoleExecutable -ne "memory-admin-console") {
+    throw "找不到管理控制台命令：$ConsoleExecutable"
+}
+
+# 从源码目录直接运行时，命令入口可能尚未安装。只在当前仓库的 src 下回退，
+# 不安装依赖、不修改全局环境，也不会继承 Gateway 或刷新凭据。
+$pythonCommand = Get-Command -Name $PythonExecutable -ErrorAction SilentlyContinue
+$sourceDirectory = Join-Path (Split-Path -Parent $PSScriptRoot) "src"
+if (-not $pythonCommand -or -not (Test-Path -LiteralPath (Join-Path $sourceDirectory "agent_memory_gateway") -PathType Container)) {
+    throw "找不到 memory-admin-console。请安装当前项目，或在包含 src 的仓库目录中运行此脚本。"
+}
+
+$hadPythonPath = Test-Path -LiteralPath "Env:PYTHONPATH"
+$previousPythonPath = $env:PYTHONPATH
+try {
+    $env:PYTHONPATH = if ($previousPythonPath) { "$sourceDirectory;$previousPythonPath" } else { $sourceDirectory }
+    & $pythonCommand.Path -m agent_memory_gateway.admin_console --workspace $DefaultWorkspace --host 127.0.0.1 --port $AdminPort
+} finally {
+    if ($hadPythonPath) {
+        $env:PYTHONPATH = $previousPythonPath
+    } else {
+        Remove-Item -LiteralPath "Env:PYTHONPATH" -ErrorAction SilentlyContinue
+    }
+}
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

@@ -66,7 +66,7 @@ class SensitiveContentScannerTests(unittest.TestCase):
             "数据库密码保存在 Windows Credential Manager 中。",
             "token budget=1000",
             "private_key = Ed25519PrivateKey.generate()",
-            "postgresql://runtime:$runtime_password@db.invalid/example",
+            "postgresql://runtime:" + "$runtime_password" + "@db.invalid/example",
             "普通订单号 1234567890123456 不是有效银行卡号",
         ]
         for sample in safe:

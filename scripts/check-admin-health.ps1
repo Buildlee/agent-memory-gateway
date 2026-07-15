@@ -13,7 +13,9 @@ param(
     [ValidateRange(1, 3600)]
     [int]$MaxHeartbeatAgeSeconds = 90,
 
-    [string]$CheckExecutable = "memory-admin-check"
+    [string]$CheckExecutable = "memory-admin-check",
+
+    [string]$PythonExecutable = "python"
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,7 +61,39 @@ $env:MEMORY_DEFAULT_WORKSPACE = $DefaultWorkspace
 $env:MEMORY_OUTBOX_KEY = $keyValues["MEMORY_OUTBOX_KEY"]
 $env:MEMORY_SIDECAR_PORT = [string]$Port
 
-& $CheckExecutable --max-heartbeat-age-seconds $MaxHeartbeatAgeSeconds
+$checkCommand = Get-Command -Name $CheckExecutable -ErrorAction SilentlyContinue
+if ($checkCommand) {
+    & $CheckExecutable --max-heartbeat-age-seconds $MaxHeartbeatAgeSeconds
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    exit 0
+}
+
+if ($CheckExecutable -ne "memory-admin-check") {
+    throw "找不到管理健康检查命令：$CheckExecutable"
+}
+
+# 从源码目录直接运行时，命令入口可能尚未安装。只在当前仓库的 src 下回退，
+# 不安装依赖、不修改全局环境，也不会继承 Gateway 或刷新凭据。
+$pythonCommand = Get-Command -Name $PythonExecutable -ErrorAction SilentlyContinue
+$sourceDirectory = Join-Path (Split-Path -Parent $PSScriptRoot) "src"
+if (-not $pythonCommand -or -not (Test-Path -LiteralPath (Join-Path $sourceDirectory "agent_memory_gateway") -PathType Container)) {
+    throw "找不到 memory-admin-check。请安装当前项目，或在包含 src 的仓库目录中运行此脚本。"
+}
+
+$hadPythonPath = Test-Path -LiteralPath "Env:PYTHONPATH"
+$previousPythonPath = $env:PYTHONPATH
+try {
+    $env:PYTHONPATH = if ($previousPythonPath) { "$sourceDirectory;$previousPythonPath" } else { $sourceDirectory }
+    & $pythonCommand.Path -m agent_memory_gateway.admin_check --max-heartbeat-age-seconds $MaxHeartbeatAgeSeconds
+} finally {
+    if ($hadPythonPath) {
+        $env:PYTHONPATH = $previousPythonPath
+    } else {
+        Remove-Item -LiteralPath "Env:PYTHONPATH" -ErrorAction SilentlyContinue
+    }
+}
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

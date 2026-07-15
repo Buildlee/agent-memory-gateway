@@ -1,0 +1,77 @@
+name: 验证
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "feat/**"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Windows 回归检查
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装测试依赖
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[mcp,postgres,dev]"
+
+      - name: 运行自动化测试
+        shell: pwsh
+        run: python -m unittest discover -s tests
+
+      - name: 编译与 PowerShell 语法检查
+        shell: pwsh
+        run: |
+          python -m compileall -q src tests
+          $errors = @()
+          Get-ChildItem -LiteralPath scripts -Filter '*.ps1' -File | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors)
+            $errors += $parseErrors
+          }
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+
+      - name: 检查公开文件是否包含敏感信息
+        shell: pwsh
+        run: |
+          $patterns = @(
+            '-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',
+            'gh[pousr]_[A-Za-z0-9]{20,}',
+            'sk-[A-Za-z0-9]{20,}',
+            'AKIA[0-9A-Z]{16}',
+            '(?i)postgres(?:ql)?://[^\s/:]+:[^\s@]+@'
+          )
+          # 安全测试语料必须保留能触发分类器的无效样例；其安全性由单元测试单独约束，
+          # 不把该单一语料文件当作真实凭据扫描目标。
+          $files = git ls-files | Where-Object {
+            $_ -match '\.(md|py|ps1|toml|ya?ml|json)$' -and
+            $_ -ne 'tests/fixtures/security_cases.json'
+          }
+          foreach ($file in $files) {
+            $matches = Select-String -LiteralPath $file -Pattern $patterns -AllMatches
+            if ($matches) {
+              $first = $matches | Select-Object -First 1
+              throw "公开文件疑似包含敏感信息：$file 行 $($first.LineNumber)"
+            }
+          }
+
+      - name: 检查补丁格式
+        shell: pwsh
+        run: git diff-tree --check -r HEAD

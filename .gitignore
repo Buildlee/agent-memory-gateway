@@ -26,3 +26,37 @@ principals.*.local.json
 *.p12
 docs/operation-log.md
 docs/stage-status.md
+
+# One-off operational scripts for a specific deployment. Keep these local;
+# reusable templates belong in version-controlled scripts with placeholder values.
+scripts/grant_workspace_capability.py
+scripts/migrate_metadata.py
+scripts/provision-access-token-key.ps1
+scripts/provision-event-encryption-key.ps1
+scripts/provision-fn.ps1
+scripts/provision-gbrain-backend.ps1
+scripts/provision-refresh-replay-key.ps1
+scripts/provision-sensitive-fingerprint-key.ps1
+scripts/trust-fn-gateway-ca.ps1
+scripts/verify_gbrain_lifecycle.py
+scripts/verify_gbrain_page_insert.py
+scripts/verify_persisted_memory.py
+scripts/verify_shared_sidecar.py
+scripts/write_approved_memory.py
+
+# One-off operational scripts for a specific deployment. Keep these local;
+# reusable templates belong in version-controlled scripts with placeholder values.
+scripts/grant_workspace_capability.py
+scripts/migrate_metadata.py
+scripts/provision-access-token-key.ps1
+scripts/provision-event-encryption-key.ps1
+scripts/provision-fn.ps1
+scripts/provision-gbrain-backend.ps1
+scripts/provision-refresh-replay-key.ps1
+scripts/provision-sensitive-fingerprint-key.ps1
+scripts/trust-fn-gateway-ca.ps1
+scripts/verify_gbrain_lifecycle.py
+scripts/verify_gbrain_page_insert.py
+scripts/verify_persisted_memory.py
+scripts/verify_shared_sidecar.py
+scripts/write_approved_memory.py

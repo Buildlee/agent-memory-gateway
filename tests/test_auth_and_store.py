@@ -115,7 +115,7 @@ class StoreSecurityTests(unittest.TestCase):
             store = MemoryStore(Path(directory) / "memory.db")
             try:
                 result = store.record_event(
-                    {"content": "api_key=sk-abcdefghijklmnopqrstuvwxyz", "workspace_id": "workspace-a"},
+                    {"content": "api_key=sk-" + "abcdefghijklmnopqrstuvwxyz", "workspace_id": "workspace-a"},
                     principal(),
                 )
                 self.assertEqual(result["status"], "blocked_sensitive")

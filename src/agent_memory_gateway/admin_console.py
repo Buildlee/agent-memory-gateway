@@ -149,7 +149,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       border: 1px solid var(--line);
       background: white;
       color: var(--ink);
-      min-height: 32px;
+      min-height: 36px;
       border-radius: 7px;
       padding: 0 11px;
       cursor: pointer;
@@ -158,6 +158,10 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
         border-color 160ms var(--ease-standard),
         color 160ms var(--ease-standard),
         transform 160ms var(--ease-out);
+    }}
+    button:focus-visible, input[type="search"]:focus-visible {{
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
     }}
     button:hover {{ border-color: oklch(0.72 0.03 260); background: var(--surface); }}
     button:active {{ transform: translateY(1px); }}
@@ -192,23 +196,25 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     .shell {{
       min-height: 100vh;
       display: grid;
-      grid-template-columns: 224px minmax(0, 1fr);
+      grid-template-columns: 252px minmax(0, 1fr);
     }}
     aside {{
       border-right: 1px solid var(--line);
       background: var(--surface);
-      padding: 18px 14px;
+      padding: 20px 16px;
     }}
     main {{
       min-width: 0;
-      padding: 22px 28px 40px;
+      padding: 28px clamp(22px, 4vw, 52px) 48px;
     }}
+    .content {{ max-width: 1320px; margin: 0 auto; }}
     .brand {{
       display: flex;
       align-items: center;
       gap: 10px;
-      font-weight: 650;
-      margin-bottom: 22px;
+      font-weight: 700;
+      letter-spacing: -.01em;
+      margin-bottom: 28px;
     }}
     .mark {{
       width: 24px;
@@ -229,7 +235,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     }}
     nav {{
       display: grid;
-      gap: 4px;
+      gap: 3px;
     }}
     .nav-button {{
       width: 100%;
@@ -239,13 +245,15 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       display: flex;
       align-items: center;
       gap: 9px;
+      min-height: 38px;
+      padding: 0 10px;
       transition:
         background-color 180ms var(--ease-standard),
         border-color 180ms var(--ease-standard),
         color 180ms var(--ease-standard),
         transform 180ms var(--ease-out);
     }}
-    .nav-button[aria-selected="true"] {{
+    .nav-button[aria-current="page"] {{
       background: white;
       border-color: var(--line);
       color: var(--accent);
@@ -256,22 +264,36 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       border-radius: 50%;
       background: var(--line);
     }}
-    .nav-button[aria-selected="true"] .dot {{ background: var(--accent); }}
+    .nav-button[aria-current="page"] .dot {{ background: var(--accent); }}
+    .side-note {{
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+      margin-top: 24px;
+      padding: 14px 4px 0;
+    }}
     .topbar {{
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
       gap: 18px;
       border-bottom: 1px solid var(--line);
-      padding-bottom: 18px;
-      margin-bottom: 18px;
+      padding-bottom: 20px;
+      margin-bottom: 22px;
     }}
     h1 {{
       margin: 0 0 5px;
-      font-size: 22px;
+      font-size: 25px;
       line-height: 1.25;
       font-weight: 700;
+      letter-spacing: -.025em;
       text-wrap: balance;
+    }}
+    .eyebrow {{
+      color: var(--muted);
+      font-size: 12px;
+      margin: 0 0 6px;
     }}
     .subtle {{
       color: var(--muted);
@@ -283,10 +305,27 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       gap: 8px;
       flex-wrap: wrap;
     }}
+    .connection {{
+      align-items: center;
+      color: var(--muted);
+      display: inline-flex;
+      font-size: 12px;
+      gap: 7px;
+      min-height: 32px;
+      padding: 0 2px;
+    }}
+    .connection-dot {{
+      background: var(--warning);
+      border-radius: 50%;
+      height: 7px;
+      width: 7px;
+    }}
+    .connection.ok .connection-dot {{ background: var(--ok); }}
+    .connection.danger .connection-dot {{ background: var(--danger); }}
     .grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 8px;
     }}
     .metric, .panel, .review {{
       border: 1px solid var(--line);
@@ -298,8 +337,8 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
         background-color 180ms var(--ease-standard);
     }}
     .metric {{
-      padding: 13px 14px;
-      min-height: 86px;
+      padding: 12px 13px;
+      min-height: 82px;
     }}
     .metric:hover, .review:hover {{
       border-color: oklch(0.78 0.025 260);
@@ -310,7 +349,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       font-size: 12px;
     }}
     .metric .value {{
-      font-size: 28px;
+      font-size: 25px;
       line-height: 1.1;
       margin-top: 10px;
       font-weight: 720;
@@ -333,6 +372,84 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     }}
     .panel-body {{
       padding: 14px;
+      overflow-x: auto;
+    }}
+    .overview-layout {{
+      display: grid;
+      grid-template-columns: minmax(0, 1.48fr) minmax(290px, .92fr);
+      gap: 14px;
+    }}
+    .overview-layout .panel:first-child {{ margin-top: 0; }}
+    .overview-copy {{
+      margin: 0 0 14px;
+      color: var(--muted);
+      line-height: 1.55;
+      max-width: 66ch;
+    }}
+    .priority-list, .activity-list, .memory-list {{ display: grid; }}
+    .priority-row, .activity-row, .memory-row {{
+      align-items: start;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      gap: 12px;
+      padding: 12px 0;
+    }}
+    .priority-row {{ grid-template-columns: minmax(0, 1fr) auto; }}
+    .activity-row {{ grid-template-columns: minmax(0, 1fr) auto; }}
+    .memory-row {{ grid-template-columns: minmax(0, 1fr) auto; }}
+    .priority-row:first-child, .activity-row:first-child, .memory-row:first-child {{ padding-top: 0; }}
+    .priority-row:last-child, .activity-row:last-child, .memory-row:last-child {{ border-bottom: 0; padding-bottom: 0; }}
+    .row-title {{ font-weight: 650; line-height: 1.4; }}
+    .row-copy {{ color: var(--muted); font-size: 13px; line-height: 1.5; margin-top: 3px; }}
+    .row-time {{ color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }}
+    .memory-search {{
+      align-items: center;
+      display: flex;
+      gap: 8px;
+    }}
+    input[type="search"] {{
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--ink);
+      min-height: 36px;
+      min-width: 0;
+      padding: 0 11px;
+      width: min(520px, 100%);
+    }}
+    .memory-meta {{
+      align-items: center;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      font-size: 12px;
+      gap: 6px;
+      margin-top: 8px;
+    }}
+    .memory-content {{
+      line-height: 1.6;
+      margin-top: 8px;
+      max-width: 78ch;
+      white-space: pre-wrap;
+    }}
+    .error-state {{
+      background: oklch(0.98 0.012 78);
+      border: 1px solid oklch(0.88 0.055 78);
+      border-radius: var(--radius);
+      margin-bottom: 14px;
+      padding: 14px;
+    }}
+    .error-state[hidden] {{ display: none; }}
+    .error-title {{ font-weight: 700; }}
+    .error-copy {{ color: oklch(0.37 0.055 78); line-height: 1.55; margin: 4px 0 12px; max-width: 72ch; }}
+    .sr-only {{
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      height: 1px;
+      overflow: hidden;
+      position: absolute;
+      white-space: nowrap;
+      width: 1px;
     }}
     table {{
       width: 100%;
@@ -504,12 +621,14 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
         border-right: 0;
         border-bottom: 1px solid var(--line);
       }}
-      nav {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
-      .nav-button {{ justify-content: center; }}
+      nav {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+      .nav-button {{ justify-content: center; min-height: 44px; padding: 0 6px; }}
       .nav-button .dot {{ display: none; }}
       main {{ padding: 18px 16px 34px; }}
       .topbar {{ align-items: stretch; flex-direction: column; }}
-      .split {{ grid-template-columns: 1fr; }}
+      .split, .overview-layout {{ grid-template-columns: 1fr; }}
+      .memory-search {{ align-items: stretch; flex-direction: column; }}
+      input[type="search"] {{ min-height: 44px; width: 100%; }}
       th, td {{ padding: 9px 6px; }}
       .toast {{
         left: 16px;
@@ -539,51 +658,104 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
         </div>
       </div>
       <nav aria-label="管理页">
-        <button class="nav-button" data-view="overview" aria-selected="true"><span class="dot"></span>概览</button>
-        <button class="nav-button" data-view="reviews" aria-selected="false"><span class="dot"></span>审核</button>
-        <button class="nav-button" data-view="devices" aria-selected="false"><span class="dot"></span>设备</button>
-        <button class="nav-button" data-view="runtime" aria-selected="false"><span class="dot"></span>运行</button>
+        <button class="nav-button" data-view="overview" aria-current="page"><span class="dot"></span>概览</button>
+        <button class="nav-button" data-view="memories"><span class="dot"></span>记忆</button>
+        <button class="nav-button" data-view="reviews"><span class="dot"></span>审核</button>
+        <button class="nav-button" data-view="devices"><span class="dot"></span>设备与权限</button>
+        <button class="nav-button" data-view="runtime"><span class="dot"></span>运行</button>
+        <button class="nav-button" data-view="activity"><span class="dot"></span>活动</button>
       </nav>
+      <div class="side-note">管理页只在这台电脑上运行。浏览器不会保存 Gateway 凭据。</div>
     </aside>
     <main>
-      <div class="topbar">
-        <div>
-          <h1 id="page-title">共享记忆管理</h1>
-          <div class="subtle" id="page-subtitle">当前工作区：{escaped_workspace}</div>
+      <div class="content">
+        <div class="topbar">
+          <div>
+            <p class="eyebrow">工作区管理台</p>
+            <h1 id="page-title">共享记忆管理</h1>
+            <div class="subtle" id="page-subtitle">当前工作区：{escaped_workspace}</div>
+          </div>
+          <div class="toolbar">
+            <span id="connection" class="connection" role="status" aria-live="polite"><span class="connection-dot"></span><span id="connection-label">正在读取状态</span></span>
+            <button id="refresh">刷新状态</button>
+          </div>
         </div>
-        <div class="toolbar">
-          <button id="refresh">刷新</button>
-        </div>
-      </div>
-      <div id="toast" class="toast" role="status" aria-live="polite"></div>
-      <section id="overview" class="view active">
-        <div class="grid" id="metrics"></div>
-        <div class="panel">
-          <div class="panel-head"><div class="panel-title">健康检查</div><span id="health-badge" class="badge">读取中</span></div>
-          <div class="panel-body" id="health-panel"></div>
-        </div>
-      </section>
-      <section id="reviews" class="view">
-        <div id="review-list"></div>
-      </section>
-      <section id="devices" class="view">
-        <div class="panel">
-          <div class="panel-head"><div class="panel-title">已授权设备和 Agent</div></div>
-          <div class="panel-body" id="device-list"></div>
-        </div>
-      </section>
-      <section id="runtime" class="view">
-        <div class="split">
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
+        <section id="overview" class="view active">
+          <div id="load-error" class="error-state" role="alert" hidden>
+            <div class="error-title" id="load-error-title">暂时无法读取管理数据</div>
+            <p class="error-copy" id="load-error-copy"></p>
+            <button id="load-error-refresh">重新读取</button>
+          </div>
+          <div class="overview-layout">
+            <div>
+              <p class="overview-copy">这里集中显示当前工作区最需要处理的事情。先看待审核和投递异常，再进入对应页面继续处理。</p>
+              <div class="grid" id="metrics"></div>
+              <div class="panel">
+                <div class="panel-head"><div class="panel-title">现在需要处理</div><span id="priority-badge" class="badge">读取中</span></div>
+                <div class="panel-body"><div id="priority-list" class="priority-list"></div></div>
+              </div>
+              <div class="panel">
+                <div class="panel-head"><div class="panel-title">健康检查</div><span id="health-badge" class="badge">读取中</span></div>
+                <div class="panel-body" id="health-panel"></div>
+              </div>
+            </div>
+            <div>
+              <div class="panel">
+                <div class="panel-head"><div class="panel-title">近期活动</div><button class="compact-link" data-view-link="activity">查看全部</button></div>
+                <div class="panel-body"><div id="overview-audit-list" class="activity-list"></div></div>
+              </div>
+              <div class="panel">
+                <div class="panel-head"><div class="panel-title">使用边界</div></div>
+                <div class="panel-body"><div class="row-copy">页面只通过本机 Sidecar 请求已授权工作区。不会显示设备公钥、Gateway 凭据、刷新凭据或数据库连接信息。</div></div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="memories" class="view">
+          <div class="panel">
+            <div class="panel-head"><div><div class="panel-title">记忆检索</div><div class="subtle">只查询当前工作区内、当前 Agent 已获授权的记忆。</div></div></div>
+            <div class="panel-body">
+              <form id="memory-search-form" class="memory-search">
+                <label class="sr-only" for="memory-query">记忆检索关键词</label>
+                <input id="memory-query" type="search" minlength="2" maxlength="256" required placeholder="输入关键词，例如：发布流程">
+                <button class="primary" type="submit">搜索记忆</button>
+              </form>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><div class="panel-title">检索结果</div><span id="memory-result-count" class="badge">等待查询</span></div>
+            <div class="panel-body"><div id="memory-results" class="empty">输入至少两个字开始查询。搜索不会修改记忆或同步队列。</div></div>
+          </div>
+        </section>
+        <section id="reviews" class="view">
+          <div id="review-list"></div>
+        </section>
+        <section id="devices" class="view">
+          <div class="panel">
+            <div class="panel-head"><div><div class="panel-title">设备与权限</div><div class="subtle">查看已登记设备、Agent 与工作区能力，不显示凭据。</div></div></div>
+            <div class="panel-body" id="device-list"></div>
+          </div>
+        </section>
+        <section id="runtime" class="view">
+          <div class="panel">
+            <div class="panel-head"><div><div class="panel-title">同步与投递</div><div class="subtle">这里只读展示当前异常数量；不会自动重放或清理事件。</div></div></div>
+            <div class="panel-body" id="delivery-summary"></div>
+          </div>
+          <div class="split">
           <div class="panel">
             <div class="panel-head"><div class="panel-title">未处理死信</div></div>
             <div class="panel-body" id="dead-letter-list"></div>
           </div>
+          </div>
+        </section>
+        <section id="activity" class="view">
           <div class="panel">
-            <div class="panel-head"><div class="panel-title">近期审计</div></div>
+            <div class="panel-head"><div><div class="panel-title">近期活动</div><div class="subtle">记录已完成的管理与审核动作，不显示正文或敏感详情。</div></div></div>
             <div class="panel-body" id="audit-list"></div>
           </div>
-        </div>
-      </section>
+        </section>
+      </div>
     </main>
   </div>
   <dialog id="confirm-dialog" class="confirm-dialog">
@@ -600,7 +772,9 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     const state = {{
       workspaceId: document.body.dataset.workspace,
       reviews: [],
-      latestOperation: null
+      latestOperation: null,
+      overview: null,
+      audit: []
     }};
 
     const actionNames = {{
@@ -614,9 +788,11 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
 
     const labels = {{
       overview: ["共享记忆管理", "当前工作区：" + state.workspaceId],
+      memories: ["记忆", "检索当前工作区中已经授权给你的记忆"],
       reviews: ["审核候选", "只处理需要人工判断的候选记忆"],
-      devices: ["设备与 Agent", "查看授权状态和能力，不显示凭据"],
-      runtime: ["运行状态", "查看死信、审计和恢复检查结果"]
+      devices: ["设备与权限", "查看设备、Agent 和工作区能力，不显示凭据"],
+      runtime: ["运行", "查看同步、重试和死信的只读状态"],
+      activity: ["活动", "查看近期管理与审核记录，不显示正文或敏感详情"]
     }};
 
     function escapeHTML(value) {{
@@ -690,7 +866,49 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       return `<div class="metric"><div class="label">${{escapeHTML(label)}}</div><div class="value">${{escapeHTML(value)}}</div>${{badge}}</div>`;
     }}
 
+    function setConnection(label, tone) {{
+      const node = document.getElementById("connection");
+      node.className = "connection" + (tone ? " " + tone : "");
+      document.getElementById("connection-label").textContent = label;
+    }}
+
+    function renderPriority(payload) {{
+      const counts = payload.counts || {{}};
+      const tasks = [];
+      if (counts.pending_reviews) {{
+        tasks.push(["有待审核的候选记忆", `当前有 ${{counts.pending_reviews}} 条等待人工判断。`, "审核", "reviews", "warn"]);
+      }}
+      if (counts.retryable_events) {{
+        tasks.push(["有事件等待重试", `当前有 ${{counts.retryable_events}} 条事件会按原有退避策略继续投递。`, "查看运行", "runtime", "warn"]);
+      }}
+      if (counts.unresolved_dead_letters) {{
+        tasks.push(["有未处理的死信", `当前有 ${{counts.unresolved_dead_letters}} 条事件需要根据审计和固定回执判断。`, "查看运行", "runtime", "danger"]);
+      }}
+      if (!tasks.length) {{
+        tasks.push(["当前没有待处理事项", "审核、重试和死信均为空。可以查看近期活动，或按关键词检索记忆。", "查看活动", "activity", "ok"]);
+      }}
+      document.getElementById("priority-badge").className = "badge " + (tasks.some(item => item[4] === "danger") ? "danger" : tasks.some(item => item[4] === "warn") ? "warn" : "ok");
+      document.getElementById("priority-badge").textContent = tasks.some(item => item[4] !== "ok") ? "需要关注" : "状态平稳";
+      document.getElementById("priority-list").innerHTML = tasks.map(item => `
+        <div class="priority-row">
+          <div><div class="row-title">${{escapeHTML(item[0])}}</div><div class="row-copy">${{escapeHTML(item[1])}}</div></div>
+          <button data-view-link="${{item[3]}}">${{escapeHTML(item[2])}}</button>
+        </div>`).join("");
+    }}
+
+    function renderDelivery(payload) {{
+      const counts = payload.counts || {{}};
+      const rows = [
+        ["等待重试", counts.retryable_events || 0, "事件会按既有退避策略继续处理，不会由此页面自动重放。"],
+        ["未处理死信", counts.unresolved_dead_letters || 0, "需要先核对回执和审计；此页面不提供删除或批量清理。"],
+        ["活跃设备", counts.active_devices || 0, "已登记设备与 Agent 的状态可在“设备与权限”查看。"]
+      ];
+      document.getElementById("delivery-summary").innerHTML = `<div class="activity-list">${{rows.map(item => `
+        <div class="activity-row"><div><div class="row-title">${{escapeHTML(item[0])}}</div><div class="row-copy">${{escapeHTML(item[2])}}</div></div><span class="badge">${{escapeHTML(item[1])}}</span></div>`).join("")}}</div>`;
+    }}
+
     function renderOverview(payload) {{
+      state.overview = payload;
       const counts = payload.counts || {{}};
       document.getElementById("metrics").innerHTML = [
         metric("待审核", counts.pending_reviews || 0, counts.pending_reviews ? "warn" : "ok"),
@@ -698,6 +916,8 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
         metric("未处理死信", counts.unresolved_dead_letters || 0, counts.unresolved_dead_letters ? "danger" : "ok"),
         metric("活跃设备", counts.active_devices || 0, null)
       ].join("");
+      renderPriority(payload);
+      renderDelivery(payload);
     }}
 
     function renderHealth(payload) {{
@@ -716,6 +936,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
             <tr><th>问题</th><td>${{problems}}</td></tr>
           </tbody>
         </table>`;
+      setConnection(payload.ok ? "本机连接正常" : "需要处理", payload.ok ? "ok" : "danger");
     }}
 
     function renderReviews(payload) {{
@@ -783,7 +1004,8 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     }}
 
     function renderAudit(payload) {{
-      const rows = (payload.entries || []).map(item => `
+      state.audit = payload.entries || [];
+      const rows = state.audit.map(item => `
         <tr>
           <td>${{escapeHTML(item.created_at || "-")}}</td>
           <td>${{escapeHTML(item.action || "-")}}</td>
@@ -794,6 +1016,12 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       document.getElementById("audit-list").innerHTML = rows
         ? `<table><thead><tr><th>时间</th><th>操作</th><th>结果</th><th>Trace</th></tr></thead><tbody>${{rows}}</tbody></table>`
         : `<div class="empty">没有近期审计记录。</div>`;
+      const preview = state.audit.slice(0, 5).map(item => `
+        <div class="activity-row">
+          <div><div class="row-title">${{escapeHTML(item.action || "管理操作")}}</div><div class="row-copy">${{escapeHTML(item.result_code || "-")}}</div></div>
+          <div class="row-time">${{escapeHTML(item.created_at || "-")}}</div>
+        </div>`).join("");
+      document.getElementById("overview-audit-list").innerHTML = preview || `<div class="empty">还没有可展示的近期活动。</div>`;
     }}
 
     function renderDeadLetters(payload) {{
@@ -810,12 +1038,84 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
         : `<div class="empty">当前没有未处理死信。</div>`;
     }}
 
+    function renderMemories(payload, query) {{
+      const memories = payload.memories || [];
+      const retrieval = payload.retrieval || {{}};
+      const badge = document.getElementById("memory-result-count");
+      badge.textContent = `${{memories.length}} 条结果`;
+      badge.className = "badge";
+      if (!memories.length) {{
+        document.getElementById("memory-results").className = "empty";
+        document.getElementById("memory-results").textContent = `没有找到与“${{query}}”匹配的已授权记忆。`;
+        return;
+      }}
+      document.getElementById("memory-results").className = "memory-list";
+      document.getElementById("memory-results").innerHTML = memories.map(item => `
+        <article class="memory-row">
+          <div>
+            <div class="row-title">${{escapeHTML(item.kind || "记忆")}} <span class="badge">${{escapeHTML(item.status || "confirmed")}}</span></div>
+            <div class="memory-content">${{escapeHTML(item.content || "")}}</div>
+            <div class="memory-meta"><span>${{escapeHTML(item.scope || "-")}}</span><span>·</span><span>${{code(item.memory_id)}}</span></div>
+          </div>
+          <div class="row-time">置信度<br>${{escapeHTML(item.confidence ?? "-")}}</div>
+        </article>`).join("");
+      if (retrieval.incomplete) {{
+        toast("结果受当前检索预算限制，已展示可用部分。");
+      }}
+    }}
+
+    function errorCopy(code) {{
+      const messages = {{
+        LOCAL_METHOD_UNSUPPORTED: ["需要更新本机 Sidecar", "当前运行的 Sidecar 还没有加载管理功能。请先完成软件更新，并在维护窗口重新启动 Sidecar；浏览器不会直接访问 Gateway。"],
+        GATEWAY_UNAVAILABLE: ["暂时连不上共享服务", "请检查本机 Sidecar、网络和 Gateway 健康状态，然后重新读取。"],
+        WORKSPACE_FORBIDDEN: ["当前 Agent 没有该工作区权限", "请核对当前管理 Agent 的工作区授权和 memory.manage 能力。"]
+      }};
+      return messages[code] || ["暂时无法读取管理数据", "管理页保留了本机会话和凭据边界。请稍后重新读取，或根据错误码检查 Sidecar 与 Gateway。"];
+    }}
+
+    function showLoadError(code) {{
+      const message = errorCopy(code);
+      document.getElementById("load-error").hidden = false;
+      document.getElementById("load-error-title").textContent = message[0];
+      document.getElementById("load-error-copy").textContent = message[1];
+      document.getElementById("metrics").innerHTML = "";
+      document.getElementById("priority-list").innerHTML = "";
+      document.getElementById("health-panel").innerHTML = "";
+      document.getElementById("overview-audit-list").innerHTML = "";
+      setConnection(message[0], "danger");
+    }}
+
+    async function searchMemories() {{
+      const input = document.getElementById("memory-query");
+      const query = input.value.trim();
+      if (query.length < 2) {{
+        input.focus();
+        return;
+      }}
+      const root = document.getElementById("memory-results");
+      const badge = document.getElementById("memory-result-count");
+      root.className = "empty";
+      root.textContent = "正在检索已授权记忆…";
+      badge.textContent = "检索中";
+      try {{
+        renderMemories(await api("/api/memories?q=" + encodeURIComponent(query)), query);
+      }} catch (error) {{
+        root.className = "empty";
+        root.textContent = errorCopy(error.message)[1];
+        badge.textContent = "暂不可用";
+        toast(error.message);
+      }}
+    }}
+
     async function refreshAll() {{
       const refreshButton = document.getElementById("refresh");
       refreshButton.disabled = true;
       refreshButton.dataset.loading = "true";
       refreshButton.textContent = "刷新中";
-      document.getElementById("metrics").innerHTML = `<div class="skeleton"></div><div class="skeleton"></div>`;
+      document.getElementById("load-error").hidden = true;
+      document.getElementById("metrics").innerHTML = `<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>`;
+      document.getElementById("priority-list").innerHTML = `<div class="skeleton"></div><div class="skeleton"></div>`;
+      setConnection("正在读取状态", "");
       try {{
         const [overview, health, reviews, devices, audit, deadLetters] = await Promise.all([
           api("/api/overview"),
@@ -832,12 +1132,23 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
         renderAudit(audit);
         renderDeadLetters(deadLetters);
       }} catch (error) {{
+        showLoadError(error.message);
         toast(error.message);
       }} finally {{
         refreshButton.disabled = false;
         refreshButton.dataset.loading = "false";
         refreshButton.textContent = "刷新";
       }}
+    }}
+
+    function showView(view) {{
+      document.querySelectorAll(".nav-button").forEach(item => item.removeAttribute("aria-current"));
+      const button = document.querySelector(`.nav-button[data-view="${{view}}"]`);
+      if (button) button.setAttribute("aria-current", "page");
+      document.querySelectorAll(".view").forEach(item => item.classList.remove("active"));
+      document.getElementById(view).classList.add("active");
+      document.getElementById("page-title").textContent = labels[view][0];
+      document.getElementById("page-subtitle").textContent = labels[view][1];
     }}
 
     function resolveReview(index, action, targetRef) {{
@@ -875,12 +1186,12 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     document.addEventListener("click", event => {{
       const nav = event.target.closest(".nav-button");
       if (nav) {{
-        document.querySelectorAll(".nav-button").forEach(item => item.setAttribute("aria-selected", "false"));
-        nav.setAttribute("aria-selected", "true");
-        document.querySelectorAll(".view").forEach(item => item.classList.remove("active"));
-        document.getElementById(nav.dataset.view).classList.add("active");
-        document.getElementById("page-title").textContent = labels[nav.dataset.view][0];
-        document.getElementById("page-subtitle").textContent = labels[nav.dataset.view][1];
+        showView(nav.dataset.view);
+        return;
+      }}
+      const viewLink = event.target.closest("[data-view-link]");
+      if (viewLink) {{
+        showView(viewLink.dataset.viewLink);
         return;
       }}
       const actionButton = event.target.closest("[data-action]");
@@ -890,6 +1201,11 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     }});
 
     document.getElementById("refresh").addEventListener("click", refreshAll);
+    document.getElementById("load-error-refresh").addEventListener("click", refreshAll);
+    document.getElementById("memory-search-form").addEventListener("submit", event => {{
+      event.preventDefault();
+      searchMemories();
+    }});
     refreshAll();
   </script>
 </body>
@@ -919,7 +1235,7 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
             if not self._authorized():
                 self._json({"error": "LOCAL_ADMIN_SESSION_REQUIRED"}, status=401)
                 return
-            self._handle_api_get(parsed.path)
+            self._handle_api_get(parsed.path, parse_qs(parsed.query))
             return
         self._json({"error": "NOT_FOUND"}, status=404)
 
@@ -933,7 +1249,7 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
             return
         self._handle_api_post(parsed.path)
 
-    def _handle_api_get(self, path: str) -> None:
+    def _handle_api_get(self, path: str, query: dict[str, list[str]] | None = None) -> None:
         try:
             sidecar = self.state.sidecar_factory()
             payload = {"workspace_id": self.state.workspace_id}
@@ -955,6 +1271,11 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
                 self._json(sidecar.list_admin_audit(payload | {"limit": 50}))
             elif path == "/api/dead-letters":
                 self._json(sidecar.list_admin_dead_letters(payload | {"limit": 50}))
+            elif path == "/api/memories":
+                text = str(((query or {}).get("q") or [""])[0]).strip()
+                if not 2 <= len(text) <= 256:
+                    raise AdminConsoleError("MEMORY_QUERY_INVALID")
+                self._json(sidecar.search(payload | {"query": text, "limit": 20}))
             else:
                 self._json({"error": "NOT_FOUND"}, status=404)
         except (AdminConsoleError, SidecarDaemonError) as exc:

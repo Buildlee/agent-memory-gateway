@@ -8,6 +8,7 @@
 <p align="center">
   <a href="#三分钟体验"><img src="https://img.shields.io/badge/本地体验-无需_API_key-2ea44f" alt="本地体验无需 API key"></a>
   <a href="#支持的接入方式"><img src="https://img.shields.io/badge/MCP-Codex%20%7C%20Hermes-5a67d8" alt="支持 MCP"></a>
+  <a href="https://github.com/Buildlee/agent-memory-gateway/actions/workflows/validate.yml"><img src="https://github.com/Buildlee/agent-memory-gateway/actions/workflows/validate.yml/badge.svg" alt="自动验证"></a>
   <a href="#许可证"><img src="https://img.shields.io/badge/license-MIT-4b5563" alt="MIT License"></a>
   <a href="#三分钟体验"><img src="https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white" alt="Python 3.10 or newer"></a>
 </p>
