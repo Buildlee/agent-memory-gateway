@@ -28,3 +28,10 @@ memory-admin-console = "agent_memory_gateway.admin_console:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+agent_memory_gateway = [
+  "_schema/*.sql",
+  "_schema/migrations/*.sql",
+  "_schema/gbrain_migrations/*.sql",
+]

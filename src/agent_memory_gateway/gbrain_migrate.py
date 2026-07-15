@@ -53,8 +53,17 @@ def repository_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def schema_directory() -> Path:
+    """返回容器、源码目录或已安装包均可读取的 GBrain 迁移目录。"""
+
+    checkout_schema = repository_root() / "schema"
+    if checkout_schema.is_dir():
+        return checkout_schema
+    return Path(__file__).resolve().parent / "_schema"
+
+
 def default_schema_path() -> Path:
-    return repository_root() / "schema" / "gbrain_adapter.sql"
+    return schema_directory() / "gbrain_adapter.sql"
 
 
 @dataclass(frozen=True)

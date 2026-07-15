@@ -32,7 +32,9 @@ from agent_memory_gateway.gbrain_migrate import (
     expected_checksums,
     migration_specs,
     read_schema,
+    schema_directory,
 )
+from agent_memory_gateway import gbrain_migrate
 
 
 class GBrainBackendContractTests(unittest.TestCase):
@@ -40,6 +42,17 @@ class GBrainBackendContractTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with mock.patch.dict(os.environ, {"MEMORY_GATEWAY_REPOSITORY_ROOT": str(root)}):
             self.assertEqual(default_schema_path(), root / "schema" / "gbrain_adapter.sql")
+
+    def test_installed_package_has_a_bundled_adapter_schema(self):
+        root = Path(__file__).resolve().parents[1]
+        bundled = root / "src" / "agent_memory_gateway" / "_schema"
+        self.assertEqual(
+            (root / "schema" / "gbrain_adapter.sql").read_bytes(),
+            (bundled / "gbrain_adapter.sql").read_bytes(),
+        )
+        with mock.patch.object(gbrain_migrate, "repository_root", return_value=root / "missing-root"):
+            self.assertEqual(schema_directory(), bundled)
+            self.assertTrue(default_schema_path().is_file())
 
     def test_fact_kind_uses_values_allowed_by_live_gbrain_schema(self):
         self.assertEqual(fact_kind_for_memory_kind("decision"), "commitment")

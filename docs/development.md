@@ -50,6 +50,14 @@ $errors
 
 `start-sidecar.ps1`、`install-sidecar-autostart.ps1` 和 `start-sidecar-mcp.ps1` 都要求传入 `DefaultWorkspace`。它必须是已经登记的工作区 ID。MCP 调用没有写 `workspace_id` 时会使用这个值；没有配置就报错，不会把占位文本当成可访问的工作区。
 
+这两个启动脚本在当前发布副本包含 `src` 时，会通过本次进程的 `PYTHONPATH` 加载该目录，不会写入全局 Python 环境。这样可以避免 Windows 在 MCP 客户端长期运行时锁住 `.exe` 启动文件，导致包升级中断。修改这条启动路径时，至少运行完整测试、PowerShell 语法检查和 `tests.test_release_safety`。
+
+飞牛发布脚本的 `SshPort` 必须在 1 到 65535 之间，默认 22。修改远程发布逻辑时，需要同时检查 SSH 命令和 SCP 上传都使用同一个端口；不要把现场 SSH 地址、账号、端口映射或 secret 路径写进公开代码和文档。
+
+发布前若本地仍在开发分支，使用 `-ProjectRoot` 指向一个已验证的主分支发布副本。不要靠临时切换当前工作目录来赌上传内容；脚本会验证发布副本的必要文件后才开始远程操作。
+
+迁移 SQL 在仓库根目录的 `schema` 下维护，同时会以完全相同的只读副本随 Python 包发布到 `agent_memory_gateway/_schema`。容器和源码目录优先使用根目录副本；已安装包没有仓库目录时自动使用包内副本。改动任一 SQL 后必须同步这两个位置，并运行完整测试，避免本地安装、Windows Sidecar 和容器计算出不同的迁移校验值。
+
 ## 混合检索怎么工作
 
 检索代码位于 `src/agent_memory_gateway/hybrid_retrieval.py`。它接收已经完成授权过滤的候选，而不是自己决定谁能读取记忆。
