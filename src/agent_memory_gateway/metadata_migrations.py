@@ -75,44 +75,57 @@ def repository_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def schema_directory() -> Path:
+    """返回运行时可读取的迁移文件目录。
+
+    容器和源码开发优先使用仓库根目录的 schema；安装 wheel 后该目录不在
+    site-packages 中，改用随包发布的只读副本。
+    """
+
+    checkout_schema = repository_root() / "schema"
+    if checkout_schema.is_dir():
+        return checkout_schema
+    return Path(__file__).resolve().parent / "_schema"
+
+
 def migration_specs(schema_path: str | Path | None = None) -> tuple[MigrationSpec, ...]:
-    base_path = Path(schema_path) if schema_path else repository_root() / "schema" / "memory_gateway.sql"
+    base_path = Path(schema_path) if schema_path else schema_directory() / "memory_gateway.sql"
     specs = [MigrationSpec(BASE_SCHEMA_VERSION, base_path)]
     if schema_path is None:
         specs.append(
             MigrationSpec(
                 "2026-07-11.2",
-                repository_root() / "schema" / "migrations" / "20260711_2_gateway_event_scope.sql",
+                schema_directory() / "migrations" / "20260711_2_gateway_event_scope.sql",
             )
         )
         specs.append(
             MigrationSpec(
                 "2026-07-11.3",
-                repository_root() / "schema" / "migrations" / "20260711_3_refresh_replay.sql",
+                schema_directory() / "migrations" / "20260711_3_refresh_replay.sql",
             )
         )
         specs.append(
             MigrationSpec(
                 "2026-07-12.1",
-                repository_root() / "schema" / "migrations" / "20260712_1_gateway_event_instruction_like.sql",
+                schema_directory() / "migrations" / "20260712_1_gateway_event_instruction_like.sql",
             )
         )
         specs.append(
             MigrationSpec(
                 "2026-07-12.2",
-                repository_root() / "schema" / "migrations" / "20260712_2_sync_protocol_state.sql",
+                schema_directory() / "migrations" / "20260712_2_sync_protocol_state.sql",
             )
         )
         specs.append(
             MigrationSpec(
                 "2026-07-13.4",
-                repository_root() / "schema" / "migrations" / "20260713_4_review_lifecycle.sql",
+                schema_directory() / "migrations" / "20260713_4_review_lifecycle.sql",
             )
         )
         specs.append(
             MigrationSpec(
                 "2026-07-13.5",
-                repository_root() / "schema" / "migrations" / "20260713_5_crystal_state.sql",
+                schema_directory() / "migrations" / "20260713_5_crystal_state.sql",
             )
         )
     return tuple(specs)

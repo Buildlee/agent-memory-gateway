@@ -1,6 +1,8 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -12,10 +14,31 @@ from agent_memory_gateway.metadata_migrations import (
     expected_checksums,
     migration_specs,
     read_schema,
+    schema_directory,
 )
+from agent_memory_gateway import metadata_migrations
 
 
 class MetadataSchemaContractTests(unittest.TestCase):
+    def test_bundled_schema_matches_the_checkout_and_is_used_without_a_checkout_root(self):
+        root = Path(__file__).resolve().parents[1]
+        bundled = root / "src" / "agent_memory_gateway" / "_schema"
+        checkout_files = sorted((root / "schema").rglob("*.sql"))
+        bundled_files = sorted(bundled.rglob("*.sql"))
+        self.assertEqual(
+            [path.relative_to(root / "schema") for path in checkout_files],
+            [path.relative_to(bundled) for path in bundled_files],
+        )
+        for checkout in checkout_files:
+            packaged = bundled / checkout.relative_to(root / "schema")
+            self.assertEqual(checkout.read_bytes(), packaged.read_bytes())
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            metadata_migrations, "repository_root", return_value=Path(directory)
+        ):
+            self.assertEqual(schema_directory(), bundled)
+            self.assertEqual(len(expected_checksums()), 7)
+
     def test_schema_declares_every_required_metadata_table(self):
         sql = "\n".join(read_schema(spec.path) for spec in migration_specs())
         for table in REQUIRED_METADATA_TABLES:

@@ -23,6 +23,30 @@ class ReleaseSafetyTests(unittest.TestCase):
             self.assertIn(command, script)
             self.assertIn("MEMORY_GATEWAY_TOKEN", script)
 
+    def test_sidecar_and_mcp_prefer_the_current_release_source(self) -> None:
+        expected_modules = {
+            "start-sidecar.ps1": "agent_memory_gateway.sidecar_daemon",
+            "start-sidecar-mcp.ps1": "agent_memory_gateway.sidecar_mcp",
+        }
+        for name, module in expected_modules.items():
+            script = (ROOT / "scripts" / name).read_text(encoding="utf-8")
+            self.assertIn('Join-Path (Split-Path -Parent $PSScriptRoot) "src"', script)
+            self.assertIn("PYTHONPATH", script)
+            self.assertIn(module, script)
+
+        mcp_script = (ROOT / "scripts" / "start-sidecar-mcp.ps1").read_text(encoding="utf-8")
+        self.assertIn('McpExecutable -eq "memory-sidecar-mcp"', mcp_script)
+        self.assertIn("PythonExecutable", mcp_script)
+
+    def test_fn_release_script_uses_the_requested_ssh_port_for_upload_and_remote_commands(self) -> None:
+        script = (ROOT / "scripts" / "deploy-fn-release.ps1").read_text(encoding="utf-8")
+        self.assertIn("[int]$SshPort = 22", script)
+        self.assertIn('$sshArguments = @("-p", [string]$SshPort, $SshHost)', script)
+        self.assertIn("& ssh @sshArguments $prepareCommand", script)
+        self.assertIn("& scp -P $SshPort -r", script)
+        self.assertIn("[string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)", script)
+        self.assertIn("发布副本缺少必要路径", script)
+
     def test_ci_runs_release_gates_without_parent_commit_assumption(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")
         self.assertIn("python -m unittest discover -s tests", workflow)

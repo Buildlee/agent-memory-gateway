@@ -10,7 +10,9 @@ param(
 
     [int]$Port = 8766,
 
-    [string]$McpExecutable = "memory-sidecar-mcp"
+    [string]$McpExecutable = "memory-sidecar-mcp",
+
+    [string]$PythonExecutable = "python"
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,7 +59,29 @@ $env:MEMORY_DEFAULT_WORKSPACE = $DefaultWorkspace
 $env:MEMORY_OUTBOX_KEY = $keyValues["MEMORY_OUTBOX_KEY"]
 $env:MEMORY_SIDECAR_PORT = [string]$Port
 
-& $McpExecutable
+$sourceDirectory = Join-Path (Split-Path -Parent $PSScriptRoot) "src"
+$sourcePackage = Join-Path $sourceDirectory "agent_memory_gateway"
+$pythonCommand = Get-Command -Name $PythonExecutable -ErrorAction SilentlyContinue
+
+# 默认入口优先运行当前发布副本的源码。MCP 客户端可能长期占用 Windows 的
+# .exe 启动文件；通过 Python 模块启动可避免更新时先删除仍在使用的程序。
+# 自定义 McpExecutable 继续按原样执行，不会被这个回退改变。
+if ($McpExecutable -eq "memory-sidecar-mcp" -and $pythonCommand -and (Test-Path -LiteralPath $sourcePackage -PathType Container)) {
+    $hadPythonPath = Test-Path -LiteralPath "Env:PYTHONPATH"
+    $previousPythonPath = $env:PYTHONPATH
+    try {
+        $env:PYTHONPATH = if ($previousPythonPath) { "$sourceDirectory;$previousPythonPath" } else { $sourceDirectory }
+        & $pythonCommand.Path -m agent_memory_gateway.sidecar_mcp
+    } finally {
+        if ($hadPythonPath) {
+            $env:PYTHONPATH = $previousPythonPath
+        } else {
+            Remove-Item -LiteralPath "Env:PYTHONPATH" -ErrorAction SilentlyContinue
+        }
+    }
+} else {
+    & $McpExecutable
+}
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

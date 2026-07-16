@@ -78,7 +78,30 @@ $env:MEMORY_OUTBOX_KEY_VERSION = $keyValues["MEMORY_OUTBOX_KEY_VERSION"]
 $env:MEMORY_HOME = $MemoryHome
 $env:MEMORY_SIDECAR_PORT = [string]$Port
 
-& $PythonExecutable -m agent_memory_gateway.sidecar_daemon --host 127.0.0.1 --port $Port
+$pythonCommand = Get-Command -Name $PythonExecutable -ErrorAction SilentlyContinue
+if (-not $pythonCommand) {
+    throw "找不到 Python 解释器：$PythonExecutable"
+}
+
+# 已登记的 Windows 任务以当前仓库作为工作目录。优先使用该发布副本的源码，
+# 这样更新后的 Sidecar 不依赖替换正在被 MCP 客户端占用的启动程序；不会安装依赖
+# 或改写全局环境。没有源码目录时，保留已安装包的原有启动方式。
+$sourceDirectory = Join-Path (Split-Path -Parent $PSScriptRoot) "src"
+$sourcePackage = Join-Path $sourceDirectory "agent_memory_gateway"
+$hadPythonPath = Test-Path -LiteralPath "Env:PYTHONPATH"
+$previousPythonPath = $env:PYTHONPATH
+try {
+    if (Test-Path -LiteralPath $sourcePackage -PathType Container) {
+        $env:PYTHONPATH = if ($previousPythonPath) { "$sourceDirectory;$previousPythonPath" } else { $sourceDirectory }
+    }
+    & $pythonCommand.Path -m agent_memory_gateway.sidecar_daemon --host 127.0.0.1 --port $Port
+} finally {
+    if ($hadPythonPath) {
+        $env:PYTHONPATH = $previousPythonPath
+    } else {
+        Remove-Item -LiteralPath "Env:PYTHONPATH" -ErrorAction SilentlyContinue
+    }
+}
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
