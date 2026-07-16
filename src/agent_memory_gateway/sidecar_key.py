@@ -32,3 +32,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     path = generate_sidecar_key_file(args.output)
     print(f"sidecar_key_file={path}")
+
+
+if __name__ == "__main__":
+    main()
