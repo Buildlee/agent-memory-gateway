@@ -34,6 +34,8 @@ class ContainerSetupTests(unittest.TestCase):
         self.assertNotIn("docker run --rm", script)
         self.assertIn("network_mode: \"service:${MEMORY_CLIENT_SERVICE", compose)
         self.assertIn("MEMORY_REFRESH_CREDENTIAL_FILE", compose)
+        self.assertIn("command:\n      - >-", compose)
+        self.assertIn("exec python -m agent_memory_gateway.sidecar_mcp", compose)
         self.assertNotIn("hermes-webui", script)
 
 
