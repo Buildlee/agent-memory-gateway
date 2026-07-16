@@ -23,6 +23,7 @@ Agent Memory Gateway 是一个可自托管的共享记忆服务。它适合 Code
 |---|---|---|
 | 先验证两个 Agent 能否共用一条记忆 | [三分钟体验](#三分钟体验) | Python 3.10 或更高版本 |
 | 把 Codex、Hermes 或 OpenClaw 接到已部署的 Gateway | [一条命令接入正式服务](#一条命令接入正式服务) | Gateway 地址、一次性配对码和工作区 ID |
+| 把 Docker 中的任意 Agent 接到已部署的 Gateway | [容器 Agent 接入](docs/container-sidecar.md) | 容器名、持久状态目录和工作区 ID |
 | 在自己的服务器或内网部署服务 | [部署说明](docs/deployment.md) | PostgreSQL、HTTPS 入口和管理权限 |
 | 日常查看运行状态、排查重试或死信 | [运维与恢复](docs/operations.md) | 已授权的管理 Agent 与本机 Sidecar |
 | 修改功能、运行回归测试 | [开发与验证](docs/development.md) | Python 开发环境 |
@@ -74,6 +75,7 @@ Stop-Process -Id <脚本输出的 process_id>
 | Hermes MCP | Hermes 与同一台设备上的其他 Agent 共用记忆 | [Hermes 配置示例](examples/hermes-mcp.json) |
 | OpenClaw HTTP | 本地原型、路由层或自定义工作流 | [HTTP 示例](examples/openclaw-http.md) |
 | 其他 MCP 客户端 | 已支持标准 MCP 进程配置的 Agent | 参考 [示例说明](examples/README.md) |
+| 容器内 Agent | 支持 Streamable HTTP MCP 的 Docker 服务 | [统一容器接入](docs/container-sidecar.md) |
 
 ## 一条命令接入正式服务
 
@@ -85,8 +87,10 @@ Stop-Process -Id <脚本输出的 process_id>
   -GatewayUrl "https://memory-gateway.example.internal" `
   -DeviceId "local-pc" `
   -DefaultWorkspace "shared-workspace" `
-  -Agent "codex-desktop|codex|Codex Desktop" `
-  -Agent "hermes-desktop|hermes|Hermes Desktop" `
+  -Agent @(
+    "codex-desktop|codex|Codex Desktop"
+    "hermes-desktop|hermes|Hermes Desktop"
+  ) `
   -InstallAutostart
 ```
 
@@ -176,6 +180,7 @@ flowchart LR
 - [开发与验证](docs/development.md)：测试命令、检索口径和修改约定。
 - [导入已有记忆](docs/importing-existing-memory.md)：把已确认的既有资料迁入共享库。
 - [接入示例](examples/README.md)：Codex、Hermes、OpenClaw 与本地原型配置。
+- [容器 Agent 接入](docs/container-sidecar.md)：通用 Docker Sidecar、MCP Bridge 和恢复方式。
 
 ## 开发与验证
 

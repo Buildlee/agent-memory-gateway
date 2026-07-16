@@ -64,8 +64,10 @@ Stop-Process -Id <process_id>
   -GatewayUrl "https://memory-gateway.example.internal" `
   -DeviceId "local-pc" `
   -DefaultWorkspace "shared-workspace" `
-  -Agent "codex-desktop|codex|Codex Desktop" `
-  -Agent "hermes-desktop|hermes|Hermes Desktop" `
+  -Agent @(
+    "codex-desktop|codex|Codex Desktop"
+    "hermes-desktop|hermes|Hermes Desktop"
+  ) `
   -InstallAutostart
 ```
 
@@ -76,6 +78,8 @@ Stop-Process -Id <process_id>
 如果 Gateway 使用内部 CA，再增加 `-GatewayCaCertificate "<本机 CA 证书路径>"`。公网受信任证书不需要这个参数；证书不匹配时应修正证书链，不要关闭 TLS 校验。
 
 命令结束时会列出生成的 MCP JSON 文件。把各自的 JSON 导入 Codex、Hermes 或其他 MCP 客户端后，重启对应 Agent。JSON 只包含本机启动脚本、Agent ID、工作区和本机 key 文件路径，不保存 Gateway 令牌、刷新凭据、数据库地址或私钥。
+
+Docker 中的 Agent 使用同一套身份和工作区协议，但不需要把 Windows 运行环境复制进容器。请按[容器内 Agent 的统一接入](container-sidecar.md)运行 `-Mode container`；它会为目标容器建立一个只监听容器回环地址的 MCP Bridge。
 
 ### 验证真实 Agent 的连接
 

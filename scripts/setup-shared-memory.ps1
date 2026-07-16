@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("demo", "server", "device", "verify")]
+    [ValidateSet("demo", "server", "device", "container", "verify")]
     [string]$Mode = "device",
 
     [string]$PythonExecutable = "python",
@@ -65,6 +65,24 @@ param(
     [string]$TaskName = "MemoryGatewaySidecar",
 
     [string]$McpOutputDirectory = "$env:LOCALAPPDATA\memory-gateway\mcp"
+
+    ,
+
+    [string]$ClientContainerName,
+
+    [string]$ContainerStateDirectory,
+
+    [string]$TenantId,
+
+    [string]$UserId,
+
+    [string]$ContainerGatewayUrl = "http://gateway:8787",
+
+    [string]$ContainerCapabilities = "memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event",
+
+    [string]$ContainerUser = "1000:1001",
+
+    [switch]$Resume
 )
 
 $ErrorActionPreference = "Stop"
@@ -260,6 +278,44 @@ if ($Mode -eq "server") {
         -ProjectRoot $projectRoot `
         -Build `
         -Start
+    exit $LASTEXITCODE
+}
+
+if ($Mode -eq "container") {
+    foreach ($required in @{
+            "SshHost" = $SshHost
+            "ClientContainerName" = $ClientContainerName
+            "ContainerStateDirectory" = $ContainerStateDirectory
+            "TenantId" = $TenantId
+            "UserId" = $UserId
+            "DeviceId" = $DeviceId
+            "DefaultWorkspace" = $DefaultWorkspace
+        }.GetEnumerator()) {
+        Require-Value -Name $required.Key -Value $required.Value
+    }
+    if ($Agent.Count -ne 1) {
+        throw "容器接入一次只登记一个 Agent；请提供一条 -Agent。"
+    }
+    $containerAgent = ConvertTo-AgentSpec -RawAgent $Agent[0]
+    & (Join-Path $PSScriptRoot "setup-container-sidecar.ps1") `
+        -SshHost $SshHost `
+        -SshPort $SshPort `
+        -ClientContainerName $ClientContainerName `
+        -StateDirectory $ContainerStateDirectory `
+        -TenantId $TenantId `
+        -UserId $UserId `
+        -DeviceId $DeviceId `
+        -DeviceName $DeviceName `
+        -DeviceType $DeviceType `
+        -AgentInstallationId $containerAgent.Id `
+        -AgentType $containerAgent.Type `
+        -AgentDisplayName $containerAgent.Name `
+        -DefaultWorkspace $DefaultWorkspace `
+        -Capabilities $ContainerCapabilities `
+        -GatewayInternalUrl $ContainerGatewayUrl `
+        -ContainerUser $ContainerUser `
+        -Apply:$Apply `
+        -Resume:$Resume
     exit $LASTEXITCODE
 }
 

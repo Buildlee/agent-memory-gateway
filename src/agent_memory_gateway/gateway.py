@@ -263,6 +263,7 @@ def main() -> None:
         return
     if sys.argv[1:2] in (
         ["pairing-code"],
+        ["bind-workspace"],
         ["revoke-device"],
         ["revoke-agent"],
         ["bootstrap-credential"],

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import os
 from pathlib import Path
 
 from agent_memory_gateway.sidecar_key import generate_sidecar_key_file
@@ -13,5 +14,7 @@ class SidecarKeyTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             self.assertIn("MEMORY_OUTBOX_KEY=", text)
             self.assertIn("MEMORY_OUTBOX_KEY_VERSION=v1", text)
+            if os.name != "nt":
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             with self.assertRaises(FileExistsError):
                 generate_sidecar_key_file(path)

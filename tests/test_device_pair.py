@@ -14,6 +14,7 @@ from agent_memory_gateway.device_pair import (
     pair_device,
     parse_agent_spec,
 )
+from agent_memory_gateway.file_credential import read_file_credential
 from agent_memory_gateway.identity_service import verify_pairing_proof
 
 
@@ -133,6 +134,40 @@ class DevicePairTests(unittest.TestCase):
                     )
 
             urlopen.assert_not_called()
+
+    @unittest.skipIf(__import__("os").name == "nt", "受限文件凭据仅在 Linux/NAS 上启用")
+    def test_pairing_can_store_a_linux_refresh_credential_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            credential_file = Path(directory) / "refresh.json"
+
+            with patch(
+                "agent_memory_gateway.device_pair.request.urlopen",
+                return_value=_Response(
+                    {
+                        "device_id": "fn-hermes",
+                        "agent_installation_ids": ["hermes-fn"],
+                        "refresh_credential": "rfc_linux.credential-value-not-for-output",
+                    }
+                ),
+            ):
+                result = pair_device(
+                    gateway_url="https://gateway.example.test",
+                    pairing_code="pair-code",
+                    device_id="fn-hermes",
+                    device_name="FN Hermes",
+                    device_type="nas",
+                    device_key_file=Path(directory) / "device.pem",
+                    agents=(DevicePairAgent("hermes-fn", "hermes", "FN Hermes"),),
+                    credential_target=None,
+                    credential_username="fn-hermes",
+                    credential_file=credential_file,
+                )
+
+            self.assertEqual(result["credential_file"], str(credential_file))
+            self.assertEqual(
+                read_file_credential(credential_file),
+                ("fn-hermes", "rfc_linux.credential-value-not-for-output"),
+            )
 
 
 if __name__ == "__main__":

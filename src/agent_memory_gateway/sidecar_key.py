@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Sequence
 
@@ -17,10 +18,11 @@ def generate_sidecar_key_file(output_path: str | Path) -> Path:
         raise FileExistsError(f"拒绝覆盖已有 Sidecar key 文件：{path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     key = EventCipher.generate_base64_key()
-    path.write_text(
-        f"MEMORY_OUTBOX_KEY={key}\nMEMORY_OUTBOX_KEY_VERSION=v1\n",
-        encoding="utf-8",
-    )
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8", closefd=True) as stream:
+        stream.write(f"MEMORY_OUTBOX_KEY={key}\nMEMORY_OUTBOX_KEY_VERSION=v1\n")
+        stream.flush()
+        os.fsync(stream.fileno())
     return path
 
 

@@ -15,7 +15,7 @@ from typing import Any
 from urllib import error, request
 
 from .sidecar_client import GatewayHTTPError, GatewayTransportError, SidecarClient
-from .sidecar_auth import SidecarAuthError, WindowsRefreshTokenProvider
+from .sidecar_auth import SidecarAuthError, refresh_token_provider_from_environment
 
 
 MAX_LOCAL_RPC_BYTES = 1_048_576
@@ -301,8 +301,11 @@ def get_shared_sidecar() -> LocalSidecarProxy:
         try:
             client = SidecarClient()
             provider = (
-                WindowsRefreshTokenProvider.from_environment()
-                if os.environ.get("MEMORY_REFRESH_CREDENTIAL_TARGET")
+                refresh_token_provider_from_environment()
+                if (
+                    os.environ.get("MEMORY_REFRESH_CREDENTIAL_TARGET")
+                    or os.environ.get("MEMORY_REFRESH_CREDENTIAL_FILE")
+                )
                 else None
             )
             allowed_agent_ids = _allowed_agent_ids_from_environment()
@@ -343,7 +346,7 @@ def main() -> None:
     args = parser.parse_args()
     encoded_key = os.environ.get("MEMORY_OUTBOX_KEY", "")
     token = daemon_auth_token(encoded_key)
-    provider = WindowsRefreshTokenProvider.from_environment()
+    provider = refresh_token_provider_from_environment()
     server = create_sidecar_server(
         SidecarClient(),
         token,

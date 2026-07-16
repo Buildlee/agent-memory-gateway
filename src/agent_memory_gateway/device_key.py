@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import os
+import stat
 from pathlib import Path
 from typing import Sequence
 
@@ -26,17 +28,32 @@ def generate_device_key(output_path: str | Path) -> str:
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     )
-    try:
-        path.write_bytes(private_bytes)
-    except Exception:
-        if path.exists() and path.stat().st_size == 0:
-            path.unlink()
-        raise
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "wb", closefd=True) as stream:
+        stream.write(private_bytes)
+        stream.flush()
+        os.fsync(stream.fileno())
     public_bytes = private_key.public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
     )
     return base64.urlsafe_b64encode(public_bytes).decode("ascii").rstrip("=")
+
+
+def validate_device_key_file(path_value: str | Path) -> Path:
+    """确认 Linux/NAS 上的设备私钥不是可被其他账号读取的文件。"""
+
+    path = Path(path_value)
+    if not path.is_file() or path.is_symlink():
+        raise ValueError("DEVICE_KEY_INVALID")
+    if os.name != "nt":
+        try:
+            mode = path.stat().st_mode
+        except OSError as exc:
+            raise ValueError("DEVICE_KEY_INVALID") from exc
+        if not stat.S_ISREG(mode) or mode & 0o077:
+            raise ValueError("DEVICE_KEY_PERMISSIONS_INVALID")
+    return path
 
 
 def main(argv: Sequence[str] | None = None) -> None:

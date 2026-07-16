@@ -112,6 +112,8 @@ Windows 计划任务从发布副本启动 Sidecar 时，会优先使用该副本
 
 Codex、Hermes 和 OpenClaw 的配置文件与字段说明见 [examples/README.md](../examples/README.md)。MCP 配置中只保留脚本路径和 Agent 安装实例 ID，密钥仍由本机受保护存储和 Sidecar 管理。
 
+Docker 内的 Agent 不需要专用版本。运行 [容器内 Agent 的统一接入](container-sidecar.md)中的 `-Mode container`，安装器会从目标容器的 Compose 标签识别它所在项目，并启动通用的 `memory-mcp-bridge`。Bridge 与目标容器共用网络命名空间，只提供 `http://127.0.0.1:8767/mcp`，不绑定宿主机端口。应用自身的 MCP 设置仍应通过官方界面或 API 完成，不要改应用数据库。
+
 ## 上线前按顺序核对
 
 按顺序检查：

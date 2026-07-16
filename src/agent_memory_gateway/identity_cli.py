@@ -19,6 +19,13 @@ def _agent_types(raw: str) -> tuple[str, ...]:
     return values
 
 
+def _capabilities(raw: str) -> tuple[str, ...]:
+    values = tuple(sorted({value.strip() for value in raw.split(",") if value.strip()}))
+    if not values:
+        raise argparse.ArgumentTypeError("至少提供一个 capability")
+    return values
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="管理员设备配对和撤销")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -46,6 +53,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     add_metadata_dsn(revoke_agent)
     revoke_agent.add_argument("--agent-installation-id", required=True)
 
+    bind_workspace = commands.add_parser("bind-workspace", help="为已登记 Agent 追加最小权限工作区绑定")
+    add_metadata_dsn(bind_workspace)
+    bind_workspace.add_argument("--agent-installation-id", required=True)
+    bind_workspace.add_argument("--workspace-id", required=True)
+    bind_workspace.add_argument("--capabilities", type=_capabilities, required=True, help="逗号分隔")
+
     bootstrap_credential = commands.add_parser(
         "bootstrap-credential",
         help="为已 bootstrap 的 Windows 设备安全登记首个刷新凭据",
@@ -71,6 +84,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         result = admin.revoke_device(args.device_id)
     elif args.command == "revoke-agent":
         result = admin.revoke_agent(args.agent_installation_id)
+    elif args.command == "bind-workspace":
+        result = admin.bind_workspace(
+            agent_installation_id=args.agent_installation_id,
+            workspace_id=args.workspace_id,
+            capabilities=args.capabilities,
+        )
     else:
         saved = read_generic_credential(args.credential_target)
         if saved is None:
