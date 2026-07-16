@@ -32,6 +32,7 @@ services:
     environment:
       MEMORY_GATEWAY_URL: ${MEMORY_GATEWAY_URL:?必须指定容器内可访问的 Gateway 地址}
       MEMORY_REFRESH_CREDENTIAL_FILE: /state/refresh-credential.json
+      MEMORY_AGENT_INSTALLATION_ID: ${MEMORY_AGENT_INSTALLATION_ID:?必须指定 Agent 安装实例 ID}
       MEMORY_SIDECAR_ALLOWED_AGENTS: ${MEMORY_AGENT_INSTALLATION_ID:?必须指定 Agent 安装实例 ID}
       MEMORY_DEFAULT_WORKSPACE: ${MEMORY_DEFAULT_WORKSPACE:?必须指定默认工作区}
       MEMORY_DEVICE_ID: ${MEMORY_DEVICE_ID:?必须指定设备 ID}
