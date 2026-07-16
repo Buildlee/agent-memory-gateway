@@ -30,6 +30,7 @@ class ContainerSetupTests(unittest.TestCase):
         self.assertIn('"$gateway_entrypoint" memory-gateway bind-workspace', script)
         self.assertIn('docker container inspect "$key_container"', script)
         self.assertIn('key_container="${key_container}-$(date +%s)"', script)
+        self.assertIn("--force-recreate memory-mcp-bridge", script)
         self.assertIn('docker run --name "$pair_container"', script)
         self.assertNotIn("docker run --rm", script)
         self.assertIn("network_mode: \"service:${MEMORY_CLIENT_SERVICE", compose)

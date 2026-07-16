@@ -271,7 +271,8 @@ if [ -n "$bridge_id" ]; then
     echo '已存在统一 MCP Bridge 容器；拒绝替换。' >&2
     exit 65
   fi
-  docker start "$bridge_id" >/dev/null 2>&1 || true
+  docker compose --project-name "$client_project" --env-file "$bridge_env" -f "$client_compose" -f "$bridge_compose" up -d --no-deps --force-recreate memory-mcp-bridge
+  bridge_id="$(docker compose --project-name "$client_project" --env-file "$bridge_env" -f "$client_compose" -f "$bridge_compose" ps -q memory-mcp-bridge)"
 else
   docker compose --project-name "$client_project" --env-file "$bridge_env" -f "$client_compose" -f "$bridge_compose" up -d --no-deps memory-mcp-bridge
   bridge_id="$(docker compose --project-name "$client_project" --env-file "$bridge_env" -f "$client_compose" -f "$bridge_compose" ps -q memory-mcp-bridge)"
