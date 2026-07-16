@@ -68,9 +68,34 @@ function ConvertTo-PosixLiteral([string]$Value) {
 }
 
 function Invoke-RemoteScript([string]$Script) {
-    $Script | & ssh -p $SshPort $SshHost "sh -s"
-    if ($LASTEXITCODE -ne 0) {
-        throw "容器接入命令失败，退出码：$LASTEXITCODE"
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = "ssh"
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($argument in @("-p", [string]$SshPort, $SshHost, "sh", "-s")) {
+        [void]$startInfo.ArgumentList.Add($argument)
+    }
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    [void]$process.Start()
+    $process.StandardInput.NewLine = "`n"
+    $process.StandardInput.Write(($Script -replace "`r`n", "`n"))
+    $process.StandardInput.Close()
+    $standardOutput = $process.StandardOutput.ReadToEndAsync()
+    $standardError = $process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    $output = $standardOutput.GetAwaiter().GetResult().TrimEnd()
+    $errorOutput = $standardError.GetAwaiter().GetResult().Trim()
+    if ($output) {
+        Write-Output $output
+    }
+    if ($process.ExitCode -ne 0) {
+        if ($errorOutput) {
+            throw "容器接入命令失败：$errorOutput"
+        }
+        throw "容器接入命令失败，退出码：$($process.ExitCode)"
     }
 }
 
@@ -120,7 +145,8 @@ $quoted = @{
 }
 
 $remoteScript = @'
-set -eu
+set -e
+set -u
 
 client_container=__ClientContainerName__
 state_dir=__StateDirectory__
@@ -182,6 +208,9 @@ fi
 
 uid="\${container_user%%:*}"
 gid="\${container_user##*:}"
+bootstrap_suffix="$(printf '%s' "$device_id" | sha256sum | cut -c1-12)"
+pair_container="memory-sidecar-pair-$bootstrap_suffix"
+key_container="memory-sidecar-key-$bootstrap_suffix"
 if [ -f "$device_key" ] || [ -f "$refresh_file" ]; then
   if [ "$resume" != 1 ] || [ ! -f "$device_key" ] || [ ! -f "$refresh_file" ]; then
     echo '已有或不完整的设备凭据；拒绝覆盖。请核对后使用 -Resume。' >&2
@@ -197,12 +226,12 @@ else
 
   pairing_code="$(docker exec "$gateway_container" memory-gateway pairing-code --tenant-id "$tenant_id" --user-id "$user_id" --device-type "$device_type" --agent-types "$agent_type" | docker exec -i "$gateway_container" python -c 'import json, sys; print(json.load(sys.stdin)["pairing_code"])')"
   test -n "$pairing_code"
-  printf '%s\n' "$pairing_code" | docker run --rm -i --network "container:$client_container" --user "$container_user" --read-only --tmpfs /tmp:rw,noexec,nosuid,size=32m --security-opt no-new-privileges:true --cap-drop ALL --pids-limit 64 -v "$state_dir:/state" --entrypoint python "$image" -m agent_memory_gateway.device_pair --gateway-url "$gateway_url" --pairing-code-stdin --device-id "$device_id" --device-name "$device_name" --device-type "$device_type" --device-key-file /state/device-identity.pem --credential-file /state/refresh-credential.json --credential-username "$user_id" --agent "$agent_id|$agent_type|$agent_name"
+  printf '%s\n' "$pairing_code" | docker run --name "$pair_container" -i --network "container:$client_container" --user "$container_user" --read-only --tmpfs /tmp:rw,noexec,nosuid,size=32m --security-opt no-new-privileges:true --cap-drop ALL --pids-limit 64 -v "$state_dir:/state" --entrypoint python "$image" -m agent_memory_gateway.device_pair --gateway-url "$gateway_url" --pairing-code-stdin --device-id "$device_id" --device-name "$device_name" --device-type "$device_type" --device-key-file /state/device-identity.pem --credential-file /state/refresh-credential.json --credential-username "$user_id" --agent "$agent_id|$agent_type|$agent_name"
   pairing_code=''
 fi
 
 if [ ! -f "$sidecar_env" ]; then
-  docker run --rm --user "$container_user" --read-only --tmpfs /tmp:rw,noexec,nosuid,size=32m --security-opt no-new-privileges:true --cap-drop ALL --pids-limit 64 -v "$state_dir:/state" --entrypoint python "$image" -m agent_memory_gateway.sidecar_key --output /state/sidecar.env
+  docker run --name "$key_container" --user "$container_user" --read-only --tmpfs /tmp:rw,noexec,nosuid,size=32m --security-opt no-new-privileges:true --cap-drop ALL --pids-limit 64 -v "$state_dir:/state" --entrypoint python "$image" -m agent_memory_gateway.sidecar_key --output /state/sidecar.env
 fi
 test "$(stat -c %a "$device_key")" = 600
 test "$(stat -c %a "$refresh_file")" = 600
@@ -260,6 +289,6 @@ printf '%s\n' 'status=ready'
 '@
 
 foreach ($name in $quoted.Keys) {
-    $remoteScript = $remoteScript.Replace("__$name__", $quoted[$name])
+    $remoteScript = $remoteScript.Replace(("__" + $name + "__"), $quoted[$name])
 }
 Invoke-RemoteScript -Script $remoteScript
