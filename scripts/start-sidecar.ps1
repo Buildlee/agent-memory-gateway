@@ -21,7 +21,7 @@ param(
     [int]$Port = 8766,
 
     [AllowEmptyString()]
-    [string]$GatewayCaCertificate = "$env:LOCALAPPDATA\memory-gateway\certs\gateway-root.crt",
+    [string]$GatewayCaCertificate = "",
 
     [string]$PythonExecutable = "python"
 )

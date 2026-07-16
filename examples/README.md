@@ -45,39 +45,35 @@
 
 `principals.local.json`、`memory.db` 和测试令牌都不能提交到 Git。
 
-## 接入已经部署好的共享服务：先准备 Sidecar
+## 接入已经部署好的共享服务：用安装向导完成本机准备
 
-每台设备只运行一个 Sidecar。它保存本机的离线队列和受保护凭据，多个 Agent 通过它访问同一个 Gateway。
+生产环境不用 SQLite 的 `principals.local.json`。管理员创建一次性配对码后，在客户端运行：
 
-1. 管理端先登记设备、Agent 安装实例和工作区。生产环境使用配对或 `memory-gateway bootstrap`，不要拿 SQLite 的 `principals.local.json` 当作生产授权清单。
-2. 在这台客户端机器生成 Sidecar 的 outbox 密钥。输出文件已存在时命令会拒绝覆盖；请把它保留在仅本机可读的位置。
+```powershell
+.\scripts\setup-shared-memory.ps1 `
+  -Mode device `
+  -GatewayUrl "https://memory-gateway.example.internal" `
+  -DeviceId "local-pc" `
+  -DefaultWorkspace "shared-workspace" `
+  -Agent "codex-desktop|codex|Codex Desktop" `
+  -Agent "hermes-desktop|hermes|Hermes Desktop" `
+  -InstallAutostart
+```
 
-   ```powershell
-   memory-gateway sidecar-keygen --output "$env:LOCALAPPDATA\memory-gateway\secrets\pc-sidecar.env"
-   ```
+`-Agent` 中的三个字段依次是 Agent 安装实例 ID、类型和显示名。向导隐藏输入配对码，生成本机私钥与 Sidecar key，保存刷新凭据并启动只监听回环地址的 Sidecar。它还会生成完成替换的 MCP JSON 文件；已有 key、计划任务或 JSON 文件时停止，不会覆盖。
 
-3. 在一个独立 PowerShell 窗口启动 Sidecar。下面的三个值必须和管理端登记的信息一致。
+如果配对已成功但电脑在后续步骤中断，用同一条命令加 `-UseExistingCredential` 继续。该开关要求原设备私钥仍在，只复用已有的 Windows 凭据；不会把凭据写回终端或配置文件。
 
-   ```powershell
-   .\scripts\start-sidecar.ps1 `
-     -GatewayUrl "https://memory-gateway.example.internal" `
-     -DeviceId "local-pc" `
-     -AllowedAgents "codex-desktop,hermes-desktop" `
-     -DefaultWorkspace "shared-workspace"
-   ```
-
-4. Sidecar 保持运行后，再把对应 MCP 配置复制到 Agent 的设置中。MCP 进程只连本机 Sidecar，不应看到 Gateway 的刷新凭据、数据库地址或证书私钥。
-
-若 Gateway 使用内部 CA，把 CA 证书放在受保护的本机位置，再通过 `-GatewayCaCertificate` 传给启动脚本。不要关闭证书校验来绕过配置问题。
+若 Gateway 使用内部 CA，把 CA 证书放在受保护的本机位置，再增加 `-GatewayCaCertificate "<本机 CA 证书路径>"`。不要关闭证书校验来绕过配置问题。
 
 ## Codex 和 Hermes 的 MCP 配置
 
 | 使用者 | 复制的文件 | 需要改的两项 |
 |---|---|---|
-| Codex | [codex-mcp.json](codex-mcp.json) | `start-sidecar-mcp.ps1` 的真实路径、`codex-desktop` 的真实安装实例 ID、已登记的 `shared-workspace`。 |
-| Hermes | [hermes-mcp.json](hermes-mcp.json) | `start-sidecar-mcp.ps1` 的真实路径、`hermes-desktop` 的真实安装实例 ID、已登记的 `shared-workspace`。 |
+| Codex | 安装向导生成的 `%LOCALAPPDATA%\memory-gateway\mcp\codex-desktop-mcp.json` | 直接导入或复制其中内容，不需要填写凭据。 |
+| Hermes | 安装向导生成的 `%LOCALAPPDATA%\memory-gateway\mcp\hermes-desktop-mcp.json` | 直接导入或复制其中内容，不需要填写凭据。 |
 
-两份 JSON 都只描述怎样启动 MCP 桥接进程。替换完成后重启对应 Agent，并调用 `memory_sync_status`。如果 Sidecar 没有运行、密钥文件缺失或 Agent 安装实例 ID 未登记，MCP 会明确报错；先修正这些前置条件，不要把密钥加到 JSON 里。
+需要手动配置或研究字段时，仍可参考 [Codex 示例](codex-mcp.json) 和 [Hermes 示例](hermes-mcp.json)。两份 JSON 都只描述怎样启动 MCP 桥接进程。导入后重启对应 Agent，并调用 `memory_sync_status`。如果 Sidecar 没有运行、密钥文件缺失或 Agent 安装实例 ID 未登记，MCP 会明确报错；先修正这些前置条件，不要把密钥加到 JSON 里。
 
 `DefaultWorkspace` 要和启动 Sidecar 时使用的值完全一致。工具没有传 `workspace_id` 时，这个值就是请求使用的工作区；它不能写成 `default` 之类的占位文本。
 

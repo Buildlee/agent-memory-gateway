@@ -30,6 +30,22 @@ python -m compileall -q src
 
 测试通过只说明代码基线可用，不代表生产配置已经正确。
 
+## 用安装向导发布服务
+
+准备好密钥、证书、数据库备份和受保护的环境文件后，可以用一个入口完成发布。第一次先不带 `-Apply` 运行，它只核对参数并显示将要使用的 SSH 主机、端口和 Gateway 名称：
+
+```powershell
+.\scripts\setup-shared-memory.ps1 `
+  -Mode server `
+  -SshHost "deploy-user@server" `
+  -SshPort 22 `
+  -RemoteRoot "/srv/memory-gateway" `
+  -SecretsFile "/srv/memory-gateway/secrets.env" `
+  -GatewayAddress "memory-gateway.internal"
+```
+
+进入维护窗口、确认备份和迁移状态后，在同一条命令末尾增加 `-Apply`。这时才会创建新的发布目录、上传公开代码、构建镜像并启动 Gateway、Worker 和 HTTPS 代理。脚本不会替换受保护的环境文件，不会生成或打印密钥，也不会执行数据库迁移。
+
 ## 先迁移，再启动服务
 
 生产 Gateway 使用独立的元数据库。先执行只读检查：
@@ -68,15 +84,19 @@ docker compose --env-file "<受保护环境文件路径>" -f deploy/fn/compose.y
 
 ## 在每台客户端设备上运行 Sidecar
 
-每台设备只启动一个 Sidecar。它管理本机凭据、加密 outbox 和本机 RPC，Agent 通过 MCP 调用它：
+每台设备只启动一个 Sidecar。推荐使用安装向导完成一次性配对、独立运行环境、计划任务和 MCP 配置生成：
 
 ```powershell
-.\scripts\start-sidecar.ps1 `
+.\scripts\setup-shared-memory.ps1 `
+  -Mode device `
   -GatewayUrl "https://memory-gateway.example.internal" `
-  -DeviceId "your-registered-device-id" `
-  -AllowedAgents "your-agent-installation-id" `
-  -DefaultWorkspace "your-workspace-id"
+  -DeviceId "local-pc" `
+  -DefaultWorkspace "shared-workspace" `
+  -Agent "codex-desktop|codex|Codex Desktop" `
+  -InstallAutostart
 ```
+
+管理员需要先提供一次性配对码。向导会在隐藏输入中读取它，并把成功后的刷新凭据留在 Windows Credential Manager。生成的 MCP JSON 文件位于 `%LOCALAPPDATA%\memory-gateway\mcp`；导入到对应客户端后再重启 Agent。需要自定义目录、手动运行 Sidecar 或接入非 Windows 环境时，仍可使用 `start-sidecar.ps1`、`install-sidecar-autostart.ps1` 和 [示例说明](../examples/README.md)。
 
 Sidecar 必须只监听本机回环地址。局域网内直连内部 HTTPS 地址；外网访问通过 VPN、零信任网络或受控隧道回到同一网络边界。无论何种网络路径，都不要关闭 TLS 证书校验。
 

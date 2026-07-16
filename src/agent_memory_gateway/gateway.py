@@ -256,6 +256,11 @@ def main() -> None:
 
         sidecar_key_main(sys.argv[2:])
         return
+    if sys.argv[1:2] == ["device-pair"]:
+        from .device_pair import main as device_pair_main
+
+        device_pair_main(sys.argv[2:])
+        return
     if sys.argv[1:2] in (
         ["pairing-code"],
         ["revoke-device"],

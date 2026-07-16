@@ -56,50 +56,28 @@ Stop-Process -Id <process_id>
 
 ## 接入已经部署好的共享服务
 
-开始前，管理端需要为当前电脑登记以下信息：
-
-| 信息 | 用处 | 例子 |
-|---|---|---|
-| Gateway 地址 | Sidecar 与哪个服务通信 | `https://memory-gateway.example.internal` |
-| 设备 ID | 区分这台电脑 | `local-pc` |
-| Agent 安装实例 ID | 区分这台电脑上的不同 Agent | `codex-desktop` |
-| 工作区 ID | 决定可以共用哪一批记忆 | `shared-workspace` |
-
-### 1. 生成本机 Sidecar 密钥
-
-每台设备只需要一份 Sidecar outbox 密钥。生成命令不会输出密钥正文；输出文件只应由当前账户读取。
+管理员生成一次性配对码后，客户端只需要运行一次安装向导。`-Agent` 的格式是“安装实例 ID|类型|显示名”，可以重复填写多个 Agent：
 
 ```powershell
-memory-gateway sidecar-keygen `
-  --output "$env:LOCALAPPDATA\memory-gateway\secrets\sidecar.env"
-```
-
-### 2. 启动本机 Sidecar
-
-同一台电脑上的 Codex、Hermes 等 Agent 共用一个 Sidecar。Sidecar 只监听本机回环地址，外部设备无法直接连接它。
-
-```powershell
-.\scripts\start-sidecar.ps1 `
+.\scripts\setup-shared-memory.ps1 `
+  -Mode device `
   -GatewayUrl "https://memory-gateway.example.internal" `
   -DeviceId "local-pc" `
-  -AllowedAgents "codex-desktop,hermes-desktop" `
   -DefaultWorkspace "shared-workspace" `
-  -SidecarKeyFile "$env:LOCALAPPDATA\memory-gateway\secrets\sidecar.env"
+  -Agent "codex-desktop|codex|Codex Desktop" `
+  -Agent "hermes-desktop|hermes|Hermes Desktop" `
+  -InstallAutostart
 ```
 
-Gateway 使用内部 CA 时，把 CA 证书放在受保护的本机目录，再增加 `-GatewayCaCertificate` 参数。证书不匹配时应修正证书链，不要关闭 TLS 校验。
+向导会提示输入配对码，随后把刷新凭据保存在 Windows Credential Manager。设备私钥、Sidecar outbox key 和本机 MCP 配置都在已有文件时停止，不会自动覆盖。首次执行还会在仓库中建立 `.shared-memory-venv`，避免把 MCP 依赖装进全局 Python。
 
-### 3. 配置 Agent 的 MCP 入口
+若配对已经成功、但随后在本机准备阶段中断，使用原命令加 `-UseExistingCredential` 继续。这个开关要求原设备私钥仍在，且只复用现有 Windows 凭据；它不读取、打印或覆盖凭据，也不覆盖计划任务和 MCP JSON。
 
-复制 [Codex 示例](../examples/codex-mcp.json) 或 [Hermes 示例](../examples/hermes-mcp.json)，只替换：
+如果 Gateway 使用内部 CA，再增加 `-GatewayCaCertificate "<本机 CA 证书路径>"`。公网受信任证书不需要这个参数；证书不匹配时应修正证书链，不要关闭 TLS 校验。
 
-- `start-sidecar-mcp.ps1` 的本机路径；
-- 当前 Agent 的安装实例 ID；
-- 已登记的默认工作区 ID。
+命令结束时会列出生成的 MCP JSON 文件。把各自的 JSON 导入 Codex、Hermes 或其他 MCP 客户端后，重启对应 Agent。JSON 只包含本机启动脚本、Agent ID、工作区和本机 key 文件路径，不保存 Gateway 令牌、刷新凭据、数据库地址或私钥。
 
-MCP JSON 不保存 Gateway 令牌、刷新凭据、数据库地址、私钥或 outbox 密钥。这些值留在本机受保护的存储和 Sidecar 中。
-
-### 4. 验证真实 Agent 的连接
+### 验证真实 Agent 的连接
 
 配置后，在 Agent 中按这个顺序检查：
 
@@ -109,6 +87,16 @@ MCP JSON 不保存 Gateway 令牌、刷新凭据、数据库地址、私钥或 o
 4. 检查 Gateway 审计记录，确认它们属于预期工作区。
 
 若 MCP 调用没有携带 `workspace_id`，系统使用 `DefaultWorkspace`。没有配置时返回 `WORKSPACE_ID_REQUIRED`；当前设备或 Agent 不属于该工作区时返回 `WORKSPACE_FORBIDDEN`。这两个错误都意味着需要补齐或核对授权信息，而不是把工作区名称改成占位文本。
+
+### 单独检查本机 Sidecar
+
+安装后需要确认计划任务是否仍在运行时，执行：
+
+```powershell
+.\scripts\setup-shared-memory.ps1 -Mode verify
+```
+
+它只请求 `127.0.0.1` 的 Sidecar 健康接口，不会读写记忆、清理 outbox 或连接数据库。
 
 ## 常见情况
 
@@ -120,6 +108,9 @@ MCP JSON 不保存 Gateway 令牌、刷新凭据、数据库地址、私钥或 o
 | `WORKSPACE_ID_REQUIRED` | Sidecar 和 MCP 启动参数都应提供同一个已登记工作区。 |
 | `WORKSPACE_FORBIDDEN` | 管理端尚未把当前设备或 Agent 授予该工作区。 |
 | `GATEWAY_UNAVAILABLE` | 本机 Sidecar 未运行、Gateway 地址不可达，或 TLS 证书链未配置正确。 |
+| MCP 配置已存在 | 安装向导拒绝覆盖。先确认现有配置是否还在使用，再选择新的 `-McpOutputDirectory`。 |
+| 运行环境不完整 | `.shared-memory-venv` 已存在但缺少依赖。脚本不会自动删除它；检查原因后再人工处理。 |
+| 配对后安装中断 | 保留原设备私钥，用相同参数加 `-UseExistingCredential` 继续，不要再使用已经失效的配对码。 |
 
 ## 下一步
 

@@ -58,6 +58,17 @@ $errors
 
 迁移 SQL 在仓库根目录的 `schema` 下维护，同时会以完全相同的只读副本随 Python 包发布到 `agent_memory_gateway/_schema`。容器和源码目录优先使用根目录副本；已安装包没有仓库目录时自动使用包内副本。改动任一 SQL 后必须同步这两个位置，并运行完整测试，避免本地安装、Windows Sidecar 和容器计算出不同的迁移校验值。
 
+## 安装向导的回归点
+
+`scripts/setup-shared-memory.ps1` 是面向实际接入的入口，不是演示脚本的别名。修改它或设备配对客户端时，至少运行：
+
+```powershell
+python -m unittest tests.test_device_pair tests.test_setup_installer tests.test_release_safety
+python -m compileall -q src tests
+```
+
+向导必须守住这些行为：配对码只通过标准输入读取；刷新凭据只写入 Windows Credential Manager；MCP JSON 不包含 Gateway 令牌、刷新凭据或私钥；已有本机 key、计划任务、运行环境和 MCP JSON 均拒绝覆盖。配对完成后的恢复只允许用户显式传入 `-UseExistingCredential`，并要求原设备私钥存在。服务端模式没有 `-Apply` 时不连接远端，也不创建发布目录。公开受信任的 HTTPS 地址不应因为默认不存在的 CA 文件而失败；内部 CA 必须由用户明确传入并照常校验。
+
 ## 混合检索怎么工作
 
 检索代码位于 `src/agent_memory_gateway/hybrid_retrieval.py`。它接收已经完成授权过滤的候选，而不是自己决定谁能读取记忆。

@@ -1,5 +1,6 @@
 .venv/
 .local-demo-venv/
+.shared-memory-venv/
 __pycache__/
 *.pyc
 *.pyo
