@@ -234,6 +234,9 @@ else
 fi
 
 if [ ! -f "$sidecar_env" ]; then
+  if docker container inspect "$key_container" >/dev/null 2>&1; then
+    key_container="${key_container}-$(date +%s)"
+  fi
   docker run --name "$key_container" --user "$container_user" --read-only --tmpfs /tmp:rw,noexec,nosuid,size=32m --security-opt no-new-privileges:true --cap-drop ALL --pids-limit 64 -v "$state_dir:/state" --entrypoint python "$image" -m agent_memory_gateway.sidecar_key --output /state/sidecar.env
 fi
 test "$(stat -c %a "$device_key")" = 600
@@ -268,7 +271,8 @@ if [ -n "$bridge_id" ]; then
     echo '已存在统一 MCP Bridge 容器；拒绝替换。' >&2
     exit 65
   fi
-  docker start "$bridge_id" >/dev/null 2>&1 || true
+  docker compose --project-name "$client_project" --env-file "$bridge_env" -f "$client_compose" -f "$bridge_compose" up -d --no-deps --force-recreate memory-mcp-bridge
+  bridge_id="$(docker compose --project-name "$client_project" --env-file "$bridge_env" -f "$client_compose" -f "$bridge_compose" ps -q memory-mcp-bridge)"
 else
   docker compose --project-name "$client_project" --env-file "$bridge_env" -f "$client_compose" -f "$bridge_compose" up -d --no-deps memory-mcp-bridge
   bridge_id="$(docker compose --project-name "$client_project" --env-file "$bridge_env" -f "$client_compose" -f "$bridge_compose" ps -q memory-mcp-bridge)"

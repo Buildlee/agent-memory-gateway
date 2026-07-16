@@ -117,7 +117,7 @@ if ($Build) {
 }
 
 if ($Start) {
-    $startCommand = "cd '$remoteRelease' && docker compose --project-name memory-gateway --env-file .env -f deploy/fn/compose.yaml up -d --no-build"
+    $startCommand = "cd '$remoteRelease' && docker compose --project-name memory-gateway --env-file .env -f deploy/fn/compose.yaml up -d --no-build --force-recreate"
     & ssh @sshArguments $startCommand
     if ($LASTEXITCODE -ne 0) {
         throw "远端 Gateway 服务启动失败，退出码：$LASTEXITCODE"
