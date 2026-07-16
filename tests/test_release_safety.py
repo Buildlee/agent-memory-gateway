@@ -47,6 +47,12 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assertIn("[string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)", script)
         self.assertIn("发布副本缺少必要路径", script)
 
+    def test_fn_image_retries_slow_package_downloads(self) -> None:
+        dockerfile = (ROOT / "deploy" / "fn" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("PIP_DEFAULT_TIMEOUT=180", dockerfile)
+        self.assertIn("PIP_RETRIES=5", dockerfile)
+        self.assertIn("--retries 5 --timeout 180", dockerfile)
+
     def test_ci_runs_release_gates_without_parent_commit_assumption(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")
         self.assertIn("python -m unittest discover -s tests", workflow)
