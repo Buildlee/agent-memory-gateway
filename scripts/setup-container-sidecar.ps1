@@ -168,9 +168,11 @@ resume=__Resume__
 client_project="$(docker inspect "$client_container" --format '{{ index .Config.Labels "com.docker.compose.project" }}')"
 client_service="$(docker inspect "$client_container" --format '{{ index .Config.Labels "com.docker.compose.service" }}')"
 client_compose="$(docker inspect "$client_container" --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}')"
+client_status="$(docker inspect "$client_container" --format '{{.State.Status}}')"
 test -n "$client_project" && test "$client_project" != '<no value>'
 test -n "$client_service" && test "$client_service" != '<no value>'
 test -n "$client_compose" && test "$client_compose" != '<no value>'
+test -n "$client_status"
 test -f "$client_compose"
 
 set -- $(docker ps -q --filter 'label=com.docker.compose.project=memory-gateway' --filter 'label=com.docker.compose.service=gateway')
@@ -202,11 +204,23 @@ export MEMORY_DEVICE_ID="$device_id"
 export MEMORY_SIDECAR_UID="${container_user%%:*}"
 export MEMORY_SIDECAR_GID="${container_user##*:}"
 docker compose --project-name "$client_project" -f "$client_compose" -f "$bridge_compose" config -q
+bridge_id="$(docker compose --project-name "$client_project" -f "$client_compose" -f "$bridge_compose" ps -aq memory-mcp-bridge)"
+bridge_status=absent
+if [ -n "$bridge_id" ]; then
+  set -- $bridge_id
+  test "$#" -eq 1
+  bridge_id="$1"
+  bridge_status="$(docker inspect "$bridge_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')"
+fi
 
-printf '%s\n' "client_container=$client_container" "client_service=$client_service" "gateway_container=$gateway_container" "state_directory=$state_dir" "mcp_endpoint=http://127.0.0.1:8767/mcp"
+printf '%s\n' "client_container=$client_container" "client_service=$client_service" "client_status=$client_status" "bridge_status=$bridge_status" "gateway_container=$gateway_container" "state_directory=$state_dir" "mcp_endpoint=http://127.0.0.1:8767/mcp"
 if [ "$apply" != 1 ]; then
   printf '%s\n' 'status=waiting_for_apply'
   exit 0
+fi
+if [ "$client_status" != running ]; then
+  echo '目标 Agent 容器当前未运行；请先恢复它，再执行接入或恢复。' >&2
+  exit 69
 fi
 
 uid="${container_user%%:*}"
