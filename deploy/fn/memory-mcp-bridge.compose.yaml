@@ -18,16 +18,17 @@ services:
         max-file: "3"
     network_mode: "service:${MEMORY_CLIENT_SERVICE:?必须指定需要接入记忆的容器服务名}"
     entrypoint: ["/bin/sh", "-ec"]
-    command: >-
-      test -r /state/sidecar.env;
-      test "$(stat -c %a /state/sidecar.env)" = "600";
-      test -r /state/device-identity.pem;
-      export MEMORY_OUTBOX_KEY="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY" { print $$2 }' /state/sidecar.env)";
-      export MEMORY_OUTBOX_KEY_VERSION="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY_VERSION" { print $$2 }' /state/sidecar.env)";
-      test -n "$$MEMORY_OUTBOX_KEY";
-      test -n "$$MEMORY_OUTBOX_KEY_VERSION";
-      python -m agent_memory_gateway.sidecar_daemon --host 127.0.0.1 --port 8766 &
-      exec python -m agent_memory_gateway.sidecar_mcp --transport streamable-http --host 127.0.0.1 --port 8767
+    command:
+      - >-
+        test -r /state/sidecar.env;
+        test "$(stat -c %a /state/sidecar.env)" = "600";
+        test -r /state/device-identity.pem;
+        export MEMORY_OUTBOX_KEY="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY" { print $$2 }' /state/sidecar.env)";
+        export MEMORY_OUTBOX_KEY_VERSION="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY_VERSION" { print $$2 }' /state/sidecar.env)";
+        test -n "$$MEMORY_OUTBOX_KEY";
+        test -n "$$MEMORY_OUTBOX_KEY_VERSION";
+        python -m agent_memory_gateway.sidecar_daemon --host 127.0.0.1 --port 8766 &
+        exec python -m agent_memory_gateway.sidecar_mcp --transport streamable-http --host 127.0.0.1 --port 8767
     environment:
       MEMORY_GATEWAY_URL: ${MEMORY_GATEWAY_URL:?必须指定容器内可访问的 Gateway 地址}
       MEMORY_REFRESH_CREDENTIAL_FILE: /state/refresh-credential.json
