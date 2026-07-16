@@ -196,8 +196,8 @@ export MEMORY_GATEWAY_URL="$gateway_url"
 export MEMORY_AGENT_INSTALLATION_ID="$agent_id"
 export MEMORY_DEFAULT_WORKSPACE="$workspace_id"
 export MEMORY_DEVICE_ID="$device_id"
-export MEMORY_SIDECAR_UID="\${container_user%%:*}"
-export MEMORY_SIDECAR_GID="\${container_user##*:}"
+export MEMORY_SIDECAR_UID="${container_user%%:*}"
+export MEMORY_SIDECAR_GID="${container_user##*:}"
 docker compose --project-name "$client_project" -f "$client_compose" -f "$bridge_compose" config -q
 
 printf '%s\n' "client_container=$client_container" "client_service=$client_service" "gateway_container=$gateway_container" "state_directory=$state_dir" "mcp_endpoint=http://127.0.0.1:8767/mcp"
@@ -206,8 +206,8 @@ if [ "$apply" != 1 ]; then
   exit 0
 fi
 
-uid="\${container_user%%:*}"
-gid="\${container_user##*:}"
+uid="${container_user%%:*}"
+gid="${container_user##*:}"
 bootstrap_suffix="$(printf '%s' "$device_id" | sha256sum | cut -c1-12)"
 pair_container="memory-sidecar-pair-$bootstrap_suffix"
 key_container="memory-sidecar-key-$bootstrap_suffix"
