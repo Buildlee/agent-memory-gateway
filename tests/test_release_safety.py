@@ -46,6 +46,7 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assertIn("& scp -P $SshPort -r", script)
         self.assertIn("[string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)", script)
         self.assertIn("发布副本缺少必要路径", script)
+        self.assertIn("up -d --no-build --force-recreate", script)
 
     def test_fn_image_retries_slow_package_downloads(self) -> None:
         dockerfile = (ROOT / "deploy" / "fn" / "Dockerfile").read_text(encoding="utf-8")
