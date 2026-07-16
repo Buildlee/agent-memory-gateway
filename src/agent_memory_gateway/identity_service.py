@@ -268,6 +268,86 @@ class IdentityAdmin:
                 )
         return {"device_id": device_id, "status": "revoked", "auth_epoch": int(changed[1])}
 
+    def bind_workspace(
+        self,
+        *,
+        agent_installation_id: str,
+        workspace_id: str,
+        capabilities: tuple[str, ...],
+    ) -> dict[str, Any]:
+        """为刚登记的 Agent 追加一个明确的工作区绑定，不改写已有授权。"""
+
+        agent_installation_id = _validate_identifier("agent_installation_id", agent_installation_id)
+        workspace_id = _validate_identifier("workspace_id", workspace_id)
+        capabilities = tuple(sorted({str(value).strip() for value in capabilities if str(value).strip()}))
+        if not capabilities or any(len(value) > 128 or not value.replace(".", "").replace("_", "").isalnum() for value in capabilities):
+            raise AuthError("WORKSPACE_CAPABILITIES_INVALID", status=400)
+        psycopg = self._psycopg()
+        with psycopg.connect(self._dsn) as connection:
+            with connection.transaction():
+                agent = connection.execute(
+                    """
+                    SELECT d.tenant_id, d.user_id, d.status, a.status
+                    FROM agent_installations AS a
+                    JOIN devices AS d ON d.device_id = a.device_id
+                    WHERE a.agent_installation_id = %s
+                    FOR UPDATE OF a, d
+                    """,
+                    (agent_installation_id,),
+                ).fetchone()
+                workspace = connection.execute(
+                    """
+                    SELECT tenant_id, user_id, status
+                    FROM workspaces
+                    WHERE workspace_id = %s
+                    FOR UPDATE
+                    """,
+                    (workspace_id,),
+                ).fetchone()
+                if agent is None or workspace is None or agent[2] != "active" or agent[3] != "active":
+                    raise AuthError("WORKSPACE_BINDING_OWNER_INVALID", status=400)
+                if tuple(agent[:2]) != tuple(workspace[:2]) or workspace[2] != "active":
+                    raise AuthError("WORKSPACE_BINDING_OWNER_INVALID", status=400)
+                existing = connection.execute(
+                    """
+                    SELECT capabilities, status
+                    FROM workspace_bindings
+                    WHERE agent_installation_id = %s AND workspace_id = %s
+                    FOR UPDATE
+                    """,
+                    (agent_installation_id, workspace_id),
+                ).fetchone()
+                if existing is not None:
+                    if existing[1] != "active" or set(existing[0]) != set(capabilities):
+                        raise AuthError("WORKSPACE_BINDING_CONFLICT", status=409)
+                    status = "existing"
+                else:
+                    connection.execute(
+                        """
+                        INSERT INTO workspace_bindings (agent_installation_id, workspace_id, capabilities)
+                        VALUES (%s, %s, %s)
+                        """,
+                        (agent_installation_id, workspace_id, list(capabilities)),
+                    )
+                    _audit(
+                        connection,
+                        tenant_id=str(agent[0]),
+                        actor_type="admin",
+                        actor_id=str(agent[1]),
+                        action="auth.workspace.bind",
+                        result_code="granted",
+                        agent_installation_id=agent_installation_id,
+                        target_ref=workspace_id,
+                        details={"capabilities": list(capabilities)},
+                    )
+                    status = "granted"
+        return {
+            "agent_installation_id": agent_installation_id,
+            "workspace_id": workspace_id,
+            "capabilities": list(capabilities),
+            "status": status,
+        }
+
     def register_bootstrap_credential(self, device_id: str, credential: str) -> dict[str, Any]:
         """为 bootstrap 设备登记已安全落到本机的刷新凭据，不输出凭据值。"""
 

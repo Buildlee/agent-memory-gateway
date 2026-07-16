@@ -19,7 +19,8 @@ from urllib import error, request
 from urllib.parse import urlsplit
 
 from .bootstrap import VALID_AGENT_TYPES, VALID_DEVICE_TYPES
-from .device_key import generate_device_key
+from .device_key import generate_device_key, validate_device_key_file
+from .file_credential import read_file_credential, write_file_credential
 from .identity_service import pairing_proof_message
 from .windows_credential import read_generic_credential, write_generic_credential
 
@@ -75,6 +76,10 @@ def load_or_create_device_identity(path: str | Path) -> DeviceIdentity:
     if not key_path.exists():
         generate_device_key(key_path)
     try:
+        key_path = validate_device_key_file(key_path)
+    except ValueError as exc:
+        raise DevicePairError(str(exc)) from exc
+    try:
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -125,11 +130,12 @@ def pair_device(
     device_type: str,
     device_key_file: str | Path,
     agents: Sequence[DevicePairAgent],
-    credential_target: str,
+    credential_target: str | None,
     credential_username: str,
+    credential_file: str | Path | None = None,
     ca_certificate: str | Path | None = None,
 ) -> dict[str, Any]:
-    """向 Gateway 提交设备证明，并把返回的刷新凭据写入受保护的 Windows 存储。"""
+    """向 Gateway 提交设备证明，并把刷新凭据写入受保护的本地存储。"""
 
     endpoint = str(gateway_url or "").rstrip("/")
     context = _ssl_context(endpoint, ca_certificate)
@@ -137,7 +143,6 @@ def pair_device(
     device_id = _identifier("device_id", device_id)
     device_name = _identifier("device_name", device_name)
     device_type = _identifier("device_type", device_type)
-    credential_target = _identifier("credential_target", credential_target)
     credential_username = _identifier("credential_username", credential_username)
     if device_type not in VALID_DEVICE_TYPES:
         raise DevicePairError("DEVICE_TYPE_INVALID")
@@ -145,8 +150,15 @@ def pair_device(
         raise DevicePairError("PAIR_AGENTS_INVALID")
     if len({agent.agent_installation_id for agent in agents}) != len(agents):
         raise DevicePairError("PAIR_AGENTS_INVALID")
-    if read_generic_credential(credential_target) is not None:
-        raise FileExistsError(f"拒绝覆盖已有 Windows 凭据：{credential_target}")
+    credential_target = str(credential_target or "").strip()
+    if bool(credential_target) == bool(credential_file):
+        raise DevicePairError("REFRESH_CREDENTIAL_STORAGE_INVALID")
+    if credential_target:
+        credential_target = _identifier("credential_target", credential_target)
+        if read_generic_credential(credential_target) is not None:
+            raise FileExistsError(f"拒绝覆盖已有 Windows 凭据：{credential_target}")
+    elif read_file_credential(credential_file) is not None:
+        raise FileExistsError(f"拒绝覆盖已有刷新凭据文件：{credential_file}")
 
     identity = load_or_create_device_identity(device_key_file)
     nonce = _encode_urlsafe(secrets.token_bytes(24))
@@ -198,17 +210,24 @@ def pair_device(
     ):
         raise DevicePairError("PAIR_RESPONSE_INVALID")
 
-    write_generic_credential(credential_target, credential_username, refresh_credential)
-    return {
+    if credential_target:
+        write_generic_credential(credential_target, credential_username, refresh_credential)
+    else:
+        write_file_credential(credential_file, credential_username, refresh_credential)
+    result = {
         "status": "paired",
         "device_id": device_id,
         "agent_installation_ids": expected_agents,
-        "credential_target": credential_target,
     }
+    if credential_target:
+        result["credential_target"] = credential_target
+    else:
+        result["credential_file"] = str(credential_file)
+    return result
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="使用一次性配对码登记 Windows 设备，不在命令行保存配对码或刷新凭据")
+    parser = argparse.ArgumentParser(description="使用一次性配对码登记设备，不在命令行保存配对码或刷新凭据")
     parser.add_argument("--gateway-url", required=True)
     parser.add_argument("--pairing-code-stdin", action="store_true", help="仅从标准输入读取一次性配对码")
     parser.add_argument("--device-id", required=True)
@@ -216,7 +235,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--device-type", choices=sorted(VALID_DEVICE_TYPES), required=True)
     parser.add_argument("--device-key-file", type=Path, required=True)
     parser.add_argument("--agent", action="append", default=[], help="安装实例 ID|类型|显示名；可重复传入")
-    parser.add_argument("--credential-target", required=True)
+    parser.add_argument("--credential-target")
+    parser.add_argument("--credential-file", type=Path)
     parser.add_argument("--credential-username", required=True)
     parser.add_argument("--gateway-ca-certificate", type=Path)
     args = parser.parse_args(argv)
@@ -237,6 +257,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             agents=agents,
             credential_target=args.credential_target,
             credential_username=args.credential_username,
+            credential_file=args.credential_file,
             ca_certificate=args.gateway_ca_certificate,
         )
     finally:

@@ -55,8 +55,10 @@
   -GatewayUrl "https://memory-gateway.example.internal" `
   -DeviceId "local-pc" `
   -DefaultWorkspace "shared-workspace" `
-  -Agent "codex-desktop|codex|Codex Desktop" `
-  -Agent "hermes-desktop|hermes|Hermes Desktop" `
+  -Agent @(
+    "codex-desktop|codex|Codex Desktop"
+    "hermes-desktop|hermes|Hermes Desktop"
+  ) `
   -InstallAutostart
 ```
 
@@ -76,6 +78,8 @@
 需要手动配置或研究字段时，仍可参考 [Codex 示例](codex-mcp.json) 和 [Hermes 示例](hermes-mcp.json)。两份 JSON 都只描述怎样启动 MCP 桥接进程。导入后重启对应 Agent，并调用 `memory_sync_status`。如果 Sidecar 没有运行、密钥文件缺失或 Agent 安装实例 ID 未登记，MCP 会明确报错；先修正这些前置条件，不要把密钥加到 JSON 里。
 
 `DefaultWorkspace` 要和启动 Sidecar 时使用的值完全一致。工具没有传 `workspace_id` 时，这个值就是请求使用的工作区；它不能写成 `default` 之类的占位文本。
+
+运行在 Docker 内的 Agent 使用同一套工作区与工具协议，不需要复制 Windows 示例。请参考[容器内 Agent 的统一接入](../docs/container-sidecar.md)：Bridge 的 MCP 地址固定为容器内的 `http://127.0.0.1:8767/mcp`，凭据仍留在受保护的状态目录。
 
 ## OpenClaw 的 HTTP 接入
 

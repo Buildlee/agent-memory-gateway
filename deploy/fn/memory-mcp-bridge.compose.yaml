@@ -1,0 +1,49 @@
+services:
+  memory-mcp-bridge:
+    image: agent-memory-gateway:0.1.0
+    restart: unless-stopped
+    user: "${MEMORY_SIDECAR_UID:-1000}:${MEMORY_SIDECAR_GID:-1001}"
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    network_mode: "service:${MEMORY_CLIENT_SERVICE:?必须指定需要接入记忆的容器服务名}"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: >-
+      test -r /state/sidecar.env;
+      test "$(stat -c %a /state/sidecar.env)" = "600";
+      test -r /state/device-identity.pem;
+      export MEMORY_OUTBOX_KEY="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY" { print $$2 }' /state/sidecar.env)";
+      export MEMORY_OUTBOX_KEY_VERSION="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY_VERSION" { print $$2 }' /state/sidecar.env)";
+      test -n "$$MEMORY_OUTBOX_KEY";
+      test -n "$$MEMORY_OUTBOX_KEY_VERSION";
+      python -m agent_memory_gateway.sidecar_daemon --host 127.0.0.1 --port 8766 &
+      exec python -m agent_memory_gateway.sidecar_mcp --transport streamable-http --host 127.0.0.1 --port 8767
+    environment:
+      MEMORY_GATEWAY_URL: ${MEMORY_GATEWAY_URL:?必须指定容器内可访问的 Gateway 地址}
+      MEMORY_REFRESH_CREDENTIAL_FILE: /state/refresh-credential.json
+      MEMORY_SIDECAR_ALLOWED_AGENTS: ${MEMORY_AGENT_INSTALLATION_ID:?必须指定 Agent 安装实例 ID}
+      MEMORY_DEFAULT_WORKSPACE: ${MEMORY_DEFAULT_WORKSPACE:?必须指定默认工作区}
+      MEMORY_DEVICE_ID: ${MEMORY_DEVICE_ID:?必须指定设备 ID}
+      MEMORY_HOME: /state/outbox
+      MEMORY_SIDECAR_PORT: "8766"
+    volumes:
+      - type: bind
+        source: ${MEMORY_SIDECAR_STATE_DIR:?必须指定 Sidecar 状态目录}
+        target: /state
+        read_only: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; [socket.create_connection(('127.0.0.1', port), 2).close() for port in (8766, 8767)]"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s

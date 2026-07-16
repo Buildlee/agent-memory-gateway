@@ -28,6 +28,8 @@ class SetupInstallerTests(unittest.TestCase):
         self.assertIn("共享记忆运行环境不完整", script)
         self.assertIn('".shared-memory-venv"', script)
         self.assertIn("Test-SidecarHealth", script)
+        self.assertIn('"container"', script)
+        self.assertIn("setup-container-sidecar.ps1", script)
 
     def test_sidecar_accepts_publicly_trusted_https_without_phantom_ca_file(self) -> None:
         for name in ("start-sidecar.ps1", "install-sidecar-autostart.ps1"):

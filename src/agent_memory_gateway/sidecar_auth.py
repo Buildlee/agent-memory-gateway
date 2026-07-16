@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from typing import Any
 from urllib import error, request
 
+from .file_credential import (
+    FileCredentialError,
+    read_file_credential,
+    replace_file_credential,
+)
 from .gateway_tls import gateway_ssl_context
 from .windows_credential import (
     WindowsCredentialError,
@@ -28,26 +33,27 @@ class _CachedToken:
     refresh_after: float
 
 
-class WindowsRefreshTokenProvider:
+class _RefreshTokenProvider:
     """仅由独立 Sidecar 读取刷新凭据并换取短期 token。"""
 
-    def __init__(self, gateway_url: str, credential_target: str) -> None:
+    def __init__(self, gateway_url: str, credential_location: str) -> None:
         self._gateway_url = gateway_url.rstrip("/")
-        self._credential_target = credential_target.strip()
+        self._credential_location = credential_location.strip()
         if not self._gateway_url.startswith(("http://", "https://")):
             raise SidecarAuthError("GATEWAY_URL_INVALID")
-        if not self._credential_target or len(self._credential_target) > 256:
-            raise SidecarAuthError("REFRESH_CREDENTIAL_TARGET_REQUIRED")
+        if not self._credential_location or len(self._credential_location) > 1024:
+            raise SidecarAuthError("REFRESH_CREDENTIAL_LOCATION_REQUIRED")
         self._ssl_context = gateway_ssl_context(self._gateway_url)
         self._lock = threading.RLock()
         self._tokens: dict[str, _CachedToken] = {}
 
-    @classmethod
-    def from_environment(cls) -> "WindowsRefreshTokenProvider":
-        return cls(
-            os.environ.get("MEMORY_GATEWAY_URL", "http://127.0.0.1:8787"),
-            os.environ.get("MEMORY_REFRESH_CREDENTIAL_TARGET", ""),
-        )
+    def _read_credential(self) -> tuple[str, str] | None:
+        raise NotImplementedError
+
+    def _replace_credential(
+        self, username: str, previous_credential: str, replacement: str
+    ) -> None:
+        raise NotImplementedError
 
     def access_token(self, agent_installation_id: str) -> str:
         agent_installation_id = str(agent_installation_id or "").strip()
@@ -59,8 +65,8 @@ class WindowsRefreshTokenProvider:
                 return cached.value
 
             try:
-                saved = read_generic_credential(self._credential_target)
-            except WindowsCredentialError as exc:
+                saved = self._read_credential()
+            except (WindowsCredentialError, FileCredentialError) as exc:
                 raise SidecarAuthError("REFRESH_CREDENTIAL_UNAVAILABLE") from exc
             if saved is None:
                 raise SidecarAuthError("REFRESH_CREDENTIAL_MISSING")
@@ -78,13 +84,8 @@ class WindowsRefreshTokenProvider:
             if lifetime <= 0:
                 raise SidecarAuthError("REFRESH_RESPONSE_INVALID")
             try:
-                replace_generic_credential(
-                    self._credential_target,
-                    username,
-                    expected_secret=previous_credential,
-                    new_secret=replacement,
-                )
-            except (WindowsCredentialError, FileExistsError) as exc:
+                self._replace_credential(username, previous_credential, replacement)
+            except (WindowsCredentialError, FileCredentialError, FileExistsError) as exc:
                 raise SidecarAuthError("REFRESH_CREDENTIAL_ROTATION_FAILED") from exc
             self._tokens[agent_installation_id] = _CachedToken(
                 value=token,
@@ -121,3 +122,66 @@ class WindowsRefreshTokenProvider:
         if not isinstance(response, dict):
             raise SidecarAuthError("REFRESH_RESPONSE_INVALID")
         return response
+
+
+class WindowsRefreshTokenProvider(_RefreshTokenProvider):
+    """Windows Credential Manager 中的刷新凭据提供方。"""
+
+    def __init__(self, gateway_url: str, credential_target: str) -> None:
+        super().__init__(gateway_url, credential_target)
+
+    @classmethod
+    def from_environment(cls) -> "WindowsRefreshTokenProvider":
+        return cls(
+            os.environ.get("MEMORY_GATEWAY_URL", "http://127.0.0.1:8787"),
+            os.environ.get("MEMORY_REFRESH_CREDENTIAL_TARGET", ""),
+        )
+
+    def _read_credential(self) -> tuple[str, str] | None:
+        return read_generic_credential(self._credential_location)
+
+    def _replace_credential(
+        self, username: str, previous_credential: str, replacement: str
+    ) -> None:
+        replace_generic_credential(
+            self._credential_location,
+            username,
+            expected_secret=previous_credential,
+            new_secret=replacement,
+        )
+
+
+class FileRefreshTokenProvider(_RefreshTokenProvider):
+    """Linux/NAS 上由 0600 文件保存的刷新凭据提供方。"""
+
+    @classmethod
+    def from_environment(cls) -> "FileRefreshTokenProvider":
+        return cls(
+            os.environ.get("MEMORY_GATEWAY_URL", "http://127.0.0.1:8787"),
+            os.environ.get("MEMORY_REFRESH_CREDENTIAL_FILE", ""),
+        )
+
+    def _read_credential(self) -> tuple[str, str] | None:
+        return read_file_credential(self._credential_location)
+
+    def _replace_credential(
+        self, username: str, previous_credential: str, replacement: str
+    ) -> None:
+        replace_file_credential(
+            self._credential_location,
+            username,
+            expected_secret=previous_credential,
+            new_secret=replacement,
+        )
+
+
+def refresh_token_provider_from_environment() -> _RefreshTokenProvider:
+    """根据明确指定的凭据存储创建 Sidecar token 提供方。"""
+
+    target = os.environ.get("MEMORY_REFRESH_CREDENTIAL_TARGET", "").strip()
+    credential_file = os.environ.get("MEMORY_REFRESH_CREDENTIAL_FILE", "").strip()
+    if bool(target) == bool(credential_file):
+        raise SidecarAuthError("REFRESH_CREDENTIAL_STORAGE_INVALID")
+    if credential_file:
+        return FileRefreshTokenProvider.from_environment()
+    return WindowsRefreshTokenProvider.from_environment()

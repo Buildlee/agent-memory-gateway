@@ -11,6 +11,7 @@ from agent_memory_gateway.identity_service import (
     pairing_proof_message,
     verify_pairing_proof,
 )
+from agent_memory_gateway.identity_cli import _capabilities
 
 
 def encode(value: bytes) -> str:
@@ -67,6 +68,12 @@ class PairingProofTests(unittest.TestCase):
                     "display_name": "Unknown",
                 }
             )
+
+    def test_workspace_capability_parser_deduplicates_values(self):
+        self.assertEqual(
+            _capabilities("memory.search,memory.sync,memory.search"),
+            ("memory.search", "memory.sync"),
+        )
 
 
 if __name__ == "__main__":

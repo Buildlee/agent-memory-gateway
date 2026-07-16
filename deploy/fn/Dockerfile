@@ -11,7 +11,7 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 COPY schema ./schema
 RUN chmod -R a+rX /app/schema \
-    && python -m pip install --no-cache-dir ".[postgres]"
+    && python -m pip install --no-cache-dir ".[postgres,mcp]"
 
 COPY deploy/fn/entrypoint.sh /usr/local/bin/memory-gateway-entrypoint
 RUN sed -i 's/\r$//' /usr/local/bin/memory-gateway-entrypoint \

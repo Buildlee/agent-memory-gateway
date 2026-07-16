@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import uuid
@@ -19,12 +20,24 @@ def _active_workspace_id(workspace_id: str | None) -> str:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="共享记忆 MCP Sidecar 桥接")
+    parser.add_argument("--transport", choices=("stdio", "streamable-http"), default="stdio")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8767)
+    args = parser.parse_args()
     try:
         from mcp.server.fastmcp import FastMCP
     except ModuleNotFoundError as exc:
         raise SystemExit("缺少 MCP SDK，请运行：pip install -e \".[mcp]\"") from exc
 
-    mcp = FastMCP("shared-memory")
+    network_transport = args.transport == "streamable-http"
+    mcp = FastMCP(
+        "shared-memory",
+        host=args.host,
+        port=args.port,
+        stateless_http=network_transport,
+        json_response=network_transport,
+    )
     client = get_shared_sidecar()
 
     @mcp.tool()
@@ -238,7 +251,7 @@ def main() -> None:
             indent=2,
         )
 
-    mcp.run()
+    mcp.run(transport=args.transport)
 
 
 if __name__ == "__main__":
