@@ -56,7 +56,7 @@ Stop-Process -Id <process_id>
 
 ## 接入已经部署好的共享服务
 
-管理员生成一次性配对码后，客户端只需要运行一次安装向导。`-Agent` 的格式是“安装实例 ID|类型|显示名”，可以重复填写多个 Agent：
+管理员生成一次性配对码后，客户端只需要运行一次安装向导。`-Agent` 的格式是“安装实例 ID|类型|显示名”。接入多个 Agent 时，先把它们放进一个 PowerShell 数组，再传给 `-Agent`：
 
 ```powershell
 .\scripts\setup-shared-memory.ps1 `
