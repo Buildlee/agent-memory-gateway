@@ -22,7 +22,7 @@ Agent Memory Gateway 是一个可自托管的共享记忆服务。它适合 Code
 | 你现在想做什么 | 适合走哪条路 | 需要准备什么 |
 |---|---|---|
 | 先验证两个 Agent 能否共用一条记忆 | [三分钟体验](#三分钟体验) | Python 3.10 或更高版本 |
-| 把 Codex、Hermes 或 OpenClaw 接到已部署的 Gateway | [连接正式共享服务](#连接正式共享服务) | 已登记的设备、Agent 和工作区 |
+| 把 Codex、Hermes 或 OpenClaw 接到已部署的 Gateway | [一条命令接入正式服务](#一条命令接入正式服务) | Gateway 地址、一次性配对码和工作区 ID |
 | 在自己的服务器或内网部署服务 | [部署说明](docs/deployment.md) | PostgreSQL、HTTPS 入口和管理权限 |
 | 日常查看运行状态、排查重试或死信 | [运维与恢复](docs/operations.md) | 已授权的管理 Agent 与本机 Sidecar |
 | 修改功能、运行回归测试 | [开发与验证](docs/development.md) | Python 开发环境 |
@@ -75,43 +75,52 @@ Stop-Process -Id <脚本输出的 process_id>
 | OpenClaw HTTP | 本地原型、路由层或自定义工作流 | [HTTP 示例](examples/openclaw-http.md) |
 | 其他 MCP 客户端 | 已支持标准 MCP 进程配置的 Agent | 参考 [示例说明](examples/README.md) |
 
-## 连接正式共享服务
+## 一条命令接入正式服务
 
-正式接入需要四个已经登记的名称：Gateway 地址、设备 ID、Agent 安装实例 ID 和工作区 ID。它们分别说明“连到哪里”“哪台设备”“哪个 Agent”“可以共用哪一批记忆”。管理端先完成设备和 Agent 的登记，再在客户端按下面的顺序配置。
+第一次把一台 Windows 电脑接入共享服务时，使用安装向导。管理员先生成一个十分钟内有效、只能用一次的配对码；然后在这台电脑的仓库目录里运行下面的命令。配对码会在隐藏输入框中填写，不会出现在命令历史或生成的配置文件中。
 
-1. 生成 Sidecar 的本机加密密钥。文件只应由当前账户读取。
+```powershell
+.\scripts\setup-shared-memory.ps1 `
+  -Mode device `
+  -GatewayUrl "https://memory-gateway.example.internal" `
+  -DeviceId "local-pc" `
+  -DefaultWorkspace "shared-workspace" `
+  -Agent "codex-desktop|codex|Codex Desktop" `
+  -Agent "hermes-desktop|hermes|Hermes Desktop" `
+  -InstallAutostart
+```
 
-   ```powershell
-   memory-gateway sidecar-keygen `
-     --output "$env:LOCALAPPDATA\memory-gateway\secrets\sidecar.env"
-   ```
+首次运行会创建仓库内忽略的 `.shared-memory-venv`，把 Sidecar 和 MCP 依赖装在独立环境中，不碰全局 Python。随后向导会完成设备配对、生成不覆盖旧文件的设备密钥和 Sidecar key、把刷新凭据写入 Windows Credential Manager、注册并启动仅监听 `127.0.0.1` 的 Sidecar，最后为每个 Agent 在 `%LOCALAPPDATA%\memory-gateway\mcp` 生成一份 MCP 配置。
 
-2. 启动这台设备唯一的 Sidecar。多个本机 Agent 可以共用它。
+导入对应的 JSON 文件后，重启 Agent 并调用 `memory_sync_status`。这一步没有自动改写 Codex、Hermes 或其他客户端的设置，因为每个客户端的配置位置和现有 MCP 项目可能不同；向导生成的文件可以直接导入或复制，不需要手填密钥和启动参数。
 
-   ```powershell
-   .\scripts\start-sidecar.ps1 `
-     -GatewayUrl "https://memory-gateway.example.internal" `
-     -DeviceId "registered-device" `
-     -AllowedAgents "codex-desktop,hermes-desktop" `
-     -DefaultWorkspace "shared-workspace" `
-     -SidecarKeyFile "$env:LOCALAPPDATA\memory-gateway\secrets\sidecar.env"
-   ```
+如果第一次运行已完成配对、但在生成 MCP 配置或启动计划任务前中断，请使用相同参数再加 `-UseExistingCredential`。它不会读取、替换或打印 Windows 凭据，也不会改写已有 key、任务或 JSON，只会补齐尚未完成的本机步骤。
 
-3. 复制对应的 MCP JSON 配置，并只替换脚本路径、Agent 安装实例 ID 和默认工作区。不要把 Gateway 令牌、刷新凭据、数据库地址或私钥写进 JSON。
+Gateway 使用内部 CA 时，在命令中加上 `-GatewayCaCertificate "<本机 CA 证书路径>"`。公网受信任的 HTTPS 证书不需要这个参数。`DefaultWorkspace` 必须是已经授权给当前设备和 Agent 的工作区；缺失时工具会返回 `WORKSPACE_ID_REQUIRED`，不会猜测一个名称。
 
-4. 在 Agent 中先调用 `memory_sync_status`，确认本机 Sidecar 在线；再由一个 Agent 写入经过确认的信息，另一个已获授权的 Agent 使用 `memory_search` 或 `memory_context` 检索它。
+### 第一次部署服务端
 
-5. 需要人工审核或排查运行状态时，启动本机管理页。页面只监听 `127.0.0.1`，浏览器不保存 Gateway 令牌。
+服务端的密钥、证书、数据库备份和迁移仍需要管理员确认。它们一旦被错误覆盖，影响的是所有设备，所以安装向导不会代替你生成或覆盖现有值。准备好受保护的环境文件后，先用同一个入口核对发布参数：
 
-   ```powershell
-   .\scripts\start-admin-console.ps1 `
-     -AgentInstallationId "codex-admin" `
-     -DefaultWorkspace "shared-workspace"
-   ```
+```powershell
+.\scripts\setup-shared-memory.ps1 `
+  -Mode server `
+  -SshHost "deploy-user@server" `
+  -SshPort 22 `
+  -RemoteRoot "/srv/memory-gateway" `
+  -SecretsFile "/srv/memory-gateway/secrets.env" `
+  -GatewayAddress "memory-gateway.internal"
+```
 
-   脚本会打印一个只能使用一次的本机地址。打开后可以查看概览、待审核候选、设备授权、近期审计和未处理死信；确认、拒绝、归档、保留双方或取代冲突记忆时，页面会再次要求明确确认。
+它只显示待执行的发布信息。进入维护窗口后，在同一条命令末尾加 `-Apply`，向导才会上传经过核对的版本、构建并启动 Gateway、Worker 和 HTTPS 入口。迁移和上线检查见 [部署说明](docs/deployment.md)。
 
-`DefaultWorkspace` 必须是已经授权给当前设备和 Agent 的工作区。MCP 调用省略 `workspace_id` 时，会使用这个值；若未配置，工具会明确返回 `WORKSPACE_ID_REQUIRED`，不会猜测一个工作区。
+需要人工审核或排查运行状态时，启动本机管理页。页面只监听 `127.0.0.1`，浏览器不保存 Gateway 令牌：
+
+```powershell
+.\scripts\start-admin-console.ps1 `
+  -AgentInstallationId "codex-admin" `
+  -DefaultWorkspace "shared-workspace"
+```
 
 完整的参数说明、内部 CA、容器部署、迁移检查和上线核对见 [部署说明](docs/deployment.md) 与 [示例说明](examples/README.md)。
 
