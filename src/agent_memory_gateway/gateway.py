@@ -33,6 +33,9 @@ from .store import MemoryStore
 from .sync_service import PostgresSyncService, SyncProtocolError
 
 
+MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024
+
+
 class GatewayHandler(BaseHTTPRequestHandler):
     """最小 HTTP API 处理器。"""
 
@@ -205,7 +208,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 store.close()
 
     def _read_json(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length") or "0")
+        content_length = self.headers.get("Content-Length")
+        try:
+            length = int(content_length or "0")
+        except (TypeError, ValueError) as exc:
+            raise EventValidationError("CONTENT_LENGTH_INVALID") from exc
+        if length > MAX_REQUEST_BODY_BYTES:
+            raise EventValidationError("REQUEST_BODY_TOO_LARGE")
         if length <= 0:
             return {}
         raw = self.rfile.read(length).decode("utf-8")

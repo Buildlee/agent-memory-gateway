@@ -100,10 +100,12 @@ class TokenAuthenticator:
         if not token:
             raise AuthError("AUTH_REQUIRED", status=401)
         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        for configured_hash, principal in self._principals_by_hash.items():
-            if hmac.compare_digest(configured_hash, token_hash):
-                return principal
-        raise AuthError("AUTH_INVALID", status=401)
+        principal = self._principals_by_hash.get(token_hash)
+        if principal is None:
+            # 未命中时仍执行一次定长比较，避免通过响应时间区分 token 是否命中。
+            hmac.compare_digest(token_hash, "0" * 64)
+            raise AuthError("TOKEN_INVALID", status=401)
+        return principal
 
     @staticmethod
     def validate_payload_identity(principal: Principal, payload: dict[str, Any]) -> None:

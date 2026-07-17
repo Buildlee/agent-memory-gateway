@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -37,6 +38,11 @@ class MemoryStore:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA busy_timeout = 5000")
         self.conn.execute("PRAGMA journal_mode = WAL")
+        # 与 Postgres 路径对齐：配置了指纹密钥就启用 HMAC 指纹，否则无指纹降级。
+        if os.environ.get("MEMORY_SENSITIVE_FINGERPRINT_KEY"):
+            self._scanner = SensitiveContentScanner.from_environment()
+        else:
+            self._scanner = SensitiveContentScanner()
         self._init_schema()
 
     def close(self) -> None:
@@ -116,7 +122,7 @@ class MemoryStore:
         workspace_id = str(payload.get("workspace_id") or "").strip()
         principal.require_workspace(workspace_id)
         metadata = payload.get("metadata") or {}
-        assessment = SensitiveContentScanner().assess(
+        assessment = self._scanner.assess(
             (content, json.dumps(metadata, ensure_ascii=False, sort_keys=True))
         )
         if assessment.has_sensitive_content:
