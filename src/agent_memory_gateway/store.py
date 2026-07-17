@@ -38,8 +38,9 @@ class MemoryStore:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA busy_timeout = 5000")
         self.conn.execute("PRAGMA journal_mode = WAL")
-        # 与 Postgres 路径对齐：配置了指纹密钥就启用 HMAC 指纹，否则无指纹降级。
-        if os.environ.get("MEMORY_SENSITIVE_FINGERPRINT_KEY"):
+        # 有环境变量时使用带指纹密钥的 scanner，否则降级为无指纹模式
+        fingerprint_key = os.environ.get("MEMORY_SENSITIVE_FINGERPRINT_KEY")
+        if fingerprint_key:
             self._scanner = SensitiveContentScanner.from_environment()
         else:
             self._scanner = SensitiveContentScanner()

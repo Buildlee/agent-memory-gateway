@@ -102,7 +102,6 @@ class TokenAuthenticator:
         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
         principal = self._principals_by_hash.get(token_hash)
         if principal is None:
-            # 未命中时仍执行一次定长比较，避免通过响应时间区分 token 是否命中。
             hmac.compare_digest(token_hash, "0" * 64)
             raise AuthError("TOKEN_INVALID", status=401)
         return principal

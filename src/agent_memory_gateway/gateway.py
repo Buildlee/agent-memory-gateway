@@ -208,15 +208,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 store.close()
 
     def _read_json(self) -> dict[str, Any]:
-        content_length = self.headers.get("Content-Length")
         try:
-            length = int(content_length or "0")
-        except (TypeError, ValueError) as exc:
+            length = int(self.headers.get("Content-Length") or "0")
+        except ValueError as exc:
             raise EventValidationError("CONTENT_LENGTH_INVALID") from exc
+        if length <= 0:
+            raise EventValidationError("CONTENT_LENGTH_REQUIRED")
         if length > MAX_REQUEST_BODY_BYTES:
             raise EventValidationError("REQUEST_BODY_TOO_LARGE")
-        if length <= 0:
-            return {}
         raw = self.rfile.read(length).decode("utf-8")
         return json.loads(raw) if raw else {}
 
