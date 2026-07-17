@@ -56,10 +56,9 @@ memory-import scan --source ./memory-folder --batch import_2026_07_03
 - **私钥**：PEM 格式（RSA/OpenSSH/EC/DSA/PGP）
 - **API 令牌**：`sk-*`、`ghp_*`、`github_pat_*`、Slack `xox*`、Stripe `sk_live_*`、Firebase `AIza*`
 - **云凭证**：AWS Access Key（`AKIA`/`ASIA`）
-- **Bearer Token**：Authorization 头中的 bearer 值
-- **会话令牌**：JWT（`eyJ*.*.*`）、Cookie 头
-- **数据库连接串**：`postgres://user:pass@host`、`mysql://`、`mongodb+srv://`、`redis://`
-- **凭据赋值**：`api_key = xxx`、`password = xxx` 等模式，排除占位符和代码表达式
+|- **Bearer Token**：Authorization 头中的 bearer 值
+|- **会话令牌**：JWT（`eyJ*.*.*`）、Cookie 头
+|- **凭据赋值**：`api_key = xxx`、`password = xxx` 等模式，排除占位符和代码表达式
 - **助记词**：seed phrase / mnemonic / recovery code
 - **支付卡号**：Luhn 校验通过的 13-19 位数字
 - **中国身份证号**：18 位带校验码
