@@ -8,7 +8,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from agent_memory_gateway.gbrain_backend import GBrainFact
 from agent_memory_gateway.hybrid_retrieval import (
     build_context_pack,
+    estimate_tokens,
     normalize_context_token_budget,
+    normalize_text,
     select_hybrid_memories,
 )
 from agent_memory_gateway.query_service import PostgresQueryService
@@ -124,6 +126,37 @@ class HybridRetrievalTests(unittest.TestCase):
 
         self.assertEqual(set(payload), {"policy", "memory_references"})
         self.assertEqual(payload["memory_references"][0]["memory_id"], "gbrain:fact:1")
+
+
+class NormalizeTextTests(unittest.TestCase):
+    def test_case_folding(self):
+        self.assertEqual(normalize_text("Hello World"), normalize_text("HELLO WORLD"))
+
+    def test_whitespace_merging(self):
+        self.assertEqual(normalize_text("a    b"), "a b")
+
+    def test_unicode_normalization(self):
+        combined = "caf\u00e9"
+        decomposed = "cafe\u0301"
+        self.assertEqual(normalize_text(combined), normalize_text(decomposed))
+
+
+class EstimateTokensTests(unittest.TestCase):
+    def test_empty_string(self):
+        self.assertEqual(estimate_tokens(""), 8)
+
+    def test_pure_english(self):
+        tokens = estimate_tokens("hello world")
+        self.assertGreater(tokens, 8)
+        self.assertLess(tokens, 20)
+
+    def test_pure_chinese(self):
+        tokens = estimate_tokens("工作区权限")
+        self.assertGreater(tokens, 8)
+
+    def test_mixed_content(self):
+        tokens = estimate_tokens("工作区 permission 测试")
+        self.assertGreater(tokens, 8)
 
 
 class FakeGBrain:
