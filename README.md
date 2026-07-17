@@ -1,6 +1,12 @@
 # Agent Memory Gateway
 
 <p align="center">
+  <a href="README.md">中文</a>
+  ·
+  <a href="README_EN.md">English</a>
+</p>
+
+<p align="center">
   <strong>多 Agent 共用一个长期记忆 —— 每个读写都有来源、有权限、可审计。</strong><br>
   离线队列、加密同步、敏感内容识别，开箱即用。
 </p>
