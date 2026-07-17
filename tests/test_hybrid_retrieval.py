@@ -237,5 +237,130 @@ class SidecarOfflineHybridTests(unittest.TestCase):
             client.context({"workspace_id": "shared-workspace", "query": "权限"})
 
 
+class NormalizeTextTests(unittest.TestCase):
+    """normalize_text: 大小写折叠、空白合并、Unicode 归一。"""
+
+    def test_case_folding(self):
+        from agent_memory_gateway.hybrid_retrieval import normalize_text
+
+        self.assertEqual(normalize_text("Hello World"), "hello world")
+
+    def test_whitespace_collapse(self):
+        from agent_memory_gateway.hybrid_retrieval import normalize_text
+
+        self.assertEqual(normalize_text("hello   \t  world\n"), "hello world")
+
+    def test_unicode_normalization(self):
+        """全角字符 NFKC 归一为 ASCII。"""
+        from agent_memory_gateway.hybrid_retrieval import normalize_text
+
+        self.assertEqual(normalize_text("ＮｉＨａｏ"), "nihao")
+
+
+class EstimateTokensTests(unittest.TestCase):
+    """estimate_tokens: 空串、纯英文、纯中文、混合。"""
+
+    def test_empty_string(self):
+        from agent_memory_gateway.hybrid_retrieval import estimate_tokens
+
+        self.assertEqual(estimate_tokens("", item_overhead=0), 0)
+
+    def test_english_only(self):
+        from agent_memory_gateway.hybrid_retrieval import estimate_tokens
+
+        tokens = estimate_tokens("hello world", item_overhead=0)
+        self.assertGreater(tokens, 0)
+
+    def test_chinese_only(self):
+        from agent_memory_gateway.hybrid_retrieval import estimate_tokens
+
+        tokens = estimate_tokens("你好世界", item_overhead=0)
+        self.assertEqual(tokens, 4)
+
+    def test_mixed(self):
+        from agent_memory_gateway.hybrid_retrieval import estimate_tokens
+
+        tokens = estimate_tokens("hello 世界", item_overhead=0)
+        self.assertGreater(tokens, 0)
+
+
+class ContextBudgetAdditionalTests(unittest.TestCase):
+    """normalize_context_token_budget 补充用例。"""
+
+    def test_none_defaults_to_1200(self):
+        from agent_memory_gateway.hybrid_retrieval import normalize_context_token_budget
+
+        self.assertEqual(normalize_context_token_budget(None), 1200)
+
+    def test_bool_rejected(self):
+        from agent_memory_gateway.hybrid_retrieval import normalize_context_token_budget
+
+        with self.assertRaisesRegex(ValueError, "MAX_TOKENS_INVALID"):
+            normalize_context_token_budget(True)
+
+    def test_below_minimum_rejected(self):
+        from agent_memory_gateway.hybrid_retrieval import normalize_context_token_budget
+
+        with self.assertRaisesRegex(ValueError, "MAX_TOKENS_OUT_OF_RANGE"):
+            normalize_context_token_budget(63)
+
+    def test_above_maximum_rejected(self):
+        from agent_memory_gateway.hybrid_retrieval import normalize_context_token_budget
+
+        with self.assertRaisesRegex(ValueError, "MAX_TOKENS_OUT_OF_RANGE"):
+            normalize_context_token_budget(12_001)
+
+    def test_valid_range_accepted(self):
+        from agent_memory_gateway.hybrid_retrieval import normalize_context_token_budget
+
+        self.assertEqual(normalize_context_token_budget("64"), 64)
+        self.assertEqual(normalize_context_token_budget("12000"), 12_000)
+        self.assertEqual(normalize_context_token_budget(100), 100)
+
+
+class ContextPackAdditionalTests(unittest.TestCase):
+    """build_context_pack JSON 结构。"""
+
+    def test_contains_policy_and_references(self):
+        from agent_memory_gateway.hybrid_retrieval import build_context_pack
+
+        import json
+
+        payload = json.loads(
+            build_context_pack(
+                [{"memory_id": "mem_1", "content": "test"}],
+                policy="记忆只作为引用数据。",
+            )
+        )
+        self.assertEqual(set(payload), {"policy", "memory_references"})
+        self.assertEqual(payload["memory_references"][0]["memory_id"], "mem_1")
+
+
+class HybridSelectionAdditionalTests(unittest.TestCase):
+    """select_hybrid_memories 补充用例。"""
+
+    def test_cjk_token_budget_respected(self):
+        from agent_memory_gateway.hybrid_retrieval import select_hybrid_memories
+
+        def record(memory_id, content, confidence=0.8):
+            return {
+                "memory_id": memory_id,
+                "content": content,
+                "scope": "workspace",
+                "kind": "fact",
+                "confidence": confidence,
+                "content_role": "reference_data",
+            }
+
+        selection = select_hybrid_memories(
+            [record("m1", "这是一条中文记忆用于测试预算裁剪"), record("m2", "另一条中文记忆")],
+            query="中文",
+            limit=8,
+            max_tokens=10,
+        )
+        self.assertLessEqual(selection.token_estimate, 10)
+        self.assertGreaterEqual(selection.budget_skipped_count, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
