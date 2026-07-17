@@ -15,5 +15,61 @@ class RateLimitTests(unittest.TestCase):
         self.assertTrue(limiter.allow("client", limit=2, window_seconds=10))
 
 
+class RateLimitExtendedTests(unittest.TestCase):
+    def test_within_limit(self):
+        limiter = SlidingWindowRateLimiter()
+        for _ in range(5):
+            self.assertTrue(limiter.allow("client", limit=5, window_seconds=10))
+
+    def test_exceeds_limit(self):
+        limiter = SlidingWindowRateLimiter()
+        for _ in range(5):
+            limiter.allow("client", limit=5, window_seconds=10)
+        self.assertFalse(limiter.allow("client", limit=5, window_seconds=10))
+
+    def test_window_sliding(self):
+        now = [100.0]
+        limiter = SlidingWindowRateLimiter(clock=lambda: now[0])
+        for _ in range(2):
+            self.assertTrue(limiter.allow("client", limit=2, window_seconds=10))
+        self.assertFalse(limiter.allow("client", limit=2, window_seconds=10))
+        now[0] = 111.0
+        self.assertTrue(limiter.allow("client", limit=2, window_seconds=10))
+
+    def test_invalid_params(self):
+        limiter = SlidingWindowRateLimiter()
+        with self.assertRaises(ValueError):
+            limiter.allow("key", limit=-1, window_seconds=10)
+        with self.assertRaises(ValueError):
+            limiter.allow("key", limit=0, window_seconds=10)
+        with self.assertRaises(ValueError):
+            limiter.allow("key", limit=5, window_seconds=0)
+        with self.assertRaises(ValueError):
+            limiter.allow("", limit=5, window_seconds=10)
+
+    def test_concurrent(self):
+        """10 线程打同一 key，验证不超过上限。"""
+        import threading
+
+        limiter = SlidingWindowRateLimiter()
+        results: list[bool] = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(10)
+
+        def attempt() -> None:
+            barrier.wait()
+            allowed = limiter.allow("concurrent-key", limit=5, window_seconds=10)
+            with lock:
+                results.append(allowed)
+
+        threads = [threading.Thread(target=attempt) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertLessEqual(sum(results), 5)
+
+
 if __name__ == "__main__":
     unittest.main()
