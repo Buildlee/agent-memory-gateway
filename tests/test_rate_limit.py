@@ -1,3 +1,4 @@
+import threading
 import unittest
 
 from agent_memory_gateway.rate_limit import SlidingWindowRateLimiter
@@ -13,6 +14,41 @@ class RateLimitTests(unittest.TestCase):
         self.assertTrue(limiter.allow("other", limit=2, window_seconds=10))
         now[0] = 111.0
         self.assertTrue(limiter.allow("client", limit=2, window_seconds=10))
+
+    def test_invalid_params_raise_value_error(self):
+        limiter = SlidingWindowRateLimiter()
+        with self.assertRaises(ValueError):
+            limiter.allow("key", limit=0, window_seconds=10)
+        with self.assertRaises(ValueError):
+            limiter.allow("key", limit=10, window_seconds=0)
+        with self.assertRaises(ValueError):
+            limiter.allow("", limit=10, window_seconds=10)
+
+    def test_concurrent_safety(self):
+        now = [1000.0]
+        lock = threading.Lock()
+        limiter = SlidingWindowRateLimiter(clock=lambda: now[0])
+        results = []
+        errors = []
+
+        def hit():
+            try:
+                allowed = limiter.allow("shared", limit=5, window_seconds=60)
+                with lock:
+                    results.append(allowed)
+            except Exception as exc:
+                with lock:
+                    errors.append(exc)
+
+        threads = [threading.Thread(target=hit) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(errors, [])
+        self.assertEqual(sum(results), 5)
+        self.assertEqual(len(results), 10)
 
 
 class RateLimitExtendedTests(unittest.TestCase):
