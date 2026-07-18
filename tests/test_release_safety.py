@@ -59,9 +59,16 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assertIn("python -m unittest discover -s tests", workflow)
         self.assertIn("python -m compileall -q src tests", workflow)
         self.assertIn("公开文件是否包含敏感信息", workflow)
+        self.assertIn(".\\scripts\\check-public-sensitive.ps1", workflow)
         self.assertIn("git diff-tree --check -r HEAD", workflow)
-        self.assertIn("$_ -ne 'tests/fixtures/security_cases.json'", workflow)
         self.assertNotIn("HEAD^ HEAD", workflow)
+
+        scanner = (ROOT / "scripts" / "check-public-sensitive.ps1").read_text(encoding="utf-8")
+        self.assertIn("git ls-files", scanner)
+        self.assertIn("$_ -ne 'tests/fixtures/security_cases.json'", scanner)
+
+        hook = (ROOT / ".githooks" / "pre-push").read_text(encoding="utf-8")
+        self.assertIn("check-public-sensitive.ps1", hook)
 
     def test_security_fixture_is_explicitly_nonworking_test_data(self) -> None:
         fixture = (ROOT / "tests" / "fixtures" / "security_cases.json").read_text(encoding="utf-8")
