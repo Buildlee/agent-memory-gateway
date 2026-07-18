@@ -24,6 +24,14 @@ GitHub Actions 在功能分支和 PR 上运行：完整测试、Python 编译、
 
 CI 通过说明公开代码可合并，不代表功能已部署到运行中的 Sidecar。需要管理页等新本机能力时，仍要在维护窗口更新设备并运行只读健康检查。
 
+每次推送前先运行：
+
+```powershell
+.\scripts\check-public-sensitive.ps1
+```
+
+首次在本机仓库启用自动拦截时，再运行一次 `.\scripts\install-git-hooks.ps1`。它只把 Git 的 hooksPath 指向仓库内的 `.githooks`；之后每次 `git push` 都会再次执行同一份公开敏感信息扫描。扫描不读取未纳入 Git 的凭据、证书、数据库或现场日志。
+
 ---
 
 ## 本地体验脚本

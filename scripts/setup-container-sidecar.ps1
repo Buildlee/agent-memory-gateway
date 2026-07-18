@@ -190,6 +190,31 @@ gateway_entrypoint="$(docker inspect "$gateway_container" --format '{{index .Con
 test -n "$gateway_entrypoint" && test "$gateway_entrypoint" != '<no value>'
 docker exec "$gateway_container" "$gateway_entrypoint" memory-gateway --help >/dev/null
 
+# 使用 `network_mode: service` 时，部分 Docker 版本不会把 Bridge 自身登记到
+# 内置 DNS。目标 Agent 可以解析 `gateway`，Bridge 却可能解析失败。默认服务名
+# 因此在接入时改为双方共享网络中的当前 Gateway 私有地址；不会开放宿主机端口。
+gateway_scheme="${gateway_url%%://*}"
+gateway_authority="${gateway_url#*://}"
+gateway_host="${gateway_authority%%:*}"
+gateway_port_suffix="${gateway_authority#"$gateway_host"}"
+if [ "$gateway_host" = gateway ]; then
+  client_networks="$(docker inspect "$client_container" --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}')"
+  gateway_networks="$(docker inspect "$gateway_container" --format '{{range $name, $network := .NetworkSettings.Networks}}{{println $name $network.IPAddress}}{{end}}')"
+  gateway_ip=''
+  for client_network in $client_networks; do
+    candidate_ip="$(printf '%s\n' "$gateway_networks" | awk -v network="$client_network" '$1 == network { print $2; exit }')"
+    if [ -n "$candidate_ip" ]; then
+      gateway_ip="$candidate_ip"
+      break
+    fi
+  done
+  if [ -z "$gateway_ip" ]; then
+    echo 'Gateway 与目标 Agent 容器没有共同的 Docker 网络，无法建立仅容器内可见的 Bridge。' >&2
+    exit 69
+  fi
+  gateway_url="$gateway_scheme://$gateway_ip$gateway_port_suffix"
+fi
+
 sidecar_env="$state_dir/sidecar.env"
 device_key="$state_dir/device-identity.pem"
 refresh_file="$state_dir/refresh-credential.json"
@@ -263,7 +288,7 @@ if [ -e "$bridge_env" ] && [ "$resume" != 1 ]; then
   echo 'Bridge 配置已存在；拒绝覆盖。请核对后使用 -Resume。' >&2
   exit 65
 fi
-if [ ! -e "$bridge_env" ]; then
+if [ ! -e "$bridge_env" ] || [ "$resume" = 1 ]; then
   umask 077
   {
     printf '%s\n' "MEMORY_CLIENT_SERVICE=$client_service"

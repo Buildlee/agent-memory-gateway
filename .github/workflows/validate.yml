@@ -50,27 +50,7 @@ jobs:
 
       - name: 检查公开文件是否包含敏感信息
         shell: pwsh
-        run: |
-          $patterns = @(
-            '-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',
-            'gh[pousr]_[A-Za-z0-9]{20,}',
-            'sk-[A-Za-z0-9]{20,}',
-            'AKIA[0-9A-Z]{16}',
-            '(?i)postgres(?:ql)?://[^\s/:]+:[^\s@]+@'
-          )
-          # 安全测试语料必须保留能触发分类器的无效样例；其安全性由单元测试单独约束，
-          # 不把该单一语料文件当作真实凭据扫描目标。
-          $files = git ls-files | Where-Object {
-            $_ -match '\.(md|py|ps1|toml|ya?ml|json)$' -and
-            $_ -ne 'tests/fixtures/security_cases.json'
-          }
-          foreach ($file in $files) {
-            $matches = Select-String -LiteralPath $file -Pattern $patterns -AllMatches
-            if ($matches) {
-              $first = $matches | Select-Object -First 1
-              throw "公开文件疑似包含敏感信息：$file 行 $($first.LineNumber)"
-            }
-          }
+        run: .\scripts\check-public-sensitive.ps1
 
       - name: 检查补丁格式
         shell: pwsh
