@@ -13,6 +13,8 @@ class CentralAdminSetupTests(unittest.TestCase):
 
         self.assertIn('printf \'%s\\n\' "$pairing_code" | docker run --rm -i --network', script)
         self.assertIn('--pairing-code-stdin', script)
+        self.assertIn('require_owner_only_file()', script)
+        self.assertIn('600|700)', script)
 
 
 if __name__ == "__main__":

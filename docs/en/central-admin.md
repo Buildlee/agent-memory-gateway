@@ -31,7 +31,7 @@ First deploy a Gateway release containing `deploy/fn/admin-console.compose.yaml`
   -PublicBaseUrl "https://memory-gateway.internal:8443/admin"
 ```
 
-The preflight checks the Gateway, release copy, Docker network, target directory, and existing central-admin containers only. It does not create identities, write credentials, or replace containers. After reviewing the output, add `-Apply` to the same command. The first apply registers a separate central admin device and Agent, writes its device key, refresh credential, and Sidecar key to protected locations with `0600` permissions, and starts only `admin-sidecar` and `admin-console`.
+The preflight checks the Gateway, release copy, Docker network, target directory, and existing central-admin containers only. It does not create identities, write credentials, or replace containers. After reviewing the output, add `-Apply` to the same command. The first apply registers a separate central admin device and Agent, writes its device key, refresh credential, and Sidecar key to protected owner-only locations, and starts only `admin-sidecar` and `admin-console`. Most Linux filesystems show this as `0600`; some NAS mounts report the equivalent owner-only mode as `0700`.
 
 If a central identity or admin container already exists, the script stops by default. Add `-Resume` only after confirming that those two admin containers may be replaced.
 

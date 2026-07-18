@@ -197,6 +197,12 @@ refresh_file="$sidecar_state/refresh-credential.json"
 admin_env="$state_dir/admin.env"
 uid="${container_user%%:*}"
 gid="${container_user##*:}"
+require_owner_only_file() {
+  case "$(stat -c %a "$1")" in
+    600|700) ;;
+    *) echo "中枢管理私有文件权限必须仅允许所有者访问：$1" >&2; exit 65 ;;
+  esac
+}
 admin_sidecar_id="$(docker compose --project-name memory-gateway --env-file "$base_env" --env-file "$admin_env" -f "$gateway_compose" -f "$admin_compose" ps -aq admin-sidecar 2>/dev/null || true)"
 admin_console_id="$(docker compose --project-name memory-gateway --env-file "$base_env" --env-file "$admin_env" -f "$gateway_compose" -f "$admin_compose" ps -aq admin-console 2>/dev/null || true)"
 
@@ -235,9 +241,9 @@ fi
 if [ ! -f "$sidecar_env" ]; then
   docker run --rm --network none --user "$container_user" --read-only --tmpfs /tmp:rw,noexec,nosuid,size=32m --security-opt no-new-privileges:true --cap-drop ALL --pids-limit 64 -v "$sidecar_state:/state" --entrypoint python "$image" -m agent_memory_gateway.sidecar_key --output /state/sidecar.env
 fi
-test "$(stat -c %a "$device_key")" = 600
-test "$(stat -c %a "$refresh_file")" = 600
-test "$(stat -c %a "$sidecar_env")" = 600
+require_owner_only_file "$device_key"
+require_owner_only_file "$refresh_file"
+require_owner_only_file "$sidecar_env"
 
 docker exec "$gateway_container" "$gateway_entrypoint" memory-gateway bind-workspace --agent-installation-id "$agent_id" --workspace-id "$workspace_id" --capabilities "$capabilities"
 
@@ -259,7 +265,7 @@ umask 077
   printf '%s\n' "MEMORY_ADMIN_SIDECAR_GID=$gid"
 } > "$admin_env"
 chmod 0600 "$admin_env"
-test "$(stat -c %a "$admin_env")" = 600
+require_owner_only_file "$admin_env"
 
 docker compose --project-name memory-gateway --env-file "$base_env" --env-file "$admin_env" -f "$gateway_compose" -f "$admin_compose" config -q
 if [ "$resume" = 1 ]; then
