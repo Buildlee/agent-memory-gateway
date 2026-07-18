@@ -33,7 +33,7 @@ Exit code `0` means normal, `1` indicates a runtime issue, and `2` means the Sid
 
 In production, run the admin UI beside the Gateway and expose it through HTTPS `/admin`; keep the `127.0.0.1` console for offline maintenance and single-device troubleshooting. Both paths require a registered identity with `memory.manage`, and neither lets the browser connect directly to the Gateway or database.
 
-See [Central Admin UI](central-admin.md) for initialization, one-time opening, container boundaries, and acceptance checks. It uses a dedicated admin Sidecar and exposes only Caddy's `/admin` path to browsers already inside the LAN or VPN boundary.
+See [Central Admin UI](central-admin.md) for initialization, first-browser authorization, fixed-address access, container boundaries, and acceptance checks. It uses a dedicated admin Sidecar and exposes only Caddy's `/admin` path to browsers already inside the LAN or VPN boundary. Once authorized, a browser can open the fixed address directly for 30 days, including after an `admin-console` restart.
 
 The local fallback still starts as follows:
 
@@ -54,11 +54,11 @@ The console has six sections:
 - **Overview** — pending audit, pending retries, dead letters, active devices, health checks, and recent activity; each status card opens its matching page
 - **Memory** — search memories by keyword within the current workspace that the current Agent is authorized for; does not create, delete, or batch-edit
 - **Audit** — confirm original text, confirm after editing, preserve both versions, resolve conflicts, reject, and archive
-- **Devices & Permissions** — device and Agent names, types, status, workspace bindings, capabilities, recent state, and authorization epoch; technical identifiers stay collapsed and no public keys or credentials are exposed
+- **Devices & Permissions** — device and Agent names, types, status, workspace bindings, capabilities, recent state, and authorization epoch; administrators can update current-workspace capabilities or revoke an Agent or device, while technical identifiers stay collapsed and no public keys or credentials are exposed
 - **Operations** — pending retries, unprocessed dead letters, and read-only recovery checks
-- **Activity** — recent admin and audit records; does not expose body content or sensitive details
+- **Activity** — recent admin and audit records, searchable by result and text, with source device and Agent details; does not expose body content or sensitive details
 
-Audit actions require a second confirmation on the page before submission, and each request carries a revision and an idempotency key. The admin console does not provide buttons for deletion, batch replay, outbox draining, or direct database modification — these actions require a separate controlled process.
+Review, capability, and revocation actions require a second confirmation. Requests carry the current revision, authorization epoch, or expected capability set plus an idempotency key, so stale pages cannot silently overwrite newer state. The active admin cannot revoke itself or remove its own `memory.manage`. The console does not provide buttons for deletion, batch replay, outbox draining, or direct database modification — these actions require a separate controlled process.
 
 ---
 

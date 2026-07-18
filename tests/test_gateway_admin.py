@@ -22,6 +22,18 @@ class FakeAdminService:
         self.payloads.append((payload, principal.agent_installation_id))
         return {"workspace_id": payload["workspace_id"], "devices": []}
 
+    def update_binding(self, payload, principal):
+        self.payloads.append((payload, principal.agent_installation_id))
+        return {"workspace_id": payload["workspace_id"], "status": "updated"}
+
+    def revoke_agent(self, payload, principal):
+        self.payloads.append((payload, principal.agent_installation_id))
+        return {"workspace_id": payload["workspace_id"], "status": "revoked"}
+
+    def revoke_device(self, payload, principal):
+        self.payloads.append((payload, principal.agent_installation_id))
+        return {"workspace_id": payload["workspace_id"], "status": "revoked"}
+
     def list_audit(self, payload, principal):
         self.payloads.append((payload, principal.agent_installation_id))
         return {"workspace_id": payload["workspace_id"], "entries": []}
@@ -96,6 +108,43 @@ class GatewayAdminTests(unittest.TestCase):
         self.assertEqual(devices["devices"], [])
         self.assertEqual(audit["entries"], [])
         self.assertEqual(dead_letters["dead_letters"], [])
+
+    def test_admin_device_management_routes_are_available_to_managers(self):
+        _, binding = self.post(
+            "/v1/admin/bindings/update",
+            {
+                "workspace_id": "workspace-a",
+                "target_agent_installation_id": "hermes-a",
+                "expected_capabilities": ["memory.search"],
+                "capabilities": ["memory.search", "memory.feedback"],
+                "idempotency_key": "idem-binding",
+                "confirmed_by_user": True,
+            },
+        )
+        _, agent = self.post(
+            "/v1/admin/agents/revoke",
+            {
+                "workspace_id": "workspace-a",
+                "target_agent_installation_id": "hermes-a",
+                "expected_auth_epoch": 2,
+                "idempotency_key": "idem-agent",
+                "confirmed_by_user": True,
+            },
+        )
+        _, device = self.post(
+            "/v1/admin/devices/revoke",
+            {
+                "workspace_id": "workspace-a",
+                "target_device_id": "device-b",
+                "expected_auth_epoch": 3,
+                "idempotency_key": "idem-device",
+                "confirmed_by_user": True,
+            },
+        )
+
+        self.assertEqual(binding["status"], "updated")
+        self.assertEqual(agent["status"], "revoked")
+        self.assertEqual(device["status"], "revoked")
 
     def test_admin_overview_rejects_principal_without_management_capability(self):
         no_manage = Principal(

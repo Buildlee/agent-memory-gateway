@@ -76,6 +76,8 @@ flowchart LR
 | Service | Memory Gateway | Auth, permissions, event ledger, query and review APIs |
 | Storage | PostgreSQL / SQLite / GBrain | Audit logs, authorization data, retrievable memory |
 
+In production, the admin UI runs beside the Gateway and is reached through a fixed HTTPS `/admin/` address. A browser completes a one-time authorization, then keeps a signed session across `admin-console` restarts until it expires. The device page can update workspace permissions or revoke an untrusted identity, Activity shows the source device and Agent, and every change is confirmed, concurrency-checked, and audited.
+
 ## 📦 CLI commands
 
 | Command | Description | Example |

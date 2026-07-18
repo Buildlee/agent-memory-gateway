@@ -33,6 +33,7 @@ def _audit(
     result_code: str,
     device_id: str | None = None,
     agent_installation_id: str | None = None,
+    workspace_id: str | None = None,
     target_ref: str | None = None,
     details: dict[str, Any] | None = None,
 ) -> None:
@@ -40,8 +41,8 @@ def _audit(
         """
         INSERT INTO audit_log (
           tenant_id, actor_type, actor_id, action, result_code, trace_id,
-          device_id, agent_installation_id, target_ref, details_json
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+          device_id, agent_installation_id, workspace_id, target_ref, details_json
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
         """,
         (
             tenant_id,
@@ -52,6 +53,7 @@ def _audit(
             f"auth_{secrets.token_urlsafe(18)}",
             device_id,
             agent_installation_id,
+            workspace_id,
             target_ref,
             json.dumps(details or {}, sort_keys=True, separators=(",", ":")),
         ),

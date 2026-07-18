@@ -269,13 +269,13 @@ The admin console is only available to registered Agents with `memory.manage`. T
 
 ```mermaid
 flowchart LR
-  B["Browser"] -->|"loopback or HTTPS /admin + one-time session"| C["Admin Console"]
+  B["Authorized browser"] -->|"loopback or HTTPS /admin + signed session"| C["Admin Console"]
   C -->|"Protected by Sidecar key"| S["Memory Sidecar"]
   S -->|"HTTPS + short-term token"| G["Memory Gateway"]
   G --> M[("Metadata & Audit DB")]
 ```
 
-The local management bridge listens on **127.0.0.1**. A central console may listen behind Caddy only when an explicit network opt-in, fixed `/admin` mount, and `Secure` cookie are enabled; it has no host port. Each start generates a one-time session. The first browser request exchanges it for an `HttpOnly`, `SameSite=Strict` cookie; for the central entry, the launch link is written only to a protected file and never appears in page source or Docker logs. The management bridge does not read the database and does not store Gateway credentials. See [Central Admin UI](central-admin.md).
+The local management bridge listens on **127.0.0.1**. A central console may listen behind Caddy only when an explicit network opt-in, fixed `/admin` mount, and `Secure` cookie are enabled; it has no host port. A new browser exchanges a one-time link for a signed, expiring `HttpOnly`, `SameSite=Strict` cookie. The central state directory holds an owner-only signing key, so authorization survives console restarts. The launch link is written only to a protected file and never appears in page source or Docker logs. The management bridge does not read the database and does not store Gateway credentials. See [Central Admin UI](central-admin.md).
 
 ---
 
@@ -283,14 +283,14 @@ The admin page is divided into six sections:
 
 - **Overview**: Pending reviews, pending retries, dead letters, and active device count for the current workspace. Health checks and recent activity requiring attention are placed together. When the Sidecar is not updated or the Gateway is unavailable, the page provides recovery hints and does not show a skeleton screen.
 - **Memories**: Only calls the current Agent's authorized retrieval through the Sidecar. After the user enters keywords, authorized memories, source type, status, and confidence are displayed. Does not provide new creation, deletion, or batch modification bypassing review.
-- **Devices & Permissions**: Shows device, Agent, workspace bindings, capabilities, status, authorization epoch. Does not display device private keys, refresh credentials, raw public keys, or credential hashes.
+- **Devices & Permissions**: Shows device, Agent, workspace bindings, capabilities, status, and authorization epoch. Administrators can update supported capabilities for the current workspace or revoke an Agent, device, and associated refresh credentials. The current admin cannot revoke itself or remove its own `memory.manage`. Revocation changes identity state but does not delete records. Device private keys, refresh credentials, raw public keys, and credential hashes remain hidden.
 - **Review & Conflicts**: Reuses the review interface. First shows candidates and conflict sources; requires explicit user confirmation before executing confirm, supersede, keep both, reject, or revoke. Each operation uses `revision` + `idempotency_key`.
 - **Operations**: Error codes and recovery check results for pending retries and unprocessed dead letters. Read-only.
-- **Activity**: Recent audit log. Read-only.
+- **Activity**: Recent audit data enriched through tenant- and workspace-scoped joins with friendly device name, device type, Agent name, Agent type, and status. Technical IDs stay collapsed, and audit detail bodies are not returned.
 
 Gateway management interfaces uniformly require `memory.manage`, filtered by the caller's tenant, user, and workspace. Only structured metadata (status, count, time, ID, error code) is returned. Candidate content is decrypted by the existing review service according to authorization; audit and operations interfaces do not return content, ciphertext, tokens, connection strings, or exception stack traces.
 
-Management entry points are read-only by default. Requests that change memory state use the review interface, requiring `confirmed_by_user=true`, the expected revision, and a one-time idempotency key. Deletion, cleanup, and batch replay are not included in the default console operation scope.
+Overview, search, operations, and activity entry points remain read-only. Requests that change memory state use the review interface; capability changes and identity revocation use dedicated admin interfaces. Every write requires `confirmed_by_user=true`, an expected revision, authorization epoch, or capability set, plus a one-time idempotency key. Management targets use `target_agent_installation_id` and `target_device_id` so they cannot be confused with caller identity fields. Deletion, cleanup, and batch replay are not included in the default console operation scope.
 
 ---
 

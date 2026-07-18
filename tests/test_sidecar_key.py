@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import os
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -24,11 +25,21 @@ class SidecarKeyTests(unittest.TestCase):
     def test_module_entrypoint_creates_key_file(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sidecar.env"
+            project_root = Path(__file__).resolve().parents[1]
+            environment = os.environ.copy()
+            source_path = str(project_root / "src")
+            environment["PYTHONPATH"] = os.pathsep.join(
+                value
+                for value in (source_path, environment.get("PYTHONPATH", ""))
+                if value
+            )
             result = subprocess.run(
                 [sys.executable, "-m", "agent_memory_gateway.sidecar_key", "--output", str(path)],
                 check=True,
                 capture_output=True,
                 text=True,
+                cwd=project_root,
+                env=environment,
             )
             self.assertTrue(path.is_file())
             self.assertIn("sidecar_key_file=", result.stdout)

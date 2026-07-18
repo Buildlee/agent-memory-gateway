@@ -4,7 +4,7 @@ Run the production admin UI beside the shared-memory center: the same environmen
 
 ```mermaid
 flowchart LR
-  B["Browser"] -->|"HTTPS /admin + one-time session"| P["Caddy reverse proxy"]
+  B["Authorized browser"] -->|"HTTPS /admin + signed session"| P["Caddy reverse proxy"]
   P --> C["Central Admin Console"]
   C -->|"shared network namespace"| S["Central Admin Sidecar"]
   S -->|"short-lived token + memory.manage"| G["Memory Gateway"]
@@ -37,7 +37,9 @@ If a central identity or admin container already exists, the script stops by def
 
 ## Open the UI
 
-Do not store passwords, Gateway tokens, or permanent browser links. Each time an administrator opens the UI, run:
+Use the fixed HTTPS address configured during deployment, such as `https://memory-gateway.internal:8443/admin/`. After one browser authorization, that address opens directly for the next 30 days. Restarting the `admin-console` container does not invalidate the session.
+
+Run the opening script once for a new browser, after authorization expires, or after the session key is intentionally rotated:
 
 ```powershell
 .\scripts\open-central-admin.ps1 `
@@ -47,7 +49,9 @@ Do not store passwords, Gateway tokens, or permanent browser links. Each time an
   -StateDirectory "/srv/memory-gateway/admin"
 ```
 
-The script recreates only `admin-console`, obtains a fresh short-lived link, and hands it directly to the default browser. The link is not echoed to PowerShell, the operations log, or Docker logs. Its first request becomes an `HttpOnly`, `Secure`, `SameSite=Strict` session cookie scoped to `/admin`.
+The script recreates only `admin-console`, obtains a one-time authorization link, and hands it directly to the default browser. The link is not echoed to PowerShell, the operations log, or Docker logs. The first request exchanges it for a signed, expiring `HttpOnly`, `Secure`, `SameSite=Strict` cookie scoped to `/admin`. The signing key stays in an owner-only file in the central state directory; it never reaches the browser, logs, or Git.
+
+Without a valid cookie, the fixed address shows a clear browser-authorization page instead of a raw JSON error. Do not disable authentication or open the admin path to every LAN client just to remove the initial authorization step.
 
 ## Network and authorization boundary
 
@@ -55,12 +59,16 @@ The script recreates only `admin-console`, obtains a fresh short-lived link, and
 - Access `/admin` only from the LAN or a VPN boundary. Do not publish it to the public Internet or disable TLS validation.
 - The central admin identity is separate from Codex and Hermes identities. It uses the same device registration and workspace authorization model, so no machine-specific management implementation is needed.
 - The UI displays only authorized device, capability, status, time, event reference, and audit metadata. It does not display raw public keys, refresh credentials, connection strings, tokens, or ciphertext.
+- The device page can update the supported capabilities for the current workspace, revoke an Agent, or revoke a device. Changes require a second confirmation and the current authorization version. The active admin cannot revoke itself or remove its own `memory.manage` capability.
+- Revocation invalidates identity and credentials but does not delete memories, device records, or audit history. Restoring access requires registration or pairing again.
 
 ## Acceptance
 
 1. Gateway, Worker, proxy, and `admin-sidecar` are healthy or running.
-2. Open `/admin` through the opening script and verify Overview, Reviews, Devices, Runtime, and Activity.
-3. Confirm that status cards open the matching page and the device page shows device, Agent, binding, capability, and recent state without credentials.
-4. Verify a deliberately confirmed review action reaches the Gateway audit trail. Do not add deletion, batch cleanup, or automatic replay to the UI.
+2. Authorize the browser once through the opening script, close the page, and then open the fixed `/admin/` address directly.
+3. Verify Overview, Reviews, Devices, Runtime, and Activity, and confirm that the content area expands with the browser width.
+4. Confirm that Activity shows friendly source device and Agent information while keeping technical identifiers collapsed.
+5. Use a non-admin test Agent to verify one workspace capability change, including concurrency protection and audit output. Run revocation checks only with an identity that can be paired again.
+6. Verify a deliberately confirmed review action reaches the Gateway audit trail. Do not add deletion, batch cleanup, or automatic replay to the UI.
 
 If the central entry is unavailable, check Caddy, `admin-sidecar`, and Gateway authorization before running the opening script again. Do not bypass the path by connecting the browser to the database or by editing Hermes configuration storage.
