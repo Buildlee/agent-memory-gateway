@@ -29,6 +29,8 @@ Bridge 与目标容器共用网络命名空间：
 - 不绑定宿主机端口
 - Gateway、数据库、刷新凭据不暴露给局域网
 
+默认 Gateway 地址使用 Docker 服务名 `gateway`。部分 Docker 版本在共享网络命名空间时，只让目标 Agent 解析这个名字，Bridge 自己可能无法解析。安装器会从 Gateway 与目标 Agent 的共同网络中取得 Gateway 当前私有地址，再写入受保护的 Bridge 配置。该地址仅在 Docker 内部使用；以 `-Resume` 恢复时会刷新它，因此 Gateway 重建后也能重新连接。
+
 ---
 
 ## 运行安装器

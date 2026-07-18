@@ -26,6 +26,9 @@ class ContainerSetupTests(unittest.TestCase):
         self.assertIn('gid="${container_user##*:}"', script)
         self.assertNotIn(r'\${container_user', script)
         self.assertIn('gateway_entrypoint="$(docker inspect "$gateway_container"', script)
+        self.assertIn('gateway_host="${gateway_authority%%:*}"', script)
+        self.assertIn('gateway_url="$gateway_scheme://$gateway_ip$gateway_port_suffix"', script)
+        self.assertIn('Gateway 与目标 Agent 容器没有共同的 Docker 网络', script)
         self.assertIn('client_status="$(docker inspect "$client_container"', script)
         self.assertIn('bridge_status=absent', script)
         self.assertIn('目标 Agent 容器当前未运行', script)
@@ -42,6 +45,7 @@ class ContainerSetupTests(unittest.TestCase):
         self.assertIn("command:\n      - >-", compose)
         self.assertIn("exec python -m agent_memory_gateway.sidecar_mcp", compose)
         self.assertIn("mcp_sync_status=ready", script)
+        self.assertIn('if [ ! -e "$bridge_env" ] || [ "$resume" = 1 ]; then', script)
         self.assertNotIn("hermes-webui", script)
 
 
