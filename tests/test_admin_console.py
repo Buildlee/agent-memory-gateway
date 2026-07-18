@@ -137,6 +137,8 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn('data-view="memories"', html)
         self.assertIn('data-view="activity"', html)
         self.assertIn("LOCAL_METHOD_UNSUPPORTED", html)
+        self.assertIn("Promise.allSettled", html)
+        self.assertIn("部分管理信息暂时未加载", html)
         self.assertIn('aria-current="page"', html)
         self.assertIn('for="memory-query"', html)
         self.assertNotIn("window.confirm", html)

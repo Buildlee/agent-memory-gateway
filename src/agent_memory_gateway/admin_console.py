@@ -1065,13 +1065,22 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     }}
 
     function errorCopy(code) {{
-      const messages = {{
-        LOCAL_METHOD_UNSUPPORTED: ["需要更新本机 Sidecar", "当前运行的 Sidecar 还没有加载管理功能。请先完成软件更新，并在维护窗口重新启动 Sidecar；浏览器不会直接访问 Gateway。"],
-        GATEWAY_UNAVAILABLE: ["暂时连不上共享服务", "请检查本机 Sidecar、网络和 Gateway 健康状态，然后重新读取。"],
-        WORKSPACE_FORBIDDEN: ["当前 Agent 没有该工作区权限", "请核对当前管理 Agent 的工作区授权和 memory.manage 能力。"]
-      }};
-      return messages[code] || ["暂时无法读取管理数据", "管理页保留了本机会话和凭据边界。请稍后重新读取，或根据错误码检查 Sidecar 与 Gateway。"];
-    }}
+        const messages = {{
+          LOCAL_METHOD_UNSUPPORTED: ["需要更新本机 Sidecar", "当前运行的 Sidecar 还没有加载管理功能。请先完成软件更新，并在维护窗口重新启动 Sidecar；浏览器不会直接访问 Gateway。"],
+          GATEWAY_UNAVAILABLE: ["暂时连不上共享服务", "请检查本机 Sidecar、网络和 Gateway 健康状态，然后重新读取。"],
+          WORKSPACE_FORBIDDEN: ["当前 Agent 没有该工作区权限", "请核对当前管理 Agent 的工作区授权和 memory.manage 能力。"],
+          internal_error: ["部分管理数据暂不可用", "其中一项管理数据暂时无法读取。其他已加载的信息仍可使用；稍后可再次刷新。"]
+        }};
+        return messages[code] || ["暂时无法读取管理数据", "管理页保留了本机会话和凭据边界。请稍后重新读取，或根据错误码检查 Sidecar 与 Gateway。"];
+      }}
+
+      function rejectedCode(result) {{
+        return result.status === "rejected" ? String(result.reason && result.reason.message || "LOCAL_REQUEST_FAILED") : "";
+      }}
+
+      function renderUnavailable(elementId, code) {{
+        document.getElementById(elementId).innerHTML = `<div class="empty">${{escapeHTML(errorCopy(code)[1])}}</div>`;
+      }}
 
     function showLoadError(code) {{
       const message = errorCopy(code);
@@ -1117,7 +1126,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       document.getElementById("priority-list").innerHTML = `<div class="skeleton"></div><div class="skeleton"></div>`;
       setConnection("正在读取状态", "");
       try {{
-        const [overview, health, reviews, devices, audit, deadLetters] = await Promise.all([
+        const [overviewResult, healthResult, reviewsResult, devicesResult, auditResult, deadLettersResult] = await Promise.allSettled([
           api("/api/overview"),
           api("/api/health"),
           api("/api/reviews"),
@@ -1125,12 +1134,40 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
           api("/api/audit"),
           api("/api/dead-letters")
         ]);
+        if (overviewResult.status !== "fulfilled") throw overviewResult.reason;
+        if (healthResult.status !== "fulfilled") throw healthResult.reason;
+        const overview = overviewResult.value;
+        const health = healthResult.value;
         renderOverview(overview);
         renderHealth(health);
-        renderReviews(reviews);
-        renderDevices(devices);
-        renderAudit(audit);
-        renderDeadLetters(deadLetters);
+        if (reviewsResult.status === "fulfilled") {{
+          renderReviews(reviewsResult.value);
+        }} else {{
+          renderUnavailable("review-list", rejectedCode(reviewsResult));
+        }}
+        if (devicesResult.status === "fulfilled") {{
+          renderDevices(devicesResult.value);
+        }} else {{
+          renderUnavailable("device-list", rejectedCode(devicesResult));
+        }}
+        if (auditResult.status === "fulfilled") {{
+          renderAudit(auditResult.value);
+        }} else {{
+          const code = rejectedCode(auditResult);
+          state.audit = [];
+          renderUnavailable("audit-list", code);
+          renderUnavailable("overview-audit-list", code);
+        }}
+        if (deadLettersResult.status === "fulfilled") {{
+          renderDeadLetters(deadLettersResult.value);
+        }} else {{
+          renderUnavailable("dead-letter-list", rejectedCode(deadLettersResult));
+        }}
+        const optionalFailures = [reviewsResult, devicesResult, auditResult, deadLettersResult]
+          .filter(result => result.status !== "fulfilled");
+        if (optionalFailures.length) {{
+          toast("部分管理信息暂时未加载，可稍后刷新。");
+        }}
       }} catch (error) {{
         showLoadError(error.message);
         toast(error.message);

@@ -146,7 +146,7 @@ class PostgresAdminService:
             rows = connection.execute(
                 """
                 SELECT audit_id, actor_type, actor_id, action, result_code, trace_id,
-                       device_id, agent_installation_id, target_ref, created_at
+                       device_id, agent_installation_id, target_ref, audit.created_at
                 FROM audit_log AS audit
                 JOIN workspaces AS workspace ON workspace.workspace_id = audit.workspace_id
                 WHERE audit.tenant_id = %s AND workspace.user_id = %s

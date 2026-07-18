@@ -149,6 +149,7 @@ class AdminServiceTests(unittest.TestCase):
         audit_query = next(sql for sql, _ in self.connection.executed if "FROM audit_log AS audit" in sql)
         self.assertNotIn("details_json", audit_query)
         self.assertIn("workspace.user_id = %s", audit_query)
+        self.assertIn("audit.created_at", audit_query)
 
     def test_dead_letter_list_returns_only_repair_metadata(self):
         result = self.service.list_dead_letters(
