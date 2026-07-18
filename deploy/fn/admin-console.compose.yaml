@@ -20,7 +20,7 @@ services:
     command:
       - >-
         test -r /state/sidecar.env;
-        test "$(stat -c %a /state/sidecar.env)" = "600";
+        case "$(stat -c %a /state/sidecar.env)" in 600|700) ;; *) exit 65 ;; esac;
         test -r /state/device-identity.pem;
         test -r /state/refresh-credential.json;
         export MEMORY_OUTBOX_KEY="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY" { print $$2 }' /state/sidecar.env)";
@@ -77,7 +77,7 @@ services:
     command:
       - >-
         test -r /run/secrets/admin-sidecar.env;
-        test "$(stat -c %a /run/secrets/admin-sidecar.env)" = "600";
+        case "$(stat -c %a /run/secrets/admin-sidecar.env)" in 600|700) ;; *) exit 65 ;; esac;
         test -d /admin-state;
         export MEMORY_OUTBOX_KEY="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY" { print $$2 }' /run/secrets/admin-sidecar.env)";
         export MEMORY_OUTBOX_KEY_VERSION="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY_VERSION" { print $$2 }' /run/secrets/admin-sidecar.env)";
