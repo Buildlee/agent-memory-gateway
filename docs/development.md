@@ -149,7 +149,7 @@ python -m compileall -q src tests
 - 概览只返回数量和 worker 心跳；设备列表不返回公钥或凭据；审计列表不返回 `details_json` 和记忆正文；死信列表只返回稳定 ID、错误码、类别和时间。
 - 每个查询按调用者租户、用户和工作区过滤。工作区缺失或未授权时，不退任何默认工作区。
 - Sidecar RPC 只允许已声明管理方法，使用现有短期令牌和本机回环鉴权。
-- `memory-admin-console` 只监听回环地址（`host="127.0.0.1"`，启动时校验）。首次 URL 含一次性 `session` 令牌，换取 HttpOnly Cookie 后即失效（`consume_launch_token` 标记已用）。页面源码、API 响应和测试断言不包含本机 key、Gateway 令牌或刷新凭据。
+- `memory-admin-console` 默认只监听回环地址。只有中枢部署显式传入 `--allow-network`、`--secure-cookie`、固定 `--mount-path /admin` 和受保护的启动链接文件时，才允许由 Caddy 代理；直接监听任意 LAN 地址仍会被拒绝。首次 URL 含一次性 `session` 令牌，换取 HttpOnly Cookie 后即失效（`consume_launch_token` 标记已用）。页面源码、API 响应、日志和测试断言不包含本机 key、Gateway 令牌或刷新凭据。
 - 改变审核状态的请求必须带 `confirmed_by_user: true`、`expected_revision` 和 `idempotency_key`。
 
 `memory-admin-check` 给计划任务或外部监控使用。从 Sidecar 获取概览，检测 worker 心跳、待重试事件和未处理死信，输出不含正文或凭据的 JSON：

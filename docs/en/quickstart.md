@@ -128,4 +128,4 @@ This only calls the Sidecar health endpoint on `127.0.0.1` — it does not read 
 
 - Need server deployment, migration, or go-live checklist → [Deployment Guide](deployment.md)
 - Need to understand permissions, auditing, offline sync, and retrieval policies → [Overall Design](design-v2.md)
-- Need complete Codex, Hermes, or OpenClaw examples → [Integration Examples](../examples/README.md)
+- Need complete Codex, Hermes, or OpenClaw examples → [Integration Examples](../../examples/README.md)

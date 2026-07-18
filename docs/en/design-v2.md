@@ -265,17 +265,17 @@ Deployment files, sample configurations, and documentation contain only variable
 
 ## Admin Console Access
 
-The admin console is only available to registered Agents with `memory.manage`. The browser does not directly store Gateway tokens, refresh credentials, or database connection strings. It connects to the local management bridge, which forwards requests through the Sidecar. Browser pages, MCP, and automation scripts share the same device identity and workspace authorization.
+The admin console is only available to registered Agents with `memory.manage`. The browser does not directly store Gateway tokens, refresh credentials, or database connection strings. The default local entry uses a loopback management bridge; production may run the same console beside the Gateway and expose `/admin` through Caddy plus a dedicated admin Sidecar. Both paths forward requests through the Sidecar, and browser pages, MCP, and automation scripts share the same device identity and workspace authorization model.
 
 ```mermaid
 flowchart LR
-  B["Browser"] -->|"127.0.0.1 + one-time session"| C["Local Management Bridge"]
-  C -->|"Protected by local key"| S["Memory Sidecar"]
+  B["Browser"] -->|"loopback or HTTPS /admin + one-time session"| C["Admin Console"]
+  C -->|"Protected by Sidecar key"| S["Memory Sidecar"]
   S -->|"HTTPS + short-term token"| G["Memory Gateway"]
   G --> M[("Metadata & Audit DB")]
 ```
 
-The local management bridge only listens on **127.0.0.1** (`admin_console.py:1405`). It generates a one-time random session at startup; the first browser request exchanges it for a local-only session cookie. The session value is not written to any file and does not appear in page source or logs. The management bridge does not read the database and does not store Gateway credentials.
+The local management bridge listens on **127.0.0.1**. A central console may listen behind Caddy only when an explicit network opt-in, fixed `/admin` mount, and `Secure` cookie are enabled; it has no host port. Each start generates a one-time session. The first browser request exchanges it for an `HttpOnly`, `SameSite=Strict` cookie; for the central entry, the launch link is written only to a protected file and never appears in page source or Docker logs. The management bridge does not read the database and does not store Gateway credentials. See [Central Admin UI](central-admin.md).
 
 ---
 

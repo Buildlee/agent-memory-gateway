@@ -63,7 +63,10 @@ flowchart LR
   G --> B[("Long-term Memory<br/>SQLite / GBrain")]
   W["Worker<br/>(retry / dead letter / crystal)"] --> M
   W --> B
-  R["Admin Console"] -->|Management API| G
+  R["Central Admin UI"] -->|"HTTPS /admin"| P["Caddy"]
+  P --> A["Admin Console"]
+  A --> AS["Admin Sidecar"]
+  AS -->|"short-lived token + authorization"| G
 ```
 
 | Layer | Component | Responsibility |
@@ -131,7 +134,7 @@ memory-gateway --help
 | MCP Sidecar | `sidecar_mcp.py` | Expose `memory_context`/`memory_write`/`memory_sync_status` tools |
 | Local Daemon | `sidecar_daemon.py` | Single instance, shared via loopback RPC |
 | Review Service | `review_service.py` | Pending observation and approval workflow |
-| Admin Console | `admin_console.py`, `admin_check.py` | Local web admin UI and health checks |
+| Admin Console | `admin_console.py`, `admin_check.py` | Local fallback UI, central web admin UI, and health checks |
 | Import Tool | `importer.py` | Import existing data into the shared library |
 
 ### Memory lifecycle
@@ -167,6 +170,7 @@ Stable memories can be compiled into crystal pages (`crystal_service.py`), rebui
 - [Quick start](docs/en/quickstart.md) — Local demo, production setup, FAQ
 - [Design](docs/en/design-v2.md) — Identity, permissions, sync, review, retrieval boundaries
 - [Deployment](docs/en/deployment.md) — PostgreSQL, HTTPS, migration, go-live checklist
+- [Central Admin UI](docs/en/central-admin.md) — Deploy and open `/admin` beside the Gateway
 - [Operations](docs/en/operations.md) — Admin UI, health checks, dead letters, recovery drills
 - [Development](docs/en/development.md) — Test commands, retrieval specs, contribution conventions
 - [Importing existing memory](docs/en/importing-existing-memory.md) — Migrate existing data into the shared library
