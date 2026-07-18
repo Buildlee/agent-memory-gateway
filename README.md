@@ -63,7 +63,10 @@ flowchart LR
   G --> B[("长期记忆<br/>SQLite / GBrain")]
   W["Worker<br/>(重试 / 死信 / 结晶)"] --> M
   W --> B
-  R["审核管理端"] -->|管理接口| G
+  R["中枢管理页"] -->|"HTTPS /admin"| P["Caddy"]
+  P --> A["Admin Console"]
+  A --> AS["管理 Sidecar"]
+  AS -->|"短期令牌 + 授权"| G
 ```
 
 | 层 | 组件 | 职责 |
@@ -131,7 +134,7 @@ memory-gateway --help
 | MCP Sidecar | `sidecar_mcp.py` | 暴露 `memory_context`/`memory_write`/`memory_sync_status` |
 | 本机 Daemon | `sidecar_daemon.py` | 单实例，多 Agent 通过回环 RPC 共用 |
 | 审核服务 | `review_service.py` | 待审核观察与审批工作流 |
-| 管理控制台 | `admin_console.py`, `admin_check.py` | 本机 Web 管理页和健康检查 |
+| 管理控制台 | `admin_console.py`, `admin_check.py` | 本机备用入口、中枢 Web 管理页和健康检查 |
 | 导入工具 | `importer.py` | 把既有资料导入共享库 |
 
 ### 一条记忆的处理流程
@@ -167,6 +170,7 @@ memory-gateway --help
 - [快速上手](docs/quickstart.md) — 本地体验、正式接入、常见问题
 - [总体设计](docs/design-v2.md) — 身份、权限、同步、审核和检索的实现边界
 - [部署说明](docs/deployment.md) — PostgreSQL、HTTPS、迁移、上线核对
+- [中枢管理页](docs/central-admin.md) — 在 Gateway 所在环境部署和打开 `/admin`
 - [日常运维与恢复](docs/operations.md) — 管理页、运行检查、死信排查、恢复演练
 - [开发与验证](docs/development.md) — 测试命令、检索口径、修改约定
 - [导入已有记忆](docs/importing-existing-memory.md) — 把既有资料迁入共享库

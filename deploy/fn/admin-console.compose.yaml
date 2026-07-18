@@ -1,0 +1,107 @@
+services:
+  admin-sidecar:
+    image: agent-memory-gateway:0.1.0
+    restart: unless-stopped
+    user: "${MEMORY_ADMIN_SIDECAR_UID:-1000}:${MEMORY_ADMIN_SIDECAR_GID:-1001}"
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        test -r /state/sidecar.env;
+        test "$(stat -c %a /state/sidecar.env)" = "600";
+        test -r /state/device-identity.pem;
+        test -r /state/refresh-credential.json;
+        export MEMORY_OUTBOX_KEY="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY" { print $$2 }' /state/sidecar.env)";
+        export MEMORY_OUTBOX_KEY_VERSION="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY_VERSION" { print $$2 }' /state/sidecar.env)";
+        test -n "$$MEMORY_OUTBOX_KEY";
+        test -n "$$MEMORY_OUTBOX_KEY_VERSION";
+        exec python -m agent_memory_gateway.sidecar_daemon --host 127.0.0.1 --port 8766
+    environment:
+      MEMORY_GATEWAY_URL: ${MEMORY_GATEWAY_URL:?必须指定中枢 Sidecar 到 Gateway 的内部地址}
+      MEMORY_REFRESH_CREDENTIAL_FILE: /state/refresh-credential.json
+      MEMORY_AGENT_INSTALLATION_ID: ${MEMORY_ADMIN_AGENT_INSTALLATION_ID:?必须指定中枢管理 Agent 安装实例 ID}
+      MEMORY_SIDECAR_ALLOWED_AGENTS: ${MEMORY_ADMIN_AGENT_INSTALLATION_ID:?必须指定中枢管理 Agent 安装实例 ID}
+      MEMORY_DEFAULT_WORKSPACE: ${MEMORY_DEFAULT_WORKSPACE:?必须指定默认工作区}
+      MEMORY_DEVICE_ID: ${MEMORY_ADMIN_DEVICE_ID:?必须指定中枢管理设备 ID}
+      MEMORY_HOME: /state/outbox
+      MEMORY_SIDECAR_PORT: "8766"
+    volumes:
+      - type: bind
+        source: ${MEMORY_ADMIN_SIDECAR_STATE_DIR:?必须指定中枢 Sidecar 状态目录}
+        target: /state
+        read_only: false
+    networks:
+      - backend
+      - ingress
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8766), 2).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
+
+  admin-console:
+    image: agent-memory-gateway:0.1.0
+    restart: unless-stopped
+    user: "${MEMORY_ADMIN_SIDECAR_UID:-1000}:${MEMORY_ADMIN_SIDECAR_GID:-1001}"
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 96
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    depends_on:
+      admin-sidecar:
+        condition: service_healthy
+    network_mode: "service:admin-sidecar"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        test -r /run/secrets/admin-sidecar.env;
+        test "$(stat -c %a /run/secrets/admin-sidecar.env)" = "600";
+        test -d /admin-state;
+        export MEMORY_OUTBOX_KEY="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY" { print $$2 }' /run/secrets/admin-sidecar.env)";
+        export MEMORY_OUTBOX_KEY_VERSION="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY_VERSION" { print $$2 }' /run/secrets/admin-sidecar.env)";
+        test -n "$$MEMORY_OUTBOX_KEY";
+        exec python -m agent_memory_gateway.admin_console
+        --workspace "$$MEMORY_DEFAULT_WORKSPACE"
+        --host 0.0.0.0
+        --port 8767
+        --allow-network
+        --secure-cookie
+        --mount-path /admin
+        --public-base-url "$$MEMORY_ADMIN_PUBLIC_BASE_URL"
+        --launch-token-file /admin-state/launch-url
+    environment:
+      MEMORY_AGENT_INSTALLATION_ID: ${MEMORY_ADMIN_AGENT_INSTALLATION_ID:?必须指定中枢管理 Agent 安装实例 ID}
+      MEMORY_DEFAULT_WORKSPACE: ${MEMORY_DEFAULT_WORKSPACE:?必须指定默认工作区}
+      MEMORY_SIDECAR_PORT: "8766"
+      MEMORY_ADMIN_PUBLIC_BASE_URL: ${MEMORY_ADMIN_PUBLIC_BASE_URL:?必须指定中枢 HTTPS 管理入口}
+    volumes:
+      - type: bind
+        source: ${MEMORY_ADMIN_SIDECAR_KEY_FILE:?必须指定仅含 Sidecar key 的受保护文件}
+        target: /run/secrets/admin-sidecar.env
+        read_only: true
+      - type: bind
+        source: ${MEMORY_ADMIN_CONSOLE_STATE_DIR:?必须指定管理会话状态目录}
+        target: /admin-state
+        read_only: false

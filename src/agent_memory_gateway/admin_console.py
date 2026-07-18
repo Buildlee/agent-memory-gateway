@@ -8,12 +8,14 @@ import hmac
 import json
 import os
 import secrets
+import tempfile
 import threading
 from dataclasses import dataclass
 from http import cookies
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 from .admin_check import evaluate_overview
 from .sidecar_daemon import SidecarDaemonError, get_shared_sidecar
@@ -65,6 +67,8 @@ class AdminConsoleState:
     session: LocalAdminSession
     sidecar_factory: Callable[[], Any]
     max_heartbeat_age_seconds: int = 90
+    mount_path: str = ""
+    secure_cookie: bool = False
 
 
 def _workspace_id(value: str | None) -> str:
@@ -74,6 +78,66 @@ def _workspace_id(value: str | None) -> str:
     if len(workspace_id) > 256:
         raise AdminConsoleError("WORKSPACE_ID_INVALID")
     return workspace_id
+
+
+def _mount_path(value: str | None) -> str:
+    """Validate an optional reverse-proxy mount path without accepting URLs."""
+
+    raw = str(value or "").strip()
+    if raw in {"", "/"}:
+        return ""
+    if not raw.startswith("/") or raw.endswith("/") or "//" in raw or "?" in raw or "#" in raw:
+        raise AdminConsoleError("ADMIN_MOUNT_PATH_INVALID")
+    segments = raw[1:].split("/")
+    if not segments or any(not segment or not segment.replace("-", "").replace("_", "").isalnum() for segment in segments):
+        raise AdminConsoleError("ADMIN_MOUNT_PATH_INVALID")
+    return raw
+
+
+def _public_base_url(value: str | None, mount_path: str) -> str:
+    raw = str(value or "").strip().rstrip("/")
+    parsed = urlsplit(raw)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.query
+        or parsed.fragment
+        or parsed.path.rstrip("/") != mount_path
+    ):
+        raise AdminConsoleError("ADMIN_PUBLIC_BASE_URL_INVALID")
+    return raw
+
+
+def _write_launch_url(path_value: str, launch_url: str) -> None:
+    """Persist a short-lived launch URL only in an explicitly protected directory."""
+
+    path = Path(path_value)
+    if not path.is_absolute() or not path.name or path.is_symlink() or path.parent.is_symlink() or not path.parent.is_dir():
+        raise AdminConsoleError("ADMIN_LAUNCH_FILE_INVALID")
+    descriptor = None
+    temporary_path = None
+    try:
+        descriptor, temporary_path = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", closefd=True) as stream:
+            descriptor = None
+            stream.write(launch_url)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+    except OSError as exc:
+        raise AdminConsoleError("ADMIN_LAUNCH_FILE_WRITE_FAILED") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
 
 
 def _bounded_limit(value: Any, default: int = 30) -> int:
@@ -106,8 +170,9 @@ def _required_positive_int(payload: dict[str, Any], key: str, code: str) -> int:
     return converted
 
 
-def _html_page(workspace_id: str, nonce: str) -> bytes:
+def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     escaped_workspace = html.escape(workspace_id, quote=True)
+    escaped_api_base = html.escape(mount_path, quote=True)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -612,6 +677,94 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       from {{ opacity: .55; }}
       to {{ opacity: 1; }}
     }}
+    /* 管理台保持冷静、紧凑的工作台节奏：层级由留白和边界承担，不依赖装饰。 */
+    body {{
+      background:
+        radial-gradient(circle at top right, oklch(0.96 0.02 264 / .52), transparent 30rem),
+        var(--bg);
+      font-size: 14px;
+    }}
+    aside {{
+      align-self: stretch;
+      background: oklch(0.975 0.004 260 / .92);
+      padding: 24px 16px 18px;
+    }}
+    .brand {{ margin-bottom: 30px; }}
+    .mark {{
+      border-radius: 8px;
+      box-shadow: 0 3px 8px oklch(0.52 0.16 264 / .22);
+    }}
+    .nav-button {{
+      border-radius: 8px;
+      min-height: 40px;
+    }}
+    .nav-button[aria-current="page"] {{
+      box-shadow: 0 1px 2px oklch(0.22 0.018 260 / .04);
+      font-weight: 650;
+    }}
+    main {{ padding-top: 32px; }}
+    .content {{ max-width: 1400px; }}
+    .topbar {{ margin-bottom: 26px; }}
+    h1 {{ font-size: clamp(25px, 2vw, 31px); }}
+    .overview-copy {{ font-size: 14px; margin-bottom: 18px; }}
+    .grid {{ gap: 10px; }}
+    .metric {{ min-height: 118px; padding: 0; }}
+    button.metric-button {{
+      align-items: stretch;
+      background: transparent;
+      border: 0;
+      border-radius: inherit;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 116px;
+      padding: 15px;
+      text-align: left;
+      width: 100%;
+    }}
+    button.metric-button:hover {{
+      background: linear-gradient(135deg, var(--accent-soft), transparent 70%);
+      border: 0;
+    }}
+    .metric-top, .metric-bottom, .cell-meta, .capability-list {{
+      align-items: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }}
+    .metric-arrow {{
+      color: var(--accent);
+      font-size: 16px;
+      line-height: 1;
+      margin-left: auto;
+      transition: transform 160ms var(--ease-out);
+    }}
+    .metric-button:hover .metric-arrow {{ transform: translateX(2px); }}
+    .metric .value {{ margin-top: 0; }}
+    .metric-caption {{ color: var(--muted); font-size: 12px; line-height: 1.35; }}
+    .panel {{
+      border-radius: 10px;
+      box-shadow: 0 1px 1px oklch(0.22 0.018 260 / .025);
+    }}
+    .panel-head {{ padding: 13px 15px; }}
+    .panel-body {{ padding: 15px; }}
+    .compact-link {{ min-height: 32px; padding: 0 9px; }}
+    .overview-layout {{ grid-template-columns: minmax(0, 1.56fr) minmax(320px, .94fr); }}
+    .priority-row, .activity-row, .memory-row {{ padding: 13px 0; }}
+    .row-title {{ font-weight: 670; }}
+    table {{ font-size: 13px; min-width: 720px; }}
+    th, td {{ padding: 12px 10px; }}
+    tbody tr {{ transition: background-color 140ms var(--ease-standard); }}
+    tbody tr:hover {{ background: oklch(0.975 0.008 264); }}
+    .cell-title {{ font-weight: 650; line-height: 1.4; }}
+    .cell-copy, .cell-meta {{ color: var(--muted); font-size: 12px; line-height: 1.45; margin-top: 4px; }}
+    .cell-stack {{ display: grid; gap: 4px; min-width: 150px; }}
+    .capability-list {{ gap: 5px; max-width: 31rem; }}
+    .capability-list .badge {{ max-width: 100%; overflow-wrap: anywhere; white-space: normal; }}
+    .record-details {{ color: var(--muted); font-size: 12px; margin-top: 7px; }}
+    .record-details summary {{ cursor: pointer; width: fit-content; }}
+    .record-details code {{ display: block; margin-top: 6px; }}
+    .muted-divider {{ color: var(--line); }}
     @media (max-width: 860px) {{
       .shell {{ grid-template-columns: 1fr; }}
       aside {{
@@ -629,7 +782,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       .split, .overview-layout {{ grid-template-columns: 1fr; }}
       .memory-search {{ align-items: stretch; flex-direction: column; }}
       input[type="search"] {{ min-height: 44px; width: 100%; }}
-      th, td {{ padding: 9px 6px; }}
+      th, td {{ padding: 10px 7px; }}
       .toast {{
         left: 16px;
         right: 16px;
@@ -647,7 +800,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     }}
   </style>
 </head>
-<body data-workspace="{escaped_workspace}">
+<body data-workspace="{escaped_workspace}" data-api-base="{escaped_api_base}">
   <div class="shell">
     <aside>
       <div class="brand">
@@ -665,14 +818,14 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
         <button class="nav-button" data-view="runtime"><span class="dot"></span>运行</button>
         <button class="nav-button" data-view="activity"><span class="dot"></span>活动</button>
       </nav>
-      <div class="side-note">管理页只在这台电脑上运行。浏览器不会保存 Gateway 凭据。</div>
+      <div class="side-note">管理页通过受控 Sidecar 读取已授权工作区。浏览器不会保存 Gateway 凭据。</div>
     </aside>
     <main>
       <div class="content">
         <div class="topbar">
           <div>
             <p class="eyebrow">工作区管理台</p>
-            <h1 id="page-title">共享记忆管理</h1>
+            <h1 id="page-title" tabindex="-1">共享记忆管理</h1>
             <div class="subtle" id="page-subtitle">当前工作区：{escaped_workspace}</div>
           </div>
           <div class="toolbar">
@@ -689,7 +842,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
           </div>
           <div class="overview-layout">
             <div>
-              <p class="overview-copy">这里集中显示当前工作区最需要处理的事情。先看待审核和投递异常，再进入对应页面继续处理。</p>
+              <p class="overview-copy">先处理需要人工确认的记忆，再核对投递状态与设备授权。每个状态卡都可以直接进入对应页面。</p>
               <div class="grid" id="metrics"></div>
               <div class="panel">
                 <div class="panel-head"><div class="panel-title">现在需要处理</div><span id="priority-badge" class="badge">读取中</span></div>
@@ -706,8 +859,8 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
                 <div class="panel-body"><div id="overview-audit-list" class="activity-list"></div></div>
               </div>
               <div class="panel">
-                <div class="panel-head"><div class="panel-title">使用边界</div></div>
-                <div class="panel-body"><div class="row-copy">页面只通过本机 Sidecar 请求已授权工作区。不会显示设备公钥、Gateway 凭据、刷新凭据或数据库连接信息。</div></div>
+                <div class="panel-head"><div class="panel-title">访问边界</div></div>
+                <div class="panel-body"><div class="row-copy">页面只通过受控 Sidecar 请求已授权工作区。不会显示设备公钥、Gateway 凭据、刷新凭据或数据库连接信息。</div></div>
               </div>
             </div>
           </div>
@@ -771,6 +924,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
   <script nonce="{nonce}">
     const state = {{
       workspaceId: document.body.dataset.workspace,
+      apiBase: document.body.dataset.apiBase || "",
       reviews: [],
       latestOperation: null,
       overview: null,
@@ -843,7 +997,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     }});
 
     async function api(path, options = {{}}) {{
-      const response = await fetch(path, {{
+      const response = await fetch(state.apiBase + path, {{
         method: options.method || "GET",
         headers: options.body ? {{"Content-Type": "application/json"}} : {{}},
         credentials: "same-origin",
@@ -861,9 +1015,9 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       return `admin-ui:${{reviewId}}:${{action}}:${{randomPart}}`;
     }}
 
-    function metric(label, value, tone) {{
+    function metric(label, value, tone, view, caption) {{
       const badge = tone ? `<span class="badge ${{tone}}">${{tone === "ok" ? "正常" : "需处理"}}</span>` : "";
-      return `<div class="metric"><div class="label">${{escapeHTML(label)}}</div><div class="value">${{escapeHTML(value)}}</div>${{badge}}</div>`;
+      return `<div class="metric"><button class="metric-button" data-view-link="${{escapeHTML(view)}}" aria-label="查看${{escapeHTML(label)}}详情"><div class="metric-top"><span class="label">${{escapeHTML(label)}}</span>${{badge}}<span class="metric-arrow" aria-hidden="true">→</span></div><div class="metric-bottom"><div class="value">${{escapeHTML(value)}}</div><div class="metric-caption">${{escapeHTML(caption)}}</div></div></button></div>`;
     }}
 
     function setConnection(label, tone) {{
@@ -911,10 +1065,10 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       state.overview = payload;
       const counts = payload.counts || {{}};
       document.getElementById("metrics").innerHTML = [
-        metric("待审核", counts.pending_reviews || 0, counts.pending_reviews ? "warn" : "ok"),
-        metric("待重试", counts.retryable_events || 0, counts.retryable_events ? "warn" : "ok"),
-        metric("未处理死信", counts.unresolved_dead_letters || 0, counts.unresolved_dead_letters ? "danger" : "ok"),
-        metric("活跃设备", counts.active_devices || 0, null)
+        metric("待审核", counts.pending_reviews || 0, counts.pending_reviews ? "warn" : "ok", "reviews", "查看候选与冲突"),
+        metric("待重试", counts.retryable_events || 0, counts.retryable_events ? "warn" : "ok", "runtime", "查看同步投递状态"),
+        metric("未处理死信", counts.unresolved_dead_letters || 0, counts.unresolved_dead_letters ? "danger" : "ok", "runtime", "核对错误与事件引用"),
+        metric("活跃设备", counts.active_devices || 0, null, "devices", "查看设备与授权范围")
       ].join("");
       renderPriority(payload);
       renderDelivery(payload);
@@ -988,18 +1142,41 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       }}).join("");
     }}
 
+    function stateBadge(value) {{
+      const normalized = String(value || "unknown").toLowerCase();
+      const tone = ["active", "online", "bound", "ready", "healthy", "success", "confirmed", "applied", "accepted", "completed"].includes(normalized)
+        ? "ok"
+        : ["revoked", "disabled", "offline", "blocked", "error"].includes(normalized) ? "danger" : "warn";
+      return `<span class="badge ${{tone}}">${{escapeHTML(value || "未知")}}</span>`;
+    }}
+
     function renderDevices(payload) {{
-      const rows = (payload.devices || []).map(item => `
-        <tr>
-          <td>${{code(item.device_id)}}</td>
-          <td>${{code(item.agent_installation_id)}}</td>
-          <td>${{escapeHTML(item.status || "-")}}</td>
-          <td>${{escapeHTML((item.capabilities || []).join(", ") || "-")}}</td>
-          <td>${{escapeHTML(item.updated_at || item.created_at || "-")}}</td>
-        </tr>
-      `).join("");
+      const rows = (payload.devices || []).map(item => {{
+        const deviceName = item.device_name || item.device_id || "未命名设备";
+        const agentName = item.agent_name || item.agent_installation_id || "未登记 Agent";
+        const deviceStatus = item.device_status || item.status || "未知";
+        const agentStatus = item.agent_status || "未知";
+        const bindingStatus = item.binding_status || "未返回绑定状态";
+        const capabilities = (item.capabilities || []).map(capability => `<span class="badge">${{escapeHTML(capability)}}</span>`).join("") || `<span class="subtle">未返回能力</span>`;
+        const lastSeen = item.device_last_seen_at || item.updated_at || item.created_at || "暂无记录";
+        const bindingUpdated = item.binding_updated_at || "暂无记录";
+        const identifiers = [
+          item.device_id ? `设备：${{code(item.device_id)}}` : "",
+          item.agent_installation_id ? `Agent：${{code(item.agent_installation_id)}}` : "",
+          item.device_auth_epoch !== undefined && item.device_auth_epoch !== null ? `设备认证版本：${{escapeHTML(item.device_auth_epoch)}}` : "",
+          item.agent_auth_epoch !== undefined && item.agent_auth_epoch !== null ? `Agent 认证版本：${{escapeHTML(item.agent_auth_epoch)}}` : ""
+        ].filter(Boolean).join("<br>");
+        return `
+          <tr>
+            <td><div class="cell-title">${{escapeHTML(deviceName)}}</div><div class="cell-meta"><span class="badge">${{escapeHTML(item.device_type || "device")}}</span></div><details class="record-details"><summary>查看技术标识</summary>${{identifiers}}</details></td>
+            <td><div class="cell-title">${{escapeHTML(agentName)}}</div><div class="cell-meta"><span class="badge">${{escapeHTML(item.agent_type || "agent")}}</span></div></td>
+            <td><div class="cell-stack"><div><span class="label">设备</span> ${{stateBadge(deviceStatus)}}</div><div><span class="label">Agent</span> ${{stateBadge(agentStatus)}}</div><div><span class="label">绑定</span> ${{stateBadge(bindingStatus)}}</div></div></td>
+            <td><div class="capability-list">${{capabilities}}</div></td>
+            <td><div class="cell-stack"><div><span class="label">最近出现</span><div class="cell-copy">${{escapeHTML(lastSeen)}}</div></div><div><span class="label">绑定更新</span><div class="cell-copy">${{escapeHTML(bindingUpdated)}}</div></div></div></td>
+          </tr>`;
+      }}).join("");
       document.getElementById("device-list").innerHTML = rows
-        ? `<table><thead><tr><th>设备</th><th>Agent</th><th>状态</th><th>能力</th><th>更新时间</th></tr></thead><tbody>${{rows}}</tbody></table>`
+        ? `<table><thead><tr><th>设备</th><th>Agent</th><th>状态与绑定</th><th>授权能力</th><th>最近状态</th></tr></thead><tbody>${{rows}}</tbody></table>`
         : `<div class="empty">没有可显示的设备记录。</div>`;
     }}
 
@@ -1007,14 +1184,14 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       state.audit = payload.entries || [];
       const rows = state.audit.map(item => `
         <tr>
-          <td>${{escapeHTML(item.created_at || "-")}}</td>
-          <td>${{escapeHTML(item.action || "-")}}</td>
-          <td>${{escapeHTML(item.result_code || "-")}}</td>
-          <td>${{code(item.trace_id)}}</td>
+          <td><div class="cell-title">${{escapeHTML(item.action || "管理操作")}}</div><div class="cell-meta">执行者：${{escapeHTML(item.actor_id || item.actor_type || "-")}}${{item.device_id ? ` <span class="muted-divider">·</span> 设备：${{escapeHTML(item.device_id)}}` : ""}}</div></td>
+          <td>${{stateBadge(item.result_code || "-")}}</td>
+          <td><div class="cell-copy">${{escapeHTML(item.target_ref || "未提供目标引用")}}</div></td>
+          <td><div class="cell-copy">${{escapeHTML(item.created_at || "-")}}</div><div class="cell-meta">${{code(item.trace_id)}}</div></td>
         </tr>
       `).join("");
       document.getElementById("audit-list").innerHTML = rows
-        ? `<table><thead><tr><th>时间</th><th>操作</th><th>结果</th><th>Trace</th></tr></thead><tbody>${{rows}}</tbody></table>`
+        ? `<table><thead><tr><th>操作</th><th>结果</th><th>目标</th><th>时间与追踪</th></tr></thead><tbody>${{rows}}</tbody></table>`
         : `<div class="empty">没有近期审计记录。</div>`;
       const preview = state.audit.slice(0, 5).map(item => `
         <div class="activity-row">
@@ -1027,14 +1204,13 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     function renderDeadLetters(payload) {{
       const rows = (payload.dead_letters || []).map(item => `
         <tr>
-          <td>${{code(item.dead_letter_id)}}</td>
-          <td>${{escapeHTML(item.error_code || "-")}}</td>
-          <td>${{escapeHTML(item.error_class || "-")}}</td>
-          <td>${{escapeHTML(item.created_at || "-")}}</td>
+          <td><div class="cell-title">${{escapeHTML(item.error_code || "未分类错误")}}</div><div class="cell-meta">${{escapeHTML(item.error_class || "-")}}</div></td>
+          <td><div class="cell-copy">${{escapeHTML(item.created_at || "-")}}</div></td>
+          <td><div class="cell-copy">事件：${{code(item.event_id)}}</div><div class="cell-meta">死信：${{code(item.dead_letter_id)}}</div></td>
         </tr>
       `).join("");
       document.getElementById("dead-letter-list").innerHTML = rows
-        ? `<table><thead><tr><th>ID</th><th>错误码</th><th>类别</th><th>时间</th></tr></thead><tbody>${{rows}}</tbody></table>`
+        ? `<table><thead><tr><th>错误</th><th>进入时间</th><th>事件引用</th></tr></thead><tbody>${{rows}}</tbody></table>`
         : `<div class="empty">当前没有未处理死信。</div>`;
     }}
 
@@ -1179,13 +1355,19 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     }}
 
     function showView(view) {{
+      if (!labels[view] || !document.getElementById(view)) return;
       document.querySelectorAll(".nav-button").forEach(item => item.removeAttribute("aria-current"));
       const button = document.querySelector(`.nav-button[data-view="${{view}}"]`);
       if (button) button.setAttribute("aria-current", "page");
       document.querySelectorAll(".view").forEach(item => item.classList.remove("active"));
       document.getElementById(view).classList.add("active");
-      document.getElementById("page-title").textContent = labels[view][0];
+      const title = document.getElementById("page-title");
+      title.textContent = labels[view][0];
       document.getElementById("page-subtitle").textContent = labels[view][1];
+      title.focus({{preventScroll: true}});
+      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {{
+        window.scrollTo({{top: 0, behavior: "smooth"}});
+      }}
     }}
 
     function resolveReview(index, action, targetRef) {{
@@ -1254,7 +1436,11 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/":
+        path = self._mounted_path(parsed.path)
+        if path is None:
+            self._json({"error": "NOT_FOUND"}, status=404)
+            return
+        if path == "/":
             params = parse_qs(parsed.query)
             launch_token = (params.get("session") or [""])[0]
             if launch_token:
@@ -1266,25 +1452,40 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
                 self._json({"error": "LOCAL_ADMIN_SESSION_REQUIRED"}, status=401)
                 return
             nonce = secrets.token_urlsafe(16)
-            self._send_bytes(_html_page(self.state.workspace_id, nonce), content_type="text/html; charset=utf-8", nonce=nonce)
+            self._send_bytes(
+                _html_page(self.state.workspace_id, nonce, self.state.mount_path),
+                content_type="text/html; charset=utf-8",
+                nonce=nonce,
+            )
             return
-        if parsed.path.startswith("/api/"):
+        if path.startswith("/api/"):
             if not self._authorized():
                 self._json({"error": "LOCAL_ADMIN_SESSION_REQUIRED"}, status=401)
                 return
-            self._handle_api_get(parsed.path, parse_qs(parsed.query))
+            self._handle_api_get(path, parse_qs(parsed.query))
             return
         self._json({"error": "NOT_FOUND"}, status=404)
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if not parsed.path.startswith("/api/"):
+        path = self._mounted_path(parsed.path)
+        if path is None or not path.startswith("/api/"):
             self._json({"error": "NOT_FOUND"}, status=404)
             return
         if not self._authorized():
             self._json({"error": "LOCAL_ADMIN_SESSION_REQUIRED"}, status=401)
             return
-        self._handle_api_post(parsed.path)
+        self._handle_api_post(path)
+
+    def _mounted_path(self, path: str) -> str | None:
+        mount_path = self.state.mount_path
+        if not mount_path:
+            return path
+        if path == mount_path:
+            return "/"
+        if path.startswith(mount_path + "/"):
+            return path[len(mount_path) :]
+        return None
 
     def _handle_api_get(self, path: str, query: dict[str, list[str]] | None = None) -> None:
         try:
@@ -1389,11 +1590,13 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
 
     def _redirect_with_session(self, session_token: str) -> None:
         self.send_response(303)
-        self.send_header("Location", "/")
+        cookie_path = self.state.mount_path or "/"
+        self.send_header("Location", f"{cookie_path}/")
         self.send_header("Cache-Control", "no-store")
+        secure = "; Secure" if self.state.secure_cookie else ""
         self.send_header(
             "Set-Cookie",
-            f"{SESSION_COOKIE_NAME}={session_token}; HttpOnly; SameSite=Strict; Path=/",
+            f"{SESSION_COOKIE_NAME}={session_token}; HttpOnly; SameSite=Strict; Path={cookie_path}{secure}",
         )
         self.end_headers()
 
@@ -1444,8 +1647,12 @@ def create_admin_console_server(
     sidecar_factory: Callable[[], Any] = get_shared_sidecar,
     session: LocalAdminSession | None = None,
     max_heartbeat_age_seconds: int = 90,
+    allow_network: bool = False,
+    mount_path: str = "",
+    secure_cookie: bool = False,
 ) -> ThreadingHTTPServer:
-    if host not in {"127.0.0.1", "::1", "localhost"}:
+    is_loopback = host in {"127.0.0.1", "::1", "localhost"}
+    if not is_loopback and (not allow_network or host not in {"0.0.0.0", "::"}):
         raise AdminConsoleError("管理控制台只能监听回环地址")
     if not 1024 <= int(port or 0) <= 65535 and int(port or 0) != 0:
         raise AdminConsoleError("PORT_INVALID")
@@ -1454,6 +1661,8 @@ def create_admin_console_server(
         session=session or LocalAdminSession(),
         sidecar_factory=sidecar_factory,
         max_heartbeat_age_seconds=max_heartbeat_age_seconds,
+        mount_path=_mount_path(mount_path),
+        secure_cookie=bool(secure_cookie),
     )
     handler = type(
         "ConfiguredAdminConsoleHandler",
@@ -1469,9 +1678,19 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8767)
     parser.add_argument("--max-heartbeat-age-seconds", type=int, default=90)
+    parser.add_argument("--allow-network", action="store_true", help="仅供受控反向代理容器使用")
+    parser.add_argument("--mount-path", default="", help="反向代理中的固定挂载路径，例如 /admin")
+    parser.add_argument("--secure-cookie", action="store_true", help="只在 HTTPS 反向代理后使用")
+    parser.add_argument("--public-base-url", help="受控 HTTPS 管理入口，例如 https://memory.example/admin")
+    parser.add_argument("--launch-token-file", help="受保护目录中的一次性启动链接文件")
     args = parser.parse_args()
     if not 1 <= args.max_heartbeat_age_seconds <= 3600:
         raise SystemExit("MAX_HEARTBEAT_AGE_INVALID")
+    mount_path = _mount_path(args.mount_path)
+    if bool(args.public_base_url) != bool(args.launch_token_file):
+        raise SystemExit("ADMIN_LAUNCH_CONFIGURATION_INVALID")
+    if args.public_base_url and (not args.allow_network or not args.secure_cookie):
+        raise SystemExit("ADMIN_NETWORK_SECURITY_REQUIRED")
     session = LocalAdminSession()
     try:
         server = create_admin_console_server(
@@ -1480,12 +1699,23 @@ def main() -> None:
             port=args.port,
             session=session,
             max_heartbeat_age_seconds=args.max_heartbeat_age_seconds,
+            allow_network=args.allow_network,
+            mount_path=mount_path,
+            secure_cookie=args.secure_cookie,
         )
     except AdminConsoleError as exc:
         raise SystemExit(str(exc)) from None
-    url = f"http://{args.host}:{server.server_port}/?session={session.launch_token}"
+    if args.public_base_url:
+        base_url = _public_base_url(args.public_base_url, mount_path)
+        url = f"{base_url}/?session={session.launch_token}"
+        _write_launch_url(str(args.launch_token_file), url)
+    else:
+        url = f"http://{args.host}:{server.server_port}{mount_path}/?session={session.launch_token}"
     print(f"Memory Admin Console listening on http://{args.host}:{server.server_port}", flush=True)
-    print(f"Open once: {url}", flush=True)
+    if args.public_base_url:
+        print("Central admin launch link was written to the protected launch file.", flush=True)
+    else:
+        print(f"Open once: {url}", flush=True)
     try:
         server.serve_forever()
     finally:
