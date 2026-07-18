@@ -154,7 +154,7 @@ class PostgresAdminService:
                 ORDER BY audit.created_at DESC, audit.audit_id DESC
                 LIMIT %s
                 """,
-                (principal.tenant_id, workspace_id, limit),
+                (principal.tenant_id, principal.user_id, workspace_id, limit),
             ).fetchall()
         entries = []
         for row in rows:
