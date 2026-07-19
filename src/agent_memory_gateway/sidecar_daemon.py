@@ -85,6 +85,9 @@ class _SidecarRPCHandler(BaseHTTPRequestHandler):
             for admin_method in (
                 "admin_overview",
                 "list_admin_devices",
+                "update_admin_binding",
+                "revoke_admin_agent",
+                "revoke_admin_device",
                 "list_admin_audit",
                 "list_admin_dead_letters",
             ):
@@ -231,6 +234,15 @@ class LocalSidecarProxy:
 
     def list_admin_devices(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("list_admin_devices", payload)
+
+    def update_admin_binding(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("update_admin_binding", payload)
+
+    def revoke_admin_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("revoke_admin_agent", payload)
+
+    def revoke_admin_device(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("revoke_admin_device", payload)
 
     def list_admin_audit(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("list_admin_audit", payload)

@@ -111,6 +111,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 "/v1/crystals/rebuild": "memory.manage",
                 "/v1/admin/overview": "memory.manage",
                 "/v1/admin/devices/list": "memory.manage",
+                "/v1/admin/bindings/update": "memory.manage",
+                "/v1/admin/agents/revoke": "memory.manage",
+                "/v1/admin/devices/revoke": "memory.manage",
                 "/v1/admin/audit/list": "memory.manage",
                 "/v1/admin/dead-letters/list": "memory.manage",
             }.get(path)
@@ -180,6 +183,18 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 if self.admin_service is None:
                     raise ValueError("NOT_IMPLEMENTED")
                 self._json(self.admin_service.list_devices(payload, principal))
+            elif path == "/v1/admin/bindings/update":
+                if self.admin_service is None:
+                    raise ValueError("NOT_IMPLEMENTED")
+                self._json(self.admin_service.update_binding(payload, principal))
+            elif path == "/v1/admin/agents/revoke":
+                if self.admin_service is None:
+                    raise ValueError("NOT_IMPLEMENTED")
+                self._json(self.admin_service.revoke_agent(payload, principal))
+            elif path == "/v1/admin/devices/revoke":
+                if self.admin_service is None:
+                    raise ValueError("NOT_IMPLEMENTED")
+                self._json(self.admin_service.revoke_device(payload, principal))
             elif path == "/v1/admin/audit/list":
                 if self.admin_service is None:
                     raise ValueError("NOT_IMPLEMENTED")

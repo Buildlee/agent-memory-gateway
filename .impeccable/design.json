@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-19T00:00:00Z",
+  "title": "Design System: Agent Memory Gateway Admin",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "控制蓝",
+        "canonical": "oklch(0.52 0.16 264)",
+        "tonalRamp": ["oklch(0.18 0.08 264)", "oklch(0.28 0.11 264)", "oklch(0.38 0.14 264)", "oklch(0.52 0.16 264)", "oklch(0.64 0.13 264)", "oklch(0.76 0.09 264)", "oklch(0.88 0.05 264)", "oklch(0.95 0.02 264)"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "冷灰表面",
+        "canonical": "oklch(0.968 0.004 260)",
+        "tonalRamp": ["oklch(0.18 0.004 260)", "oklch(0.3 0.004 260)", "oklch(0.42 0.004 260)", "oklch(0.56 0.004 260)", "oklch(0.7 0.004 260)", "oklch(0.82 0.004 260)", "oklch(0.91 0.004 260)", "oklch(0.968 0.004 260)"]
+      }
+    },
+    "typographyMeta": {
+      "headline": {"displayName": "页面标题", "purpose": "每个管理页面的唯一主标题。"},
+      "body": {"displayName": "正文", "purpose": "状态说明、操作解释和数据辅助文本。"},
+      "label": {"displayName": "标签", "purpose": "字段名、表头和辅助状态。"}
+    },
+    "shadows": [
+      {"name": "ambient-low", "value": "0 1px 2px oklch(0.22 0.018 260 / .04)", "purpose": "当前导航和轻微悬停反馈。"},
+      {"name": "confirmation", "value": "0 8px 12px oklch(0.2 0.02 260 / .12)", "purpose": "确认对话框。"}
+    ],
+    "motion": [
+      {"name": "state-standard", "value": "160ms cubic-bezier(.2, 0, 0, 1)", "purpose": "颜色、边界和状态变化。"},
+      {"name": "enter-out", "value": "190ms cubic-bezier(.16, 1, .3, 1)", "purpose": "页面与确认层进入。"}
+    ],
+    "breakpoints": [
+      {"name": "compact", "value": "860px"}
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "当前流程的主要提交操作。",
+      "html": "<button class=\"ds-btn-primary\">保存更改</button>",
+      "css": ".ds-btn-primary { min-height: 36px; padding: 0 11px; border: 1px solid oklch(0.52 0.16 264); border-radius: 7px; background: oklch(0.52 0.16 264); color: #fff; font: 400 14px/1.4 system-ui, sans-serif; transition: background-color 160ms cubic-bezier(.2,0,0,1); } .ds-btn-primary:hover { background: oklch(0.47 0.17 264); } .ds-btn-primary:focus-visible { outline: 2px solid oklch(0.52 0.16 264); outline-offset: 2px; }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "用文字、边框和浅色底共同表达状态。",
+      "html": "<span class=\"ds-badge-ok\">正常</span>",
+      "css": ".ds-badge-ok { display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; border: 1px solid oklch(0.84 0.05 150); border-radius: 999px; background: oklch(0.965 0.025 150); color: oklch(0.48 0.13 150); font: 400 12px/1.4 system-ui, sans-serif; }"
+    },
+    {
+      "name": "Search Field",
+      "kind": "input",
+      "description": "管理数据的紧凑检索入口。",
+      "html": "<input class=\"ds-input\" value=\"发布流程\" aria-label=\"搜索\">",
+      "css": ".ds-input { min-height: 36px; padding: 0 11px; border: 1px solid oklch(0.885 0.01 260); border-radius: 8px; background: #fff; color: oklch(0.22 0.018 260); font: 400 14px/1.4 system-ui, sans-serif; } .ds-input:focus-visible { outline: 2px solid oklch(0.52 0.16 264); outline-offset: 2px; }"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "以边界和色调分组，不依赖阴影。",
+      "html": "<section class=\"ds-panel\"><strong>设备与权限</strong><p>查看状态并管理授权。</p></section>",
+      "css": ".ds-panel { padding: 14px; border: 1px solid oklch(0.885 0.01 260); border-radius: 10px; background: #fff; color: oklch(0.22 0.018 260); font: 400 14px/1.55 system-ui, sans-serif; } .ds-panel p { margin: 4px 0 0; color: oklch(0.44 0.018 260); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "安静的控制室",
+    "overview": "管理页是一间安静但信息完整的控制室。它用清楚的层级、稳定的布局和准确的状态帮助用户迅速判断系统是否健康、哪里需要处理、动作会影响什么。",
+    "keyCharacteristics": ["冷静的浅色中性表面和单一蓝色强调色。", "状态、来源和下一步始终同时出现。", "数据区域铺满可用空间。", "动画只解释状态变化。"],
+    "rules": [
+      {"name": "The One Accent Rule", "body": "蓝色强调色只用于当前状态和主要操作，单屏面积不超过约 10%。", "section": "colors"},
+      {"name": "The Plain Language Rule", "body": "主层级使用用户能理解的名称；内部 ID 和错误码只能出现在次级详情中。", "section": "typography"},
+      {"name": "The Flat-by-Default Rule", "body": "页面静止时保持平坦；只有焦点、悬停和确认层可以短暂获得高度。", "section": "elevation"}
+    ],
+    "dos": ["Do 让数据区域使用全部可用宽度。", "Do 为异常提供紧邻的处理入口。", "Do 显示活动来源。"],
+    "donts": ["Don't 做只读看板。", "Don't 依赖反复执行命令。", "Don't 使用固定窄栏和大面积空白。"]
+  }
+}

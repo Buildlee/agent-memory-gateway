@@ -212,6 +212,15 @@ class SidecarClient:
     def list_admin_devices(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/v1/admin/devices/list", payload)
 
+    def update_admin_binding(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/v1/admin/bindings/update", payload)
+
+    def revoke_admin_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/v1/admin/agents/revoke", payload)
+
+    def revoke_admin_device(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/v1/admin/devices/revoke", payload)
+
     def list_admin_audit(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/v1/admin/audit/list", payload)
 

@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import html
 import hmac
 import json
 import os
 import secrets
+import stat
+import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from http import cookies
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 from .admin_check import evaluate_overview
 from .sidecar_daemon import SidecarDaemonError, get_shared_sidecar
@@ -21,6 +26,8 @@ from .sidecar_daemon import SidecarDaemonError, get_shared_sidecar
 
 MAX_ADMIN_BODY_BYTES = 131_072
 SESSION_COOKIE_NAME = "memory_admin_session"
+DEFAULT_LOCAL_SESSION_SECONDS = 12 * 60 * 60
+MAX_PERSISTENT_SESSION_DAYS = 90
 
 
 class AdminConsoleError(RuntimeError):
@@ -28,11 +35,22 @@ class AdminConsoleError(RuntimeError):
 
 
 class LocalAdminSession:
-    """One-time launch token exchanged for a local HttpOnly cookie."""
+    """One-time launch token exchanged for a signed, expiring browser cookie."""
 
-    def __init__(self, launch_token: str | None = None, session_token: str | None = None) -> None:
+    def __init__(
+        self,
+        launch_token: str | None = None,
+        session_token: str | None = None,
+        *,
+        max_age_seconds: int = DEFAULT_LOCAL_SESSION_SECONDS,
+        now: Callable[[], float] = time.time,
+    ) -> None:
+        if not 60 <= int(max_age_seconds) <= MAX_PERSISTENT_SESSION_DAYS * 86_400:
+            raise AdminConsoleError("ADMIN_SESSION_MAX_AGE_INVALID")
         self.launch_token = launch_token or secrets.token_urlsafe(32)
         self.session_token = session_token or secrets.token_urlsafe(32)
+        self.max_age_seconds = int(max_age_seconds)
+        self._now = now
         self._used = False
         self._lock = threading.Lock()
 
@@ -43,7 +61,9 @@ class LocalAdminSession:
             if not hmac.compare_digest(supplied, self.launch_token):
                 return None
             self._used = True
-            return self.session_token
+            issued_at = int(self._now())
+            body = f"v1.{issued_at}.{secrets.token_urlsafe(18)}"
+            return f"{body}.{self._signature(body)}"
 
     def authorized(self, cookie_header: str | None) -> bool:
         if not cookie_header:
@@ -56,7 +76,26 @@ class LocalAdminSession:
         morsel = jar.get(SESSION_COOKIE_NAME)
         if morsel is None:
             return False
-        return hmac.compare_digest(morsel.value, self.session_token)
+        parts = morsel.value.split(".")
+        if len(parts) != 4 or parts[0] != "v1":
+            return False
+        try:
+            issued_at = int(parts[1])
+        except ValueError:
+            return False
+        age = int(self._now()) - issued_at
+        if age < -300 or age > self.max_age_seconds:
+            return False
+        body = ".".join(parts[:3])
+        return hmac.compare_digest(parts[3], self._signature(body))
+
+    def _signature(self, body: str) -> str:
+        digest = hmac.new(
+            self.session_token.encode("utf-8"),
+            body.encode("utf-8"),
+            "sha256",
+        ).digest()
+        return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 @dataclass(frozen=True)
@@ -65,6 +104,8 @@ class AdminConsoleState:
     session: LocalAdminSession
     sidecar_factory: Callable[[], Any]
     max_heartbeat_age_seconds: int = 90
+    mount_path: str = ""
+    secure_cookie: bool = False
 
 
 def _workspace_id(value: str | None) -> str:
@@ -74,6 +115,97 @@ def _workspace_id(value: str | None) -> str:
     if len(workspace_id) > 256:
         raise AdminConsoleError("WORKSPACE_ID_INVALID")
     return workspace_id
+
+
+def _mount_path(value: str | None) -> str:
+    """Validate an optional reverse-proxy mount path without accepting URLs."""
+
+    raw = str(value or "").strip()
+    if raw in {"", "/"}:
+        return ""
+    if not raw.startswith("/") or raw.endswith("/") or "//" in raw or "?" in raw or "#" in raw:
+        raise AdminConsoleError("ADMIN_MOUNT_PATH_INVALID")
+    segments = raw[1:].split("/")
+    if not segments or any(not segment or not segment.replace("-", "").replace("_", "").isalnum() for segment in segments):
+        raise AdminConsoleError("ADMIN_MOUNT_PATH_INVALID")
+    return raw
+
+
+def _public_base_url(value: str | None, mount_path: str) -> str:
+    raw = str(value or "").strip().rstrip("/")
+    parsed = urlsplit(raw)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.query
+        or parsed.fragment
+        or parsed.path.rstrip("/") != mount_path
+    ):
+        raise AdminConsoleError("ADMIN_PUBLIC_BASE_URL_INVALID")
+    return raw
+
+
+def _write_launch_url(path_value: str, launch_url: str) -> None:
+    """Persist a short-lived launch URL only in an explicitly protected directory."""
+
+    path = Path(path_value)
+    if not path.is_absolute() or not path.name or path.is_symlink() or path.parent.is_symlink() or not path.parent.is_dir():
+        raise AdminConsoleError("ADMIN_LAUNCH_FILE_INVALID")
+    descriptor = None
+    temporary_path = None
+    try:
+        descriptor, temporary_path = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", closefd=True) as stream:
+            descriptor = None
+            stream.write(launch_url)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+    except OSError as exc:
+        raise AdminConsoleError("ADMIN_LAUNCH_FILE_WRITE_FAILED") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
+
+
+def _load_or_create_session_secret(path_value: str) -> str:
+    """Load a durable signing secret without exposing it outside an owner-only file."""
+
+    path = Path(path_value)
+    if not path.is_absolute() or not path.name or path.is_symlink() or path.parent.is_symlink() or not path.parent.is_dir():
+        raise AdminConsoleError("ADMIN_SESSION_KEY_FILE_INVALID")
+    try:
+        if not path.exists():
+            try:
+                descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                descriptor = None
+            if descriptor is not None:
+                try:
+                    secret = secrets.token_urlsafe(48)
+                    os.write(descriptor, (secret + "\n").encode("utf-8"))
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+        if path.is_symlink() or not path.is_file():
+            raise AdminConsoleError("ADMIN_SESSION_KEY_FILE_INVALID")
+        if os.name != "nt" and stat.S_IMODE(path.stat().st_mode) & 0o077:
+            raise AdminConsoleError("ADMIN_SESSION_KEY_FILE_PERMISSIONS_INVALID")
+        secret = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise AdminConsoleError("ADMIN_SESSION_KEY_FILE_READ_FAILED") from exc
+    if not 32 <= len(secret) <= 256:
+        raise AdminConsoleError("ADMIN_SESSION_KEY_FILE_INVALID")
+    return secret
 
 
 def _bounded_limit(value: Any, default: int = 30) -> int:
@@ -106,8 +238,27 @@ def _required_positive_int(payload: dict[str, Any], key: str, code: str) -> int:
     return converted
 
 
-def _html_page(workspace_id: str, nonce: str) -> bytes:
+def _required_capabilities(payload: dict[str, Any], key: str, code: str) -> list[str]:
+    raw = payload.get(key)
+    if not isinstance(raw, list):
+        raise AdminConsoleError(code)
+    values = sorted({str(value).strip() for value in raw if str(value).strip()})
+    if (
+        not values
+        or len(values) > 32
+        or any(
+            len(value) > 128
+            or not value.replace(".", "").replace("_", "").isalnum()
+            for value in values
+        )
+    ):
+        raise AdminConsoleError(code)
+    return values
+
+
+def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     escaped_workspace = html.escape(workspace_id, quote=True)
+    escaped_api_base = html.escape(mount_path, quote=True)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -205,9 +356,9 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     }}
     main {{
       min-width: 0;
-      padding: 28px clamp(22px, 4vw, 52px) 48px;
+      padding: 28px clamp(18px, 2.4vw, 42px) 48px;
     }}
-    .content {{ max-width: 1320px; margin: 0 auto; }}
+    .content {{ width: 100%; max-width: none; margin: 0; }}
     .brand {{
       display: flex;
       align-items: center;
@@ -407,7 +558,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       display: flex;
       gap: 8px;
     }}
-    input[type="search"] {{
+    input[type="search"], select {{
       background: white;
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -415,8 +566,11 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       min-height: 36px;
       min-width: 0;
       padding: 0 11px;
+    }}
+    input[type="search"] {{
       width: min(520px, 100%);
     }}
+    select {{ min-width: 160px; }}
     .memory-meta {{
       align-items: center;
       color: var(--muted);
@@ -612,6 +766,137 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       from {{ opacity: .55; }}
       to {{ opacity: 1; }}
     }}
+    /* 管理台保持冷静、紧凑的工作台节奏：层级由留白和边界承担，不依赖装饰。 */
+    body {{ background: var(--bg); font-size: 14px; }}
+    aside {{
+      align-self: stretch;
+      background: oklch(0.975 0.004 260 / .92);
+      padding: 24px 16px 18px;
+    }}
+    .brand {{ margin-bottom: 30px; }}
+    .mark {{
+      border-radius: 8px;
+      box-shadow: 0 3px 8px oklch(0.52 0.16 264 / .22);
+    }}
+    .nav-button {{
+      border-radius: 8px;
+      min-height: 40px;
+    }}
+    .nav-button[aria-current="page"] {{
+      box-shadow: 0 1px 2px oklch(0.22 0.018 260 / .04);
+      font-weight: 650;
+    }}
+    main {{ padding-top: 32px; }}
+    .content {{ width: 100%; max-width: none; }}
+    .topbar {{ margin-bottom: 26px; }}
+    h1 {{ font-size: 28px; }}
+    .overview-copy {{ font-size: 14px; margin-bottom: 18px; }}
+    .grid {{ gap: 10px; }}
+    .metric {{ min-height: 118px; padding: 0; }}
+    button.metric-button {{
+      align-items: stretch;
+      background: transparent;
+      border: 0;
+      border-radius: inherit;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 116px;
+      padding: 15px;
+      text-align: left;
+      width: 100%;
+    }}
+    button.metric-button:hover {{
+      background: linear-gradient(135deg, var(--accent-soft), transparent 70%);
+      border: 0;
+    }}
+    .metric-top, .metric-bottom, .cell-meta, .capability-list {{
+      align-items: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }}
+    .metric-arrow {{
+      color: var(--accent);
+      font-size: 16px;
+      line-height: 1;
+      margin-left: auto;
+      transition: transform 160ms var(--ease-out);
+    }}
+    .metric-button:hover .metric-arrow {{ transform: translateX(2px); }}
+    .metric .value {{ margin-top: 0; }}
+    .metric-caption {{ color: var(--muted); font-size: 12px; line-height: 1.35; }}
+    .panel {{
+      border-radius: 10px;
+      box-shadow: 0 1px 1px oklch(0.22 0.018 260 / .025);
+    }}
+    .panel-head {{ padding: 13px 15px; }}
+    .panel-body {{ padding: 15px; }}
+    .compact-link {{ min-height: 32px; padding: 0 9px; }}
+    .overview-layout {{ grid-template-columns: minmax(0, 1.56fr) minmax(320px, .94fr); }}
+    .priority-row, .activity-row, .memory-row {{ padding: 13px 0; }}
+    .row-title {{ font-weight: 670; }}
+    table {{ font-size: 13px; min-width: 720px; }}
+    th, td {{ padding: 12px 10px; }}
+    tbody tr {{ transition: background-color 140ms var(--ease-standard); }}
+    tbody tr:hover {{ background: oklch(0.975 0.008 264); }}
+    .cell-title {{ font-weight: 650; line-height: 1.4; }}
+    .cell-copy, .cell-meta {{ color: var(--muted); font-size: 12px; line-height: 1.45; margin-top: 4px; }}
+    .cell-stack {{ display: grid; gap: 4px; min-width: 150px; }}
+    .capability-list {{ gap: 5px; max-width: 31rem; }}
+    .capability-list .badge {{ max-width: 100%; overflow-wrap: anywhere; white-space: normal; }}
+    .record-details {{ color: var(--muted); font-size: 12px; margin-top: 7px; }}
+    .record-details summary {{ cursor: pointer; width: fit-content; }}
+    .record-details code {{ display: block; margin-top: 6px; }}
+    .muted-divider {{ color: var(--line); }}
+    .section-tools {{
+      align-items: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 15px;
+      border-bottom: 1px solid var(--line);
+      background: oklch(0.985 0.002 260);
+    }}
+    .section-tools input[type="search"] {{ width: min(360px, 100%); }}
+    .device-manage {{ margin-top: 10px; }}
+    .device-manage summary {{
+      align-items: center;
+      cursor: pointer;
+      display: inline-flex;
+      min-height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: white;
+      list-style: none;
+      user-select: none;
+    }}
+    .device-manage summary::-webkit-details-marker {{ display: none; }}
+    .device-manage summary:hover {{ background: var(--surface); }}
+    .device-manage summary:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
+    .device-manage[open] summary {{ border-color: oklch(0.72 0.03 260); }}
+    .device-editor {{
+      display: grid;
+      gap: 12px;
+      min-width: min(520px, 72vw);
+      margin-top: 10px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--surface);
+    }}
+    .permission-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 7px 14px;
+    }}
+    .permission-option {{ align-items: center; display: flex; gap: 8px; min-height: 30px; }}
+    .danger-zone {{ border-top: 1px solid var(--line); padding-top: 12px; }}
+    .danger-zone .row-copy {{ max-width: 72ch; }}
+    .source-cell {{ min-width: 220px; }}
+    .source-summary {{ display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }}
+    .toolbar-count {{ margin-left: auto; }}
     @media (max-width: 860px) {{
       .shell {{ grid-template-columns: 1fr; }}
       aside {{
@@ -629,7 +914,11 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       .split, .overview-layout {{ grid-template-columns: 1fr; }}
       .memory-search {{ align-items: stretch; flex-direction: column; }}
       input[type="search"] {{ min-height: 44px; width: 100%; }}
-      th, td {{ padding: 9px 6px; }}
+      select {{ min-height: 44px; width: 100%; }}
+      .section-tools {{ align-items: stretch; flex-direction: column; }}
+      .toolbar-count {{ margin-left: 0; width: fit-content; }}
+      .device-editor {{ min-width: min(520px, calc(100vw - 72px)); }}
+      th, td {{ padding: 10px 7px; }}
       .toast {{
         left: 16px;
         right: 16px;
@@ -647,7 +936,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     }}
   </style>
 </head>
-<body data-workspace="{escaped_workspace}">
+<body data-workspace="{escaped_workspace}" data-api-base="{escaped_api_base}">
   <div class="shell">
     <aside>
       <div class="brand">
@@ -665,14 +954,14 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
         <button class="nav-button" data-view="runtime"><span class="dot"></span>运行</button>
         <button class="nav-button" data-view="activity"><span class="dot"></span>活动</button>
       </nav>
-      <div class="side-note">管理页只在这台电脑上运行。浏览器不会保存 Gateway 凭据。</div>
+      <div class="side-note">管理页通过受控 Sidecar 读取已授权工作区。浏览器不会保存 Gateway 凭据。</div>
     </aside>
     <main>
       <div class="content">
         <div class="topbar">
           <div>
             <p class="eyebrow">工作区管理台</p>
-            <h1 id="page-title">共享记忆管理</h1>
+            <h1 id="page-title" tabindex="-1">共享记忆管理</h1>
             <div class="subtle" id="page-subtitle">当前工作区：{escaped_workspace}</div>
           </div>
           <div class="toolbar">
@@ -689,7 +978,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
           </div>
           <div class="overview-layout">
             <div>
-              <p class="overview-copy">这里集中显示当前工作区最需要处理的事情。先看待审核和投递异常，再进入对应页面继续处理。</p>
+              <p class="overview-copy">先处理需要人工确认的记忆，再核对投递状态与设备授权。每个状态卡都可以直接进入对应页面。</p>
               <div class="grid" id="metrics"></div>
               <div class="panel">
                 <div class="panel-head"><div class="panel-title">现在需要处理</div><span id="priority-badge" class="badge">读取中</span></div>
@@ -706,8 +995,8 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
                 <div class="panel-body"><div id="overview-audit-list" class="activity-list"></div></div>
               </div>
               <div class="panel">
-                <div class="panel-head"><div class="panel-title">使用边界</div></div>
-                <div class="panel-body"><div class="row-copy">页面只通过本机 Sidecar 请求已授权工作区。不会显示设备公钥、Gateway 凭据、刷新凭据或数据库连接信息。</div></div>
+                <div class="panel-head"><div class="panel-title">访问边界</div></div>
+                <div class="panel-body"><div class="row-copy">页面只通过受控 Sidecar 请求已授权工作区。不会显示设备公钥、Gateway 凭据、刷新凭据或数据库连接信息。</div></div>
               </div>
             </div>
           </div>
@@ -733,7 +1022,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
         </section>
         <section id="devices" class="view">
           <div class="panel">
-            <div class="panel-head"><div><div class="panel-title">设备与权限</div><div class="subtle">查看已登记设备、Agent 与工作区能力，不显示凭据。</div></div></div>
+            <div class="panel-head"><div><div class="panel-title">设备与权限</div><div class="subtle">查看设备来源、调整当前工作区能力，或撤销失去信任的 Agent 与设备。所有变更都会写入审计。</div></div></div>
             <div class="panel-body" id="device-list"></div>
           </div>
         </section>
@@ -751,7 +1040,19 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
         </section>
         <section id="activity" class="view">
           <div class="panel">
-            <div class="panel-head"><div><div class="panel-title">近期活动</div><div class="subtle">记录已完成的管理与审核动作，不显示正文或敏感详情。</div></div></div>
+            <div class="panel-head"><div><div class="panel-title">近期活动</div><div class="subtle">按设备、Agent 或操作筛选近期记录；不显示记忆正文或敏感详情。</div></div></div>
+            <div class="section-tools">
+              <label class="sr-only" for="activity-query">搜索活动</label>
+              <input id="activity-query" type="search" placeholder="搜索设备、Agent、操作或目标">
+              <label class="sr-only" for="activity-result">筛选结果</label>
+              <select id="activity-result">
+                <option value="">全部结果</option>
+                <option value="ok">成功与已完成</option>
+                <option value="warn">等待或需关注</option>
+                <option value="danger">拒绝、撤销或错误</option>
+              </select>
+              <span id="activity-count" class="badge toolbar-count">0 条记录</span>
+            </div>
             <div class="panel-body" id="audit-list"></div>
           </div>
         </section>
@@ -771,10 +1072,13 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
   <script nonce="{nonce}">
     const state = {{
       workspaceId: document.body.dataset.workspace,
+      apiBase: document.body.dataset.apiBase || "",
       reviews: [],
       latestOperation: null,
       overview: null,
-      audit: []
+      audit: [],
+      devices: [],
+      capabilityCatalog: []
     }};
 
     const actionNames = {{
@@ -784,6 +1088,24 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       supersede: "取代冲突记忆",
       reject: "拒绝候选",
       archive: "归档候选"
+    }};
+
+    const auditActionNames = {{
+      "auth.workspace.capabilities.update": "更新工作区权限",
+      "auth.agent.revoke": "撤销 Agent",
+      "auth.device.revoke": "撤销设备",
+      "auth.device.pair": "设备完成配对",
+      "review.created": "创建审核候选",
+      "review.confirm": "确认候选记忆",
+      "review.confirm_edit": "编辑并确认候选",
+      "review.retain_both": "保留冲突双方",
+      "review.supersede": "取代冲突记忆",
+      "review.reject": "拒绝候选",
+      "review.archive": "归档候选",
+      "review.revert": "撤销审核操作",
+      "event.accepted": "接收记忆事件",
+      "event.applied": "应用记忆事件",
+      "crystal.rebuilt": "重建结晶记忆"
     }};
 
     const labels = {{
@@ -833,6 +1155,15 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       confirmDialog.showModal();
     }}
 
+    function askAdminConfirmation(title, message, acceptLabel, dangerous, onConfirm) {{
+      document.getElementById("confirm-title").textContent = title;
+      document.getElementById("confirm-message").textContent = message;
+      confirmAccept.textContent = acceptLabel;
+      confirmAccept.classList.toggle("danger", Boolean(dangerous));
+      pendingConfirmation = onConfirm;
+      confirmDialog.showModal();
+    }}
+
     confirmDialog.addEventListener("close", () => {{
       const confirmed = confirmDialog.returnValue === "confirm";
       const callback = pendingConfirmation;
@@ -843,7 +1174,7 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     }});
 
     async function api(path, options = {{}}) {{
-      const response = await fetch(path, {{
+      const response = await fetch(state.apiBase + path, {{
         method: options.method || "GET",
         headers: options.body ? {{"Content-Type": "application/json"}} : {{}},
         credentials: "same-origin",
@@ -861,9 +1192,9 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       return `admin-ui:${{reviewId}}:${{action}}:${{randomPart}}`;
     }}
 
-    function metric(label, value, tone) {{
+    function metric(label, value, tone, view, caption) {{
       const badge = tone ? `<span class="badge ${{tone}}">${{tone === "ok" ? "正常" : "需处理"}}</span>` : "";
-      return `<div class="metric"><div class="label">${{escapeHTML(label)}}</div><div class="value">${{escapeHTML(value)}}</div>${{badge}}</div>`;
+      return `<div class="metric"><button class="metric-button" data-view-link="${{escapeHTML(view)}}" aria-label="查看${{escapeHTML(label)}}详情"><div class="metric-top"><span class="label">${{escapeHTML(label)}}</span>${{badge}}<span class="metric-arrow" aria-hidden="true">→</span></div><div class="metric-bottom"><div class="value">${{escapeHTML(value)}}</div><div class="metric-caption">${{escapeHTML(caption)}}</div></div></button></div>`;
     }}
 
     function setConnection(label, tone) {{
@@ -911,10 +1242,10 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       state.overview = payload;
       const counts = payload.counts || {{}};
       document.getElementById("metrics").innerHTML = [
-        metric("待审核", counts.pending_reviews || 0, counts.pending_reviews ? "warn" : "ok"),
-        metric("待重试", counts.retryable_events || 0, counts.retryable_events ? "warn" : "ok"),
-        metric("未处理死信", counts.unresolved_dead_letters || 0, counts.unresolved_dead_letters ? "danger" : "ok"),
-        metric("活跃设备", counts.active_devices || 0, null)
+        metric("待审核", counts.pending_reviews || 0, counts.pending_reviews ? "warn" : "ok", "reviews", "查看候选与冲突"),
+        metric("待重试", counts.retryable_events || 0, counts.retryable_events ? "warn" : "ok", "runtime", "查看同步投递状态"),
+        metric("未处理死信", counts.unresolved_dead_letters || 0, counts.unresolved_dead_letters ? "danger" : "ok", "runtime", "核对错误与事件引用"),
+        metric("活跃设备", counts.active_devices || 0, null, "devices", "查看设备与授权范围")
       ].join("");
       renderPriority(payload);
       renderDelivery(payload);
@@ -988,37 +1319,129 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       }}).join("");
     }}
 
+    function stateBadge(value) {{
+      const normalized = String(value || "unknown").toLowerCase();
+      const tone = ["active", "online", "bound", "ready", "healthy", "success", "confirmed", "applied", "accepted", "completed"].includes(normalized)
+        ? "ok"
+        : ["revoked", "disabled", "offline", "blocked", "error"].includes(normalized) ? "danger" : "warn";
+      return `<span class="badge ${{tone}}">${{escapeHTML(value || "未知")}}</span>`;
+    }}
+
     function renderDevices(payload) {{
-      const rows = (payload.devices || []).map(item => `
-        <tr>
-          <td>${{code(item.device_id)}}</td>
-          <td>${{code(item.agent_installation_id)}}</td>
-          <td>${{escapeHTML(item.status || "-")}}</td>
-          <td>${{escapeHTML((item.capabilities || []).join(", ") || "-")}}</td>
-          <td>${{escapeHTML(item.updated_at || item.created_at || "-")}}</td>
-        </tr>
-      `).join("");
+      state.devices = payload.devices || [];
+      state.capabilityCatalog = payload.capability_catalog || [];
+      const rows = state.devices.map((item, index) => {{
+        const deviceName = item.device_name || item.device_id || "未命名设备";
+        const agentName = item.agent_name || item.agent_installation_id || "未登记 Agent";
+        const deviceStatus = item.device_status || item.status || "未知";
+        const agentStatus = item.agent_status || "未知";
+        const bindingStatus = item.binding_status || "未返回绑定状态";
+        const capabilities = (item.capabilities || []).map(capability => `<span class="badge">${{escapeHTML(capability)}}</span>`).join("") || `<span class="subtle">未返回能力</span>`;
+        const catalog = [...new Set([...state.capabilityCatalog, ...(item.capabilities || [])])].sort();
+        const permissionOptions = catalog.map(capability => {{
+          const checked = (item.capabilities || []).includes(capability);
+          const knownCapability = state.capabilityCatalog.includes(capability);
+          const lockManage = Boolean(item.is_current_agent && capability === "memory.manage");
+          const locked = lockManage || !knownCapability;
+          const note = lockManage ? "当前管理权限" : !knownCapability ? "扩展能力（只读）" : "";
+          return `<label class="permission-option"><input type="checkbox" data-capability-index="${{index}}" value="${{escapeHTML(capability)}}" ${{checked ? "checked" : ""}} ${{locked ? "disabled" : ""}}> <code>${{escapeHTML(capability)}}</code>${{note ? `<span class="badge">${{note}}</span>` : ""}}</label>`;
+        }}).join("");
+        const lastSeen = item.device_last_seen_at || item.updated_at || item.created_at || "暂无记录";
+        const bindingUpdated = item.binding_updated_at || "暂无记录";
+        const identifiers = [
+          item.device_id ? `设备：${{code(item.device_id)}}` : "",
+          item.agent_installation_id ? `Agent：${{code(item.agent_installation_id)}}` : "",
+          item.device_auth_epoch !== undefined && item.device_auth_epoch !== null ? `设备认证版本：${{escapeHTML(item.device_auth_epoch)}}` : "",
+          item.agent_auth_epoch !== undefined && item.agent_auth_epoch !== null ? `Agent 认证版本：${{escapeHTML(item.agent_auth_epoch)}}` : ""
+        ].filter(Boolean).join("<br>");
+        return `
+          <tr data-device-row="${{index}}">
+            <td><div class="cell-title">${{escapeHTML(deviceName)}}</div><div class="cell-meta"><span class="badge">${{escapeHTML(item.device_type || "device")}}</span></div><details class="record-details"><summary>查看技术标识</summary>${{identifiers}}</details></td>
+            <td><div class="cell-title">${{escapeHTML(agentName)}}</div><div class="cell-meta"><span class="badge">${{escapeHTML(item.agent_type || "agent")}}</span></div></td>
+            <td><div class="cell-stack"><div><span class="label">设备</span> ${{stateBadge(deviceStatus)}}</div><div><span class="label">Agent</span> ${{stateBadge(agentStatus)}}</div><div><span class="label">绑定</span> ${{stateBadge(bindingStatus)}}</div></div></td>
+            <td><div class="capability-list">${{capabilities}}</div></td>
+            <td><div class="cell-stack"><div><span class="label">最近出现</span><div class="cell-copy">${{escapeHTML(lastSeen)}}</div></div><div><span class="label">绑定更新</span><div class="cell-copy">${{escapeHTML(bindingUpdated)}}</div></div></div></td>
+            <td>
+              <details class="device-manage">
+                <summary>管理</summary>
+                <div class="device-editor">
+                  <div>
+                    <div class="cell-title">当前工作区权限</div>
+                    <div class="row-copy">保存后只改变 ${{escapeHTML(state.workspaceId)}} 中这个 Agent 的能力。</div>
+                  </div>
+                  <div class="permission-grid">${{permissionOptions}}</div>
+                  <div class="actions"><button class="primary" data-device-action="save-binding" data-index="${{index}}" ${{bindingStatus !== "active" && bindingStatus !== "bound" ? "disabled" : ""}}>保存权限</button></div>
+                  <div class="danger-zone">
+                    <div class="cell-title">撤销访问</div>
+                    <div class="row-copy">撤销 Agent 会影响它的所有工作区；撤销设备会同时停用该设备上的 Agent 和刷新凭据。记录会保留，不会删除数据。</div>
+                    <div class="actions">
+                      <button class="danger" data-device-action="revoke-agent" data-index="${{index}}" ${{item.is_current_agent || agentStatus !== "active" ? "disabled" : ""}}>撤销 Agent</button>
+                      <button class="danger" data-device-action="revoke-device" data-index="${{index}}" ${{item.is_current_device || deviceStatus !== "active" ? "disabled" : ""}}>撤销设备</button>
+                    </div>
+                    ${{item.is_current_agent || item.is_current_device ? '<div class="row-copy">当前管理端不能撤销自身，也不能移除自身的 memory.manage。</div>' : ""}}
+                  </div>
+                </div>
+              </details>
+            </td>
+          </tr>`;
+      }}).join("");
       document.getElementById("device-list").innerHTML = rows
-        ? `<table><thead><tr><th>设备</th><th>Agent</th><th>状态</th><th>能力</th><th>更新时间</th></tr></thead><tbody>${{rows}}</tbody></table>`
+        ? `<table><thead><tr><th>设备</th><th>Agent</th><th>状态与绑定</th><th>授权能力</th><th>最近状态</th><th>操作</th></tr></thead><tbody>${{rows}}</tbody></table>`
         : `<div class="empty">没有可显示的设备记录。</div>`;
+    }}
+
+    function auditTone(value) {{
+      const normalized = String(value || "").toLowerCase();
+      if (["revoked", "rejected", "error", "failed", "blocked"].some(token => normalized.includes(token))) return "danger";
+      if (["pending", "candidate", "retry", "queued"].some(token => normalized.includes(token))) return "warn";
+      return "ok";
+    }}
+
+    function renderAuditTable() {{
+      const query = document.getElementById("activity-query").value.trim().toLowerCase();
+      const tone = document.getElementById("activity-result").value;
+      const filtered = state.audit.filter(item => {{
+        const haystack = [
+          item.action,
+          auditActionNames[item.action],
+          item.result_code,
+          item.target_ref,
+          item.source_device_name,
+          item.device_id,
+          item.source_agent_name,
+          item.agent_installation_id,
+          item.source_device_type,
+          item.source_agent_type
+        ].filter(Boolean).join(" ").toLowerCase();
+        return (!query || haystack.includes(query)) && (!tone || auditTone(item.result_code) === tone);
+      }});
+      const rows = filtered.map(item => {{
+        const deviceName = item.source_device_name || item.device_id || "未识别设备";
+        const agentName = item.source_agent_name || item.agent_installation_id || item.actor_id || "系统任务";
+        const deviceMeta = [item.source_device_type, item.source_device_status].filter(Boolean).join(" · ");
+        const agentMeta = [item.source_agent_type, item.source_agent_status].filter(Boolean).join(" · ");
+        return `
+        <tr>
+          <td><div class="cell-title">${{escapeHTML(auditActionNames[item.action] || item.action || "管理操作")}}</div><div class="cell-meta">执行者：${{escapeHTML(item.actor_id || item.actor_type || "-")}}</div><details class="record-details"><summary>查看操作代码</summary>${{code(item.action)}}</details></td>
+          <td>${{stateBadge(item.result_code || "-")}}</td>
+          <td class="source-cell"><div class="source-summary"><span class="cell-title">${{escapeHTML(deviceName)}}</span>${{deviceMeta ? `<span class="badge">${{escapeHTML(deviceMeta)}}</span>` : ""}}</div><div class="cell-copy">${{escapeHTML(agentName)}}</div>${{agentMeta ? `<div class="cell-meta">${{escapeHTML(agentMeta)}}</div>` : ""}}<details class="record-details"><summary>查看来源标识</summary>${{item.device_id ? `设备：${{code(item.device_id)}}` : ""}}${{item.agent_installation_id ? `<br>Agent：${{code(item.agent_installation_id)}}` : ""}}</details></td>
+          <td><div class="cell-copy">${{escapeHTML(item.target_ref || "未提供目标引用")}}</div></td>
+          <td><div class="cell-copy">${{escapeHTML(item.created_at || "-")}}</div><div class="cell-meta">${{code(item.trace_id)}}</div></td>
+        </tr>
+      `;
+      }}).join("");
+      document.getElementById("audit-list").innerHTML = rows
+        ? `<table><thead><tr><th>操作</th><th>结果</th><th>来源设备与 Agent</th><th>目标</th><th>时间与追踪</th></tr></thead><tbody>${{rows}}</tbody></table>`
+        : `<div class="empty">没有符合当前筛选条件的活动记录。</div>`;
+      document.getElementById("activity-count").textContent = `${{filtered.length}} 条记录`;
     }}
 
     function renderAudit(payload) {{
       state.audit = payload.entries || [];
-      const rows = state.audit.map(item => `
-        <tr>
-          <td>${{escapeHTML(item.created_at || "-")}}</td>
-          <td>${{escapeHTML(item.action || "-")}}</td>
-          <td>${{escapeHTML(item.result_code || "-")}}</td>
-          <td>${{code(item.trace_id)}}</td>
-        </tr>
-      `).join("");
-      document.getElementById("audit-list").innerHTML = rows
-        ? `<table><thead><tr><th>时间</th><th>操作</th><th>结果</th><th>Trace</th></tr></thead><tbody>${{rows}}</tbody></table>`
-        : `<div class="empty">没有近期审计记录。</div>`;
+      renderAuditTable();
       const preview = state.audit.slice(0, 5).map(item => `
         <div class="activity-row">
-          <div><div class="row-title">${{escapeHTML(item.action || "管理操作")}}</div><div class="row-copy">${{escapeHTML(item.result_code || "-")}}</div></div>
+          <div><div class="row-title">${{escapeHTML(auditActionNames[item.action] || item.action || "管理操作")}}</div><div class="row-copy">${{escapeHTML(item.source_device_name || item.device_id || "系统任务")}} · ${{escapeHTML(item.source_agent_name || item.agent_installation_id || item.actor_id || "-")}}</div></div>
           <div class="row-time">${{escapeHTML(item.created_at || "-")}}</div>
         </div>`).join("");
       document.getElementById("overview-audit-list").innerHTML = preview || `<div class="empty">还没有可展示的近期活动。</div>`;
@@ -1027,14 +1450,13 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     function renderDeadLetters(payload) {{
       const rows = (payload.dead_letters || []).map(item => `
         <tr>
-          <td>${{code(item.dead_letter_id)}}</td>
-          <td>${{escapeHTML(item.error_code || "-")}}</td>
-          <td>${{escapeHTML(item.error_class || "-")}}</td>
-          <td>${{escapeHTML(item.created_at || "-")}}</td>
+          <td><div class="cell-title">${{escapeHTML(item.error_code || "未分类错误")}}</div><div class="cell-meta">${{escapeHTML(item.error_class || "-")}}</div></td>
+          <td><div class="cell-copy">${{escapeHTML(item.created_at || "-")}}</div></td>
+          <td><div class="cell-copy">事件：${{code(item.event_id)}}</div><div class="cell-meta">死信：${{code(item.dead_letter_id)}}</div></td>
         </tr>
       `).join("");
       document.getElementById("dead-letter-list").innerHTML = rows
-        ? `<table><thead><tr><th>ID</th><th>错误码</th><th>类别</th><th>时间</th></tr></thead><tbody>${{rows}}</tbody></table>`
+        ? `<table><thead><tr><th>错误</th><th>进入时间</th><th>事件引用</th></tr></thead><tbody>${{rows}}</tbody></table>`
         : `<div class="empty">当前没有未处理死信。</div>`;
     }}
 
@@ -1179,13 +1601,19 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
     }}
 
     function showView(view) {{
+      if (!labels[view] || !document.getElementById(view)) return;
       document.querySelectorAll(".nav-button").forEach(item => item.removeAttribute("aria-current"));
       const button = document.querySelector(`.nav-button[data-view="${{view}}"]`);
       if (button) button.setAttribute("aria-current", "page");
       document.querySelectorAll(".view").forEach(item => item.classList.remove("active"));
       document.getElementById(view).classList.add("active");
-      document.getElementById("page-title").textContent = labels[view][0];
+      const title = document.getElementById("page-title");
+      title.textContent = labels[view][0];
       document.getElementById("page-subtitle").textContent = labels[view][1];
+      title.focus({{preventScroll: true}});
+      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {{
+        window.scrollTo({{top: 0, behavior: "smooth"}});
+      }}
     }}
 
     function resolveReview(index, action, targetRef) {{
@@ -1220,6 +1648,77 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       }});
     }}
 
+    function manageDevice(index, action) {{
+      const item = state.devices[index];
+      if (!item) return;
+      const deviceName = item.device_name || item.device_id;
+      const agentName = item.agent_name || item.agent_installation_id;
+      let title;
+      let message;
+      let acceptLabel;
+      let dangerous = false;
+      let path;
+      let payload;
+
+      if (action === "save-binding") {{
+        const capabilities = [...document.querySelectorAll(`[data-capability-index="${{index}}"]`)]
+          .filter(input => input.checked)
+          .map(input => input.value)
+          .sort();
+        if (!capabilities.length) {{
+          toast("至少保留一项工作区能力。");
+          return;
+        }}
+        title = `保存 ${{agentName}} 的权限？`;
+        message = `只会更新工作区 ${{state.workspaceId}} 的能力。若页面数据已变化，服务端会拒绝覆盖并要求刷新。`;
+        acceptLabel = "保存权限";
+        path = "/api/devices/binding";
+        payload = {{
+          target_agent_installation_id: item.agent_installation_id,
+          expected_capabilities: item.capabilities || [],
+          capabilities,
+          idempotency_key: idempotencyKey(item.agent_installation_id, "capabilities"),
+          confirmed_by_user: true
+        }};
+      }} else if (action === "revoke-agent") {{
+        title = `撤销 ${{agentName}}？`;
+        message = `这个 Agent 将立即失去所有工作区的访问权，需要重新登记才能恢复。设备 ${{deviceName}} 上的其他 Agent 不受影响，历史记录不会删除。`;
+        acceptLabel = "撤销 Agent";
+        dangerous = true;
+        path = "/api/devices/revoke-agent";
+        payload = {{
+          target_agent_installation_id: item.agent_installation_id,
+          expected_auth_epoch: item.agent_auth_epoch,
+          idempotency_key: idempotencyKey(item.agent_installation_id, "revoke-agent"),
+          confirmed_by_user: true
+        }};
+      }} else if (action === "revoke-device") {{
+        title = `撤销设备 ${{deviceName}}？`;
+        message = "该设备、设备上的所有 Agent 和刷新凭据都会立即失效，需要重新配对才能恢复。历史记忆和审计记录不会删除。";
+        acceptLabel = "撤销设备";
+        dangerous = true;
+        path = "/api/devices/revoke-device";
+        payload = {{
+          target_device_id: item.device_id,
+          expected_auth_epoch: item.device_auth_epoch,
+          idempotency_key: idempotencyKey(item.device_id, "revoke-device"),
+          confirmed_by_user: true
+        }};
+      }} else {{
+        return;
+      }}
+
+      askAdminConfirmation(title, message, acceptLabel, dangerous, async () => {{
+        try {{
+          const result = await api(path, {{method: "POST", body: payload}});
+          toast(result.status === "unchanged" ? "权限没有变化。" : "操作已完成并写入审计。" );
+          await refreshAll();
+        }} catch (error) {{
+          toast(error.message === "ADMIN_STATE_CHANGED" ? "设备状态已经变化，请刷新后重试。" : error.message);
+        }}
+      }});
+    }}
+
     document.addEventListener("click", event => {{
       const nav = event.target.closest(".nav-button");
       if (nav) {{
@@ -1234,6 +1733,11 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       const actionButton = event.target.closest("[data-action]");
       if (actionButton) {{
         resolveReview(Number(actionButton.dataset.index), actionButton.dataset.action, actionButton.dataset.target);
+        return;
+      }}
+      const deviceAction = event.target.closest("[data-device-action]");
+      if (deviceAction) {{
+        manageDevice(Number(deviceAction.dataset.index), deviceAction.dataset.deviceAction);
       }}
     }});
 
@@ -1243,8 +1747,44 @@ def _html_page(workspace_id: str, nonce: str) -> bytes:
       event.preventDefault();
       searchMemories();
     }});
+    document.getElementById("activity-query").addEventListener("input", renderAuditTable);
+    document.getElementById("activity-result").addEventListener("change", renderAuditTable);
     refreshAll();
   </script>
+</body>
+</html>""".encode("utf-8")
+
+
+def _unauthorized_page(nonce: str, mount_path: str = "") -> bytes:
+    retry_path = html.escape((mount_path or "") + "/", quote=True)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>需要授权此浏览器 · Memory Admin</title>
+  <style nonce="{nonce}">
+    :root {{ color-scheme: light; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+    * {{ box-sizing: border-box; }}
+    body {{ min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: oklch(0.975 0.004 260); color: oklch(0.22 0.018 260); }}
+    main {{ width: min(560px, 100%); border: 1px solid oklch(0.885 0.01 260); border-radius: 12px; background: white; padding: clamp(24px, 5vw, 40px); box-shadow: 0 12px 32px oklch(0.22 0.018 260 / .08); }}
+    .mark {{ width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: oklch(0.52 0.16 264); color: white; font-weight: 700; }}
+    h1 {{ margin: 22px 0 10px; font-size: 26px; line-height: 1.25; letter-spacing: -.025em; }}
+    p {{ margin: 0; color: oklch(0.44 0.018 260); line-height: 1.65; }}
+    .steps {{ margin: 24px 0; padding: 16px 18px; border: 1px solid oklch(0.885 0.01 260); border-radius: 9px; background: oklch(0.968 0.004 260); line-height: 1.7; }}
+    a {{ display: inline-flex; align-items: center; min-height: 40px; padding: 0 13px; border: 1px solid oklch(0.885 0.01 260); border-radius: 7px; color: oklch(0.22 0.018 260); text-decoration: none; }}
+    a:hover {{ background: oklch(0.945 0.006 260); }}
+    a:focus-visible {{ outline: 2px solid oklch(0.52 0.16 264); outline-offset: 2px; }}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark">M</div>
+    <h1>需要授权此浏览器</h1>
+    <p>管理入口没有使用固定密码，也不会把 Gateway 凭据交给浏览器。首次使用或授权到期时，需要从可信管理机完成一次浏览器授权。</p>
+    <div class="steps">运行项目中的中枢管理页打开脚本。授权完成后，这个浏览器可以在有效期内直接访问固定 HTTPS 地址，不需要每次再运行命令。</div>
+    <a href="{retry_path}">我已完成授权，重新检查</a>
+  </main>
 </body>
 </html>""".encode("utf-8")
 
@@ -1254,7 +1794,11 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/":
+        path = self._mounted_path(parsed.path)
+        if path is None:
+            self._json({"error": "NOT_FOUND"}, status=404)
+            return
+        if path == "/":
             params = parse_qs(parsed.query)
             launch_token = (params.get("session") or [""])[0]
             if launch_token:
@@ -1263,28 +1807,49 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
                     self._redirect_with_session(session)
                     return
             if not self._authorized():
-                self._json({"error": "LOCAL_ADMIN_SESSION_REQUIRED"}, status=401)
+                nonce = secrets.token_urlsafe(16)
+                self._send_bytes(
+                    _unauthorized_page(nonce, self.state.mount_path),
+                    status=401,
+                    content_type="text/html; charset=utf-8",
+                    nonce=nonce,
+                )
                 return
             nonce = secrets.token_urlsafe(16)
-            self._send_bytes(_html_page(self.state.workspace_id, nonce), content_type="text/html; charset=utf-8", nonce=nonce)
+            self._send_bytes(
+                _html_page(self.state.workspace_id, nonce, self.state.mount_path),
+                content_type="text/html; charset=utf-8",
+                nonce=nonce,
+            )
             return
-        if parsed.path.startswith("/api/"):
+        if path.startswith("/api/"):
             if not self._authorized():
                 self._json({"error": "LOCAL_ADMIN_SESSION_REQUIRED"}, status=401)
                 return
-            self._handle_api_get(parsed.path, parse_qs(parsed.query))
+            self._handle_api_get(path, parse_qs(parsed.query))
             return
         self._json({"error": "NOT_FOUND"}, status=404)
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if not parsed.path.startswith("/api/"):
+        path = self._mounted_path(parsed.path)
+        if path is None or not path.startswith("/api/"):
             self._json({"error": "NOT_FOUND"}, status=404)
             return
         if not self._authorized():
             self._json({"error": "LOCAL_ADMIN_SESSION_REQUIRED"}, status=401)
             return
-        self._handle_api_post(parsed.path)
+        self._handle_api_post(path)
+
+    def _mounted_path(self, path: str) -> str | None:
+        mount_path = self.state.mount_path
+        if not mount_path:
+            return path
+        if path == mount_path:
+            return "/"
+        if path.startswith(mount_path + "/"):
+            return path[len(mount_path) :]
+        return None
 
     def _handle_api_get(self, path: str, query: dict[str, list[str]] | None = None) -> None:
         try:
@@ -1330,6 +1895,12 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
                 result = sidecar.revert_review(self._revert_payload(payload))
             elif path == "/api/crystals/rebuild":
                 result = sidecar.rebuild_crystal({"workspace_id": self.state.workspace_id})
+            elif path == "/api/devices/binding":
+                result = sidecar.update_admin_binding(self._binding_payload(payload))
+            elif path == "/api/devices/revoke-agent":
+                result = sidecar.revoke_admin_agent(self._revoke_agent_payload(payload))
+            elif path == "/api/devices/revoke-device":
+                result = sidecar.revoke_admin_device(self._revoke_device_payload(payload))
             else:
                 self._json({"error": "NOT_FOUND"}, status=404)
                 return
@@ -1369,6 +1940,74 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
             "confirmed_by_user": True,
         }
 
+    def _binding_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "workspace_id": self.state.workspace_id,
+            "target_agent_installation_id": _required_text(
+                payload,
+                "target_agent_installation_id",
+                "TARGET_AGENT_INSTALLATION_ID_REQUIRED",
+            ),
+            "expected_capabilities": _required_capabilities(
+                payload,
+                "expected_capabilities",
+                "EXPECTED_CAPABILITIES_INVALID",
+            ),
+            "capabilities": _required_capabilities(
+                payload,
+                "capabilities",
+                "WORKSPACE_CAPABILITIES_INVALID",
+            ),
+            "idempotency_key": _required_text(
+                payload,
+                "idempotency_key",
+                "IDEMPOTENCY_KEY_REQUIRED",
+            ),
+            "confirmed_by_user": True,
+        }
+
+    def _revoke_agent_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "workspace_id": self.state.workspace_id,
+            "target_agent_installation_id": _required_text(
+                payload,
+                "target_agent_installation_id",
+                "TARGET_AGENT_INSTALLATION_ID_REQUIRED",
+            ),
+            "expected_auth_epoch": _required_positive_int(
+                payload,
+                "expected_auth_epoch",
+                "EXPECTED_AUTH_EPOCH_REQUIRED",
+            ),
+            "idempotency_key": _required_text(
+                payload,
+                "idempotency_key",
+                "IDEMPOTENCY_KEY_REQUIRED",
+            ),
+            "confirmed_by_user": True,
+        }
+
+    def _revoke_device_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "workspace_id": self.state.workspace_id,
+            "target_device_id": _required_text(
+                payload,
+                "target_device_id",
+                "TARGET_DEVICE_ID_REQUIRED",
+            ),
+            "expected_auth_epoch": _required_positive_int(
+                payload,
+                "expected_auth_epoch",
+                "EXPECTED_AUTH_EPOCH_REQUIRED",
+            ),
+            "idempotency_key": _required_text(
+                payload,
+                "idempotency_key",
+                "IDEMPOTENCY_KEY_REQUIRED",
+            ),
+            "confirmed_by_user": True,
+        }
+
     def _read_json(self) -> dict[str, Any]:
         try:
             length = int(self.headers.get("Content-Length") or "0")
@@ -1389,11 +2028,14 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
 
     def _redirect_with_session(self, session_token: str) -> None:
         self.send_response(303)
-        self.send_header("Location", "/")
+        cookie_path = self.state.mount_path or "/"
+        self.send_header("Location", f"{cookie_path}/")
         self.send_header("Cache-Control", "no-store")
+        secure = "; Secure" if self.state.secure_cookie else ""
         self.send_header(
             "Set-Cookie",
-            f"{SESSION_COOKIE_NAME}={session_token}; HttpOnly; SameSite=Strict; Path=/",
+            f"{SESSION_COOKIE_NAME}={session_token}; HttpOnly; SameSite=Strict; "
+            f"Path={cookie_path}; Max-Age={self.state.session.max_age_seconds}{secure}",
         )
         self.end_headers()
 
@@ -1444,8 +2086,12 @@ def create_admin_console_server(
     sidecar_factory: Callable[[], Any] = get_shared_sidecar,
     session: LocalAdminSession | None = None,
     max_heartbeat_age_seconds: int = 90,
+    allow_network: bool = False,
+    mount_path: str = "",
+    secure_cookie: bool = False,
 ) -> ThreadingHTTPServer:
-    if host not in {"127.0.0.1", "::1", "localhost"}:
+    is_loopback = host in {"127.0.0.1", "::1", "localhost"}
+    if not is_loopback and (not allow_network or host not in {"0.0.0.0", "::"}):
         raise AdminConsoleError("管理控制台只能监听回环地址")
     if not 1024 <= int(port or 0) <= 65535 and int(port or 0) != 0:
         raise AdminConsoleError("PORT_INVALID")
@@ -1454,6 +2100,8 @@ def create_admin_console_server(
         session=session or LocalAdminSession(),
         sidecar_factory=sidecar_factory,
         max_heartbeat_age_seconds=max_heartbeat_age_seconds,
+        mount_path=_mount_path(mount_path),
+        secure_cookie=bool(secure_cookie),
     )
     handler = type(
         "ConfiguredAdminConsoleHandler",
@@ -1469,10 +2117,39 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8767)
     parser.add_argument("--max-heartbeat-age-seconds", type=int, default=90)
+    parser.add_argument("--allow-network", action="store_true", help="仅供受控反向代理容器使用")
+    parser.add_argument("--mount-path", default="", help="反向代理中的固定挂载路径，例如 /admin")
+    parser.add_argument("--secure-cookie", action="store_true", help="只在 HTTPS 反向代理后使用")
+    parser.add_argument("--public-base-url", help="受控 HTTPS 管理入口，例如 https://memory.example/admin")
+    parser.add_argument("--launch-token-file", help="受保护目录中的一次性启动链接文件")
+    parser.add_argument("--session-key-file", help="持久浏览器会话签名密钥；中枢模式默认与启动链接同目录")
+    parser.add_argument("--session-max-age-days", type=int, default=30, help="中枢浏览器授权有效期，默认 30 天")
     args = parser.parse_args()
     if not 1 <= args.max_heartbeat_age_seconds <= 3600:
         raise SystemExit("MAX_HEARTBEAT_AGE_INVALID")
-    session = LocalAdminSession()
+    mount_path = _mount_path(args.mount_path)
+    if bool(args.public_base_url) != bool(args.launch_token_file):
+        raise SystemExit("ADMIN_LAUNCH_CONFIGURATION_INVALID")
+    if args.public_base_url and (not args.allow_network or not args.secure_cookie):
+        raise SystemExit("ADMIN_NETWORK_SECURITY_REQUIRED")
+    if not 1 <= args.session_max_age_days <= MAX_PERSISTENT_SESSION_DAYS:
+        raise SystemExit("ADMIN_SESSION_MAX_AGE_INVALID")
+    if args.public_base_url:
+        session_key_file = args.session_key_file or str(
+            Path(str(args.launch_token_file)).with_name("session.key")
+        )
+        try:
+            session_secret = _load_or_create_session_secret(session_key_file)
+        except AdminConsoleError as exc:
+            raise SystemExit(str(exc)) from None
+        session = LocalAdminSession(
+            session_token=session_secret,
+            max_age_seconds=args.session_max_age_days * 86_400,
+        )
+    else:
+        if args.session_key_file:
+            raise SystemExit("ADMIN_SESSION_KEY_FILE_UNEXPECTED")
+        session = LocalAdminSession()
     try:
         server = create_admin_console_server(
             workspace_id=_workspace_id(args.workspace),
@@ -1480,12 +2157,23 @@ def main() -> None:
             port=args.port,
             session=session,
             max_heartbeat_age_seconds=args.max_heartbeat_age_seconds,
+            allow_network=args.allow_network,
+            mount_path=mount_path,
+            secure_cookie=args.secure_cookie,
         )
     except AdminConsoleError as exc:
         raise SystemExit(str(exc)) from None
-    url = f"http://{args.host}:{server.server_port}/?session={session.launch_token}"
+    if args.public_base_url:
+        base_url = _public_base_url(args.public_base_url, mount_path)
+        url = f"{base_url}/?session={session.launch_token}"
+        _write_launch_url(str(args.launch_token_file), url)
+    else:
+        url = f"http://{args.host}:{server.server_port}{mount_path}/?session={session.launch_token}"
     print(f"Memory Admin Console listening on http://{args.host}:{server.server_port}", flush=True)
-    print(f"Open once: {url}", flush=True)
+    if args.public_base_url:
+        print("Central admin launch link was written to the protected launch file.", flush=True)
+    else:
+        print(f"Open once: {url}", flush=True)
     try:
         server.serve_forever()
     finally:

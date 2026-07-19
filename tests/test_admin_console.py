@@ -2,11 +2,15 @@ import json
 import threading
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from agent_memory_gateway.admin_console import (
+    AdminConsoleError,
     LocalAdminSession,
+    _load_or_create_session_secret,
     create_admin_console_server,
 )
 
@@ -15,6 +19,9 @@ class FakeSidecar:
     def __init__(self):
         self.resolve_payloads = []
         self.search_payloads = []
+        self.binding_payloads = []
+        self.revoked_agent_payloads = []
+        self.revoked_device_payloads = []
 
     def admin_overview(self, payload):
         return {
@@ -46,7 +53,34 @@ class FakeSidecar:
         }
 
     def list_admin_devices(self, payload):
-        return {"workspace_id": payload["workspace_id"], "devices": []}
+        return {
+            "workspace_id": payload["workspace_id"],
+            "capability_catalog": [
+                "memory.feedback",
+                "memory.manage",
+                "memory.read_context",
+                "memory.search",
+            ],
+            "devices": [
+                {
+                    "device_id": "device-a",
+                    "device_name": "FN Hermes",
+                    "device_type": "nas",
+                    "device_status": "active",
+                    "device_auth_epoch": 3,
+                    "device_last_seen_at": "2026-07-19T01:00:00+00:00",
+                    "agent_installation_id": "hermes-fn",
+                    "agent_name": "Hermes on FN",
+                    "agent_type": "hermes",
+                    "agent_auth_epoch": 2,
+                    "binding_status": "bound",
+                    "binding_updated_at": "2026-07-19T00:55:00+00:00",
+                    "capabilities": ["memory.search", "memory.read_context"],
+                    "is_current_device": False,
+                    "is_current_agent": False,
+                }
+            ],
+        }
 
     def list_admin_audit(self, payload):
         return {"workspace_id": payload["workspace_id"], "entries": []}
@@ -80,6 +114,21 @@ class FakeSidecar:
 
     def rebuild_crystal(self, payload):
         return {"status": "queued", "workspace_id": payload["workspace_id"]}
+
+    def update_admin_binding(self, payload):
+        self.binding_payloads.append(payload)
+        return {"status": "updated", "capabilities": payload["capabilities"]}
+
+    def revoke_admin_agent(self, payload):
+        self.revoked_agent_payloads.append(payload)
+        return {
+            "status": "revoked",
+            "agent_installation_id": payload["target_agent_installation_id"],
+        }
+
+    def revoke_admin_device(self, payload):
+        self.revoked_device_payloads.append(payload)
+        return {"status": "revoked", "device_id": payload["target_device_id"]}
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -141,6 +190,14 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("部分管理信息暂时未加载", html)
         self.assertIn('aria-current="page"', html)
         self.assertIn('for="memory-query"', html)
+        self.assertIn('class="metric-button"', html)
+        self.assertIn('data-view-link="${escapeHTML(view)}"', html)
+        self.assertIn("function stateBadge", html)
+        self.assertIn("查看技术标识", html)
+        self.assertIn('data-device-action="save-binding"', html)
+        self.assertIn('id="activity-query"', html)
+        self.assertIn("来源设备与 Agent", html)
+        self.assertIn("max-width: none", html)
         self.assertNotIn("window.confirm", html)
         self.assertNotIn("launch-token", html)
         self.assertNotIn("session-token", html)
@@ -153,6 +210,11 @@ class AdminConsoleTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as context:
             urlopen(self.url + "/api/overview", timeout=2)  # noqa: S310
         self.assertEqual(context.exception.code, 401)
+
+        with self.assertRaises(HTTPError) as page_context:
+            urlopen(self.url + "/", timeout=2)  # noqa: S310
+        self.assertEqual(page_context.exception.code, 401)
+        self.assertIn("需要授权此浏览器", page_context.exception.read().decode("utf-8"))
 
     def test_read_only_pages_use_workspace_and_do_not_return_payloads(self):
         cookie = self._open_session()
@@ -224,6 +286,122 @@ class AdminConsoleTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_reverse_proxy_mount_scopes_cookie_and_api_requests(self):
+        session = LocalAdminSession(launch_token="mounted-launch", session_token="mounted-session")
+        server = create_admin_console_server(
+            workspace_id="workspace-a",
+            port=0,
+            sidecar_factory=lambda: self.sidecar,
+            session=session,
+            mount_path="/admin",
+            secure_cookie=True,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            opener = build_opener(NoRedirect)
+            with self.assertRaises(HTTPError) as context:
+                opener.open(Request(url + "/admin/?session=mounted-launch"), timeout=2)  # noqa: S310
+            self.assertEqual(context.exception.code, 303)
+            self.assertEqual(context.exception.headers["Location"], "/admin/")
+            cookie = context.exception.headers["Set-Cookie"]
+            self.assertIn("Path=/admin", cookie)
+            self.assertIn("Secure", cookie)
+            self.assertIn("Max-Age=43200", cookie)
+            session_cookie = cookie.split(";", 1)[0]
+
+            html = urlopen(Request(url + "/admin/", headers={"Cookie": session_cookie}), timeout=2).read().decode("utf-8")  # noqa: S310
+            self.assertIn('data-api-base="/admin"', html)
+            overview = self._json_for_url(url, "/admin/api/overview", session_cookie)
+            self.assertEqual(overview["workspace_id"], "workspace-a")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_network_listener_requires_explicit_opt_in(self):
+        with self.assertRaises(AdminConsoleError):
+            create_admin_console_server(workspace_id="workspace-a", host="0.0.0.0", port=0)
+
+        server = create_admin_console_server(
+            workspace_id="workspace-a",
+            host="0.0.0.0",
+            port=0,
+            allow_network=True,
+        )
+        server.server_close()
+
+    def test_persistent_signing_secret_keeps_cookie_valid_across_restart(self):
+        clock = [1_700_000_000.0]
+        with TemporaryDirectory() as directory:
+            key_path = Path(directory) / "session.key"
+            secret = _load_or_create_session_secret(str(key_path))
+            self.assertEqual(secret, _load_or_create_session_secret(str(key_path)))
+            first = LocalAdminSession(
+                launch_token="first-launch",
+                session_token=secret,
+                max_age_seconds=30 * 86_400,
+                now=lambda: clock[0],
+            )
+            cookie_value = first.consume_launch_token("first-launch")
+            self.assertIsNotNone(cookie_value)
+            restarted = LocalAdminSession(
+                launch_token="second-launch",
+                session_token=secret,
+                max_age_seconds=30 * 86_400,
+                now=lambda: clock[0],
+            )
+            self.assertTrue(restarted.authorized(f"memory_admin_session={cookie_value}"))
+            clock[0] += 31 * 86_400
+            self.assertFalse(restarted.authorized(f"memory_admin_session={cookie_value}"))
+
+    def test_device_management_forwards_scoped_confirmed_payloads(self):
+        cookie = self._open_session()
+        updated = self._json(
+            "/api/devices/binding",
+            cookie,
+            {
+                "target_agent_installation_id": "hermes-fn",
+                "expected_capabilities": ["memory.search", "memory.read_context"],
+                "capabilities": ["memory.search", "memory.read_context", "memory.feedback"],
+                "idempotency_key": "admin-ui:binding:1",
+                "confirmed_by_user": True,
+            },
+        )
+        revoked_agent = self._json(
+            "/api/devices/revoke-agent",
+            cookie,
+            {
+                "target_agent_installation_id": "hermes-fn",
+                "expected_auth_epoch": 2,
+                "idempotency_key": "admin-ui:agent:1",
+                "confirmed_by_user": True,
+            },
+        )
+        revoked_device = self._json(
+            "/api/devices/revoke-device",
+            cookie,
+            {
+                "target_device_id": "device-a",
+                "expected_auth_epoch": 3,
+                "idempotency_key": "admin-ui:device:1",
+                "confirmed_by_user": True,
+            },
+        )
+
+        self.assertEqual(updated["status"], "updated")
+        self.assertEqual(revoked_agent["status"], "revoked")
+        self.assertEqual(revoked_device["status"], "revoked")
+        self.assertEqual(self.sidecar.binding_payloads[0]["workspace_id"], "workspace-a")
+        self.assertTrue(self.sidecar.binding_payloads[0]["confirmed_by_user"])
+
+    @staticmethod
+    def _json_for_url(base_url, path, cookie):
+        request = Request(base_url + path, headers={"Cookie": cookie}, method="GET")
+        with urlopen(request, timeout=2) as response:  # noqa: S310
+            return json.loads(response.read().decode("utf-8"))
 
 
 if __name__ == "__main__":
