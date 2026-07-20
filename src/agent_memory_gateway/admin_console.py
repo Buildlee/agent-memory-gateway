@@ -902,6 +902,13 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     .source-cell {{ min-width: 220px; }}
     .source-summary {{ display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }}
 
+        .page-size-select {{
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 13px;
+      background: white;
+    }}
     .page-nav {{
       align-items: center;
       display: flex;
