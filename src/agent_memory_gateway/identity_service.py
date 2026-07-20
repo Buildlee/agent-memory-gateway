@@ -539,8 +539,8 @@ class PostgresIdentityService:
                     """
                     INSERT INTO devices (
                       device_id, tenant_id, user_id, display_name, device_type,
-                      public_key, status, paired_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, 'active', now())
+                      public_key, status, paired_at, last_seen_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, 'active', now(), now())
                     """,
                     (device_id, code[1], code[2], device_name, device_type, public_key),
                 )
@@ -694,6 +694,11 @@ class PostgresIdentityService:
                         agent_installation_id=agent_id,
                         target_ref=credential_id,
                     )
+                    if not replayed:
+                        connection.execute(
+                            "UPDATE devices SET last_seen_at = now() WHERE device_id = %s",
+                            (row[0],),
+                        )
                 if reuse_detected:
                     _audit(
                         connection,

@@ -1040,18 +1040,29 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
         </section>
         <section id="memories" class="view">
           <div class="panel">
-            <div class="panel-head"><div><div class="panel-title">记忆检索</div><div class="subtle">只查询当前工作区内、当前 Agent 已获授权的记忆。</div></div></div>
-            <div class="panel-body">
+            <div class="panel-head"><div><div class="panel-title">共享记忆库</div><div class="subtle">当前工作区内所有已确认的记忆。输入关键词可搜索，留空则浏览全部。</div></div></div>
+            <div class="section-tools">
               <form id="memory-search-form" class="memory-search">
                 <label class="sr-only" for="memory-query">记忆检索关键词</label>
-                <input id="memory-query" type="search" minlength="2" maxlength="256" required placeholder="输入关键词，例如：发布流程">
-                <button class="primary" type="submit">搜索记忆</button>
+                <input id="memory-query" type="search" minlength="2" maxlength="256" placeholder="搜索记忆（留空则浏览全部）">
+                <button class="primary" type="submit">搜索</button>
               </form>
+              <label class="sr-only" for="memory-page-size">每页条数</label>
+              <select id="memory-page-size" class="page-size-select">
+                <option value="10">10 条/页</option>
+                <option value="20" selected>20 条/页</option>
+                <option value="50">50 条/页</option>
+              </select>
+              <span id="memory-result-count" class="badge toolbar-count">等待加载</span>
             </div>
           </div>
           <div class="panel">
-            <div class="panel-head"><div class="panel-title">检索结果</div><span id="memory-result-count" class="badge">等待查询</span></div>
-            <div class="panel-body"><div id="memory-results" class="empty">输入至少两个字开始查询。搜索不会修改记忆或同步队列。</div></div>
+            <div class="panel-body"><div id="memory-results" class="empty">打开记忆页自动加载。搜索不会修改记忆或同步队列。</div></div>
+            <div class="section-tools" id="memory-pagination">
+              <button id="memory-prev" disabled>上一页</button>
+              <span id="memory-page-info" class="badge">第 1 页</span>
+              <button id="memory-next" disabled>下一页</button>
+            </div>
           </div>
         </section>
         <section id="graph" class="view">
@@ -1662,26 +1673,89 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       setConnection(message[0], "danger");
     }}
 
-    async function searchMemories() {{
-      const input = document.getElementById("memory-query");
-      const query = input.value.trim();
-      if (query.length < 2) {{
-        input.focus();
-        return;
-      }}
+    function loadAllMemories() {{
       const root = document.getElementById("memory-results");
       const badge = document.getElementById("memory-result-count");
       root.className = "empty";
+      root.textContent = "正在加载共享记忆…";
+      badge.textContent = "加载中";
+      state.memoryPage = state.memoryPage || 1;
+      api("/api/memories").then(payload => {{
+        state.allMemories = payload.memories || [];
+        state.memoryQuery = null;
+        renderMemoryPage();
+      }}).catch(error => {{
+        root.className = "empty";
+        root.textContent = "记忆加载失败：" + (error.message || "未知错误");
+        badge.textContent = "暂不可用";
+      }});
+    }}
+
+    function renderMemoryPage() {{
+      const memories = state.allMemories || [];
+      const query = state.memoryQuery;
+      const isBrowse = !query;
+      const pageSize = parseInt(document.getElementById("memory-page-size").value) || 20;
+      state.memoryPage = state.memoryPage || 1;
+      const total = memories.length;
+      const totalPages = Math.max(1, Math.ceil(total / pageSize));
+      if (state.memoryPage > totalPages) state.memoryPage = totalPages;
+      const start = (state.memoryPage - 1) * pageSize;
+      const page = memories.slice(start, start + pageSize);
+      const badge = document.getElementById("memory-result-count");
+      badge.textContent = isBrowse ? `${{total}} 条共享记忆` : `${{total}} 条结果`;
+      badge.className = "badge toolbar-count";
+      if (!page.length) {{
+        document.getElementById("memory-results").className = "empty";
+        document.getElementById("memory-results").textContent = isBrowse
+          ? "当前工作区还没有共享记忆。记忆经过写入→审核确认后才会出现在这里。"
+          : `没有找到与"${{query}}"匹配的已授权记忆。`;
+        document.getElementById("memory-pagination").style.display = "none";
+        return;
+      }}
+      document.getElementById("memory-results").className = "memory-list";
+      document.getElementById("memory-results").innerHTML = page.map(item => `
+        <article class="memory-row">
+          <div>
+            <div class="row-title">${{escapeHTML(item.kind || item.memory_type || "记忆")}} <span class="badge">${{escapeHTML(item.lifecycle_status || item.status || "active")}}</span></div>
+            <div class="memory-content">${{escapeHTML(item.content || "")}}</div>
+            <div class="memory-meta">
+              <span>${{escapeHTML(item.scope || "-")}}</span><span>·</span>
+              <span>来源：${{escapeHTML((item.source_device_id || item.source_agent_id || "").replace(/-windows-.*|-fn.*|central-.*/,"").trim() || "记忆中枢")}}</span><span>·</span>
+              <span>${{code(item.backend_ref || item.memory_id)}}</span>
+              ${{item.superseded_by ? `<span>·</span><span class="badge">已被 ${{code(item.superseded_by)}} 取代</span>` : ""}}
+            </div>
+          </div>
+          <div class="row-time">置信度<br>${{escapeHTML(item.confidence ?? "-")}}</div>
+        </article>`).join("");
+      document.getElementById("memory-page-info").textContent = `第 ${{state.memoryPage}} / ${{totalPages}} 页`;
+      document.getElementById("memory-prev").disabled = state.memoryPage <= 1;
+      document.getElementById("memory-next").disabled = state.memoryPage >= totalPages;
+      document.getElementById("memory-pagination").style.display = "flex";
+    }}
+
+    function searchMemories() {{
+      const input = document.getElementById("memory-query");
+      const query = input.value.trim();
+      const root = document.getElementById("memory-results");
+      const badge = document.getElementById("memory-result-count");
+      if (!query || query.length < 2) {{
+        loadAllMemories();
+        return;
+      }}
+      root.className = "empty";
       root.textContent = "正在检索已授权记忆…";
       badge.textContent = "检索中";
-      try {{
-        renderMemories(await api("/api/memories?q=" + encodeURIComponent(query)), query);
-      }} catch (error) {{
+      api("/api/memories?q=" + encodeURIComponent(query)).then(payload => {{
+        state.allMemories = payload.memories || [];
+        state.memoryQuery = query;
+        state.memoryPage = 1;
+        renderMemoryPage();
+      }}).catch(error => {{
         root.className = "empty";
-        root.textContent = errorCopy(error.message)[1];
+        root.textContent = error.message || "检索失败";
         badge.textContent = "暂不可用";
-        toast(error.message);
-      }}
+      }});
     }}
 
     async function refreshAll() {{
@@ -1983,6 +2057,9 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     document.getElementById("activity-page-size").addEventListener("change", () => {{ state.activityPage = 1; renderAuditTable(); }});
     document.getElementById("activity-prev").addEventListener("click", () => {{ if (state.activityPage > 1) {{ state.activityPage--; renderAuditTable(); }} }});
     document.getElementById("activity-next").addEventListener("click", () => {{ state.activityPage++; renderAuditTable(); }});
+    document.getElementById("memory-page-size").addEventListener("change", () => {{ state.memoryPage = 1; renderMemoryPage(); }});
+    document.getElementById("memory-prev").addEventListener("click", () => {{ if (state.memoryPage > 1) {{ state.memoryPage--; renderMemoryPage(); }} }});
+    document.getElementById("memory-next").addEventListener("click", () => {{ state.memoryPage++; renderMemoryPage(); }});
     refreshAll();
   </script>
 </body>
