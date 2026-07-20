@@ -841,6 +841,8 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     tbody tr {{ transition: background-color 140ms var(--ease-standard); }}
     tbody tr:hover {{ background: oklch(0.975 0.008 264); }}
     .cell-title {{ font-weight: 650; line-height: 1.4; }}
+    .online-dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: oklch(0.55 0.15 150); margin-right: 8px; vertical-align: middle; }}
+    .online-dot.off {{ background: oklch(0.7 0 0); }}
     .cell-copy, .cell-meta {{ color: var(--muted); font-size: 12px; line-height: 1.45; margin-top: 4px; }}
     .cell-stack {{ display: grid; gap: 4px; min-width: 150px; }}
     .capability-list {{ display: flex; flex-wrap: wrap; gap: 5px; max-width: 31rem; }}
@@ -1409,6 +1411,11 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       }}
     }}
 
+    function deviceOnline(lastSeenAt) {{
+      if (!lastSeenAt) return false;
+      return (Date.now() - new Date(lastSeenAt).getTime()) < 5 * 60 * 1000;
+    }}
+
     function renderDevices(payload) {{
       state.devices = payload.devices || [];
       state.capabilityCatalog = payload.capability_catalog || [];
@@ -1430,6 +1437,10 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
         }}).join("");
         const lastSeen = formatTime(item.device_last_seen_at || item.updated_at || item.created_at);
         const bindingUpdated = formatTime(item.binding_updated_at);
+        const online = deviceOnline(item.device_last_seen_at);
+        const onlineDot = online
+          ? `<span class="online-dot" title="5 分钟内活跃"></span>`
+          : `<span class="online-dot off" title="超过 5 分钟未出现"></span>`;
         const identifiers = [
           item.device_id ? `设备：${{code(item.device_id)}}` : "",
           item.agent_installation_id ? `Agent：${{code(item.agent_installation_id)}}` : "",
@@ -1438,7 +1449,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
         ].filter(Boolean).join("<br>");
         return `
           <tr data-device-row="${{index}}">
-            <td><div class="cell-title">${{escapeHTML(deviceName)}}</div><div class="cell-meta"><span class="badge">${{escapeHTML(item.device_type || "device")}}</span></div><details class="record-details"><summary>查看技术标识</summary>${{identifiers}}</details></td>
+            <td><div class="cell-title">${{onlineDot}}${{escapeHTML(deviceName)}}</div><div class="cell-meta"><span class="badge">${{escapeHTML(item.device_type || "device")}}</span></div><details class="record-details"><summary>查看技术标识</summary>${{identifiers}}</details></td>
             <td><div class="cell-title">${{escapeHTML(agentName)}}</div><div class="cell-meta"><span class="badge">${{escapeHTML(item.agent_type || "agent")}}</span></div></td>
             <td><div class="cell-stack"><div><span class="label">设备</span> ${{stateBadge(deviceStatus)}}</div><div><span class="label">Agent</span> ${{stateBadge(agentStatus)}}</div><div><span class="label">绑定</span> ${{stateBadge(bindingStatus)}}</div></div></td>
             <td><div class="capability-list">${{capabilities}}</div></td>
