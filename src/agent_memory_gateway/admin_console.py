@@ -1266,8 +1266,8 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       document.getElementById("health-panel").innerHTML = `
         <table>
           <tbody>
-            <tr><th>检查时间</th><td>${{escapeHTML(payload.checked_at || "-")}}</td></tr>
-            <tr><th>Worker 心跳</th><td>${{escapeHTML(payload.worker_heartbeat_at || "-")}}</td></tr>
+            <tr><th>检查时间</th><td>${{formatTime(payload.checked_at)}}</td></tr>
+            <tr><th>Worker 心跳</th><td>${{formatTime(payload.worker_heartbeat_at)}}</td></tr>
             <tr><th>心跳延迟</th><td>${{escapeHTML(payload.worker_heartbeat_age_seconds ?? "-")}} 秒</td></tr>
             <tr><th>问题</th><td>${{problems}}</td></tr>
           </tbody>
@@ -1332,6 +1332,18 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       return `<span class="badge ${{tone}}">${{escapeHTML(value || "未知")}}</span>`;
     }}
 
+    function formatTime(raw) {{
+      if (!raw) return "暂无记录";
+      try {{
+        const d = new Date(raw);
+        if (isNaN(d.getTime())) return String(raw);
+        const pad = (n) => String(n).padStart(2, "0");
+        return `${{d.getFullYear()}}-${{pad(d.getMonth() + 1)}}-${{pad(d.getDate())}} ${{pad(d.getHours())}}:${{pad(d.getMinutes())}}:${{pad(d.getSeconds())}}`;
+      }} catch {{
+        return String(raw);
+      }}
+    }}
+
     function renderDevices(payload) {{
       state.devices = payload.devices || [];
       state.capabilityCatalog = payload.capability_catalog || [];
@@ -1351,8 +1363,8 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
           const note = lockManage ? "当前管理权限" : !knownCapability ? "扩展能力（只读）" : "";
           return `<label class="permission-option"><input type="checkbox" data-capability-index="${{index}}" value="${{escapeHTML(capability)}}" ${{checked ? "checked" : ""}} ${{locked ? "disabled" : ""}}> <code>${{escapeHTML(capability)}}</code>${{note ? `<span class="badge">${{note}}</span>` : ""}}</label>`;
         }}).join("");
-        const lastSeen = item.device_last_seen_at || item.updated_at || item.created_at || "暂无记录";
-        const bindingUpdated = item.binding_updated_at || "暂无记录";
+        const lastSeen = formatTime(item.device_last_seen_at || item.updated_at || item.created_at);
+        const bindingUpdated = formatTime(item.binding_updated_at);
         const identifiers = [
           item.device_id ? `设备：${{code(item.device_id)}}` : "",
           item.agent_installation_id ? `Agent：${{code(item.agent_installation_id)}}` : "",
