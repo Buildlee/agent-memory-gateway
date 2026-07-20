@@ -27,6 +27,21 @@ services:
       export MEMORY_OUTBOX_KEY_VERSION="$$(awk -F= '$$1 == "MEMORY_OUTBOX_KEY_VERSION" { print $$2 }' /state/sidecar.env)";
       test -n "$$MEMORY_OUTBOX_KEY";
       test -n "$$MEMORY_OUTBOX_KEY_VERSION";
+      # 等待 hermes-webui 就绪（共享网络栈，本机访问）
+      echo "等待 hermes-webui 就绪…";
+      attempt=0;
+      while [ $$attempt -lt 30 ]; do
+        if python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:6060', timeout=2)" 2>/dev/null; then
+          echo "hermes-webui 已就绪";
+          break;
+        fi;
+        attempt=$$((attempt + 1));
+        sleep 2;
+      done;
+      if [ $$attempt -ge 30 ]; then
+        echo "hermes-webui 在 60 秒内未就绪" >&2;
+        exit 69;
+      fi;
       python -m agent_memory_gateway.sidecar_daemon --host 127.0.0.1 --port 8766 &
       exec python -m agent_memory_gateway.sidecar_mcp --transport streamable-http --host 127.0.0.1 --port 8767
     environment:
@@ -42,3 +57,9 @@ services:
         source: ${HERMES_MEMORY_STATE_DIR:?必须指定飞牛 Hermes Sidecar 状态目录}
         target: /state
         read_only: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; [socket.create_connection(('127.0.0.1', port), 2).close() for port in (8766, 8767)]"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
