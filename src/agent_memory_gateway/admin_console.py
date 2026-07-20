@@ -1110,6 +1110,10 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       "review.revert": "撤销审核操作",
       "event.accepted": "接收记忆事件",
       "event.applied": "应用记忆事件",
+      "event.rejected_sensitive": "拒绝敏感内容",
+      "auth.workspace.bind": "工作区绑定",
+      "auth.pairing_code.create": "创建配对码",
+      "capability_granted": "授予能力",
       "crystal.rebuilt": "重建结晶记忆"
     }};
 
@@ -1340,6 +1344,9 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       "danger": "异常",
       "paired": "已配对",
       "queued": "已排队",
+      "rotated": "已轮换",
+      "created": "已创建",
+      "paired": "已配对",
     }};
     function resultLabel(code) {{
       return resultLabels[code] || String(code || "-");
@@ -1439,6 +1446,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       const query = document.getElementById("activity-query").value.trim().toLowerCase();
       const tone = document.getElementById("activity-result").value;
       const filtered = state.audit.filter(item => {{
+        if (item.action === "auth.token.refresh") return false;
         const haystack = [
           item.action,
           auditActionNames[item.action],
@@ -1477,7 +1485,8 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     function renderAudit(payload) {{
       state.audit = payload.entries || [];
       renderAuditTable();
-      const preview = state.audit.slice(0, 5).map(item => `
+      const nonRefresh = state.audit.filter(item => item.action !== "auth.token.refresh");
+      const preview = nonRefresh.slice(0, 5).map(item => `
         <div class="activity-row">
           <div><div class="row-title">${{escapeHTML(auditActionNames[item.action] || item.action || "管理操作")}}</div><div class="row-copy">${{escapeHTML(item.source_device_name || item.device_id || "系统任务")}} · ${{escapeHTML(item.source_agent_name || item.agent_installation_id || item.actor_id || "-")}}</div></div>
           <div class="row-time">${{formatTime(item.created_at)}}</div>
