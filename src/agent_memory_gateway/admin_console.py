@@ -1083,7 +1083,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
         </section>
         <section id="activity" class="view">
           <div class="panel">
-            <div class="panel-head"><div><div class="panel-title">近期活动</div><div class="subtle">按设备、Agent 或操作筛选近期记录；不显示记忆正文或敏感详情。</div></div></div>
+            <div class="panel-head"><div><div class="panel-title">近期活动</div><div class="subtle">按设备、Agent 或操作筛选近期记录；不显示记忆正文或敏感详情。点击目标引用可查看关联记忆。</div></div></div>
             <div class="section-tools">
               <label class="sr-only" for="activity-query">搜索活动</label>
               <input id="activity-query" type="search" placeholder="搜索设备、Agent、操作或目标">
@@ -1094,9 +1094,20 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
                 <option value="warn">等待或需关注</option>
                 <option value="danger">拒绝、撤销或错误</option>
               </select>
+              <label class="sr-only" for="activity-page-size">每页条数</label>
+              <select id="activity-page-size" class="page-size-select">
+                <option value="10">10 条/页</option>
+                <option value="20" selected>20 条/页</option>
+                <option value="50">50 条/页</option>
+              </select>
               <span id="activity-count" class="badge toolbar-count">0 条记录</span>
             </div>
             <div class="panel-body" id="audit-list"></div>
+            <div class="section-tools" id="activity-pagination">
+              <button id="activity-prev" disabled>上一页</button>
+              <span id="activity-page-info" class="badge">第 1 页</span>
+              <button id="activity-next" disabled>下一页</button>
+            </div>
           </div>
         </section>
       </div>
@@ -1493,6 +1504,8 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     function renderAuditTable() {{
       const query = document.getElementById("activity-query").value.trim().toLowerCase();
       const tone = document.getElementById("activity-result").value;
+      const pageSize = parseInt(document.getElementById("activity-page-size").value) || 20;
+      state.activityPage = state.activityPage || 1;
       const filtered = state.audit.filter(item => {{
         if (item.action === "auth.token.refresh") return false;
         const haystack = [
@@ -1509,17 +1522,23 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
         ].filter(Boolean).join(" ").toLowerCase();
         return (!query || haystack.includes(query)) && (!tone || resultTone(item.result_code) === tone);
       }});
-      const rows = filtered.map(item => {{
+      const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+      if (state.activityPage > totalPages) state.activityPage = totalPages;
+      const start = (state.activityPage - 1) * pageSize;
+      const page = filtered.slice(start, start + pageSize);
+      const rows = page.map((item, idx) => {{
         const deviceName = item.source_device_name || item.device_id || "未识别设备";
         const agentName = item.source_agent_name || item.agent_installation_id || item.actor_id || "系统任务";
         const deviceMeta = [item.source_device_type, item.source_device_status].filter(Boolean).join(" · ");
         const agentMeta = [item.source_agent_type, item.source_agent_status].filter(Boolean).join(" · ");
+        const hasTarget = item.target_ref && item.target_ref.startsWith("gbrain:fact:");
+        const clickHandler = hasTarget ? ` onclick="viewMemoryDetail('${{escapeHTML(item.target_ref)}}')" style="cursor:pointer;color:var(--accent)"` : "";
         return `
         <tr>
           <td><div class="cell-title">${{escapeHTML(auditActionNames[item.action] || item.action || "管理操作")}}</div><div class="cell-meta">执行者：${{escapeHTML(item.actor_id || item.actor_type || "-")}}</div><details class="record-details"><summary>查看操作代码</summary>${{code(item.action)}}</details></td>
           <td>${{stateBadge(resultLabel(item.result_code))}}</td>
           <td class="source-cell"><div class="source-summary"><span class="cell-title">${{escapeHTML(deviceName)}}</span>${{deviceMeta ? `<span class="badge">${{escapeHTML(deviceMeta)}}</span>` : ""}}</div><div class="cell-copy">${{escapeHTML(agentName)}}</div>${{agentMeta ? `<div class="cell-meta">${{escapeHTML(agentMeta)}}</div>` : ""}}<details class="record-details"><summary>查看来源标识</summary>${{item.device_id ? `设备：${{code(item.device_id)}}` : ""}}${{item.agent_installation_id ? `<br>Agent：${{code(item.agent_installation_id)}}` : ""}}</details></td>
-          <td><div class="cell-copy">${{escapeHTML(item.target_ref || "未提供目标引用")}}</div></td>
+          <td><div class="cell-copy"${{clickHandler}}>${{hasTarget ? "📋 " : ""}}${{escapeHTML(item.target_ref || "未提供目标引用")}}</div></td>
           <td><div class="cell-copy">${{formatTime(item.created_at)}}</div><div class="cell-meta">${{code(item.trace_id)}}</div></td>
         </tr>
       `;
@@ -1528,6 +1547,30 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
         ? `<table><thead><tr><th>操作</th><th>结果</th><th>来源设备与 Agent</th><th>目标</th><th>时间</th></tr></thead><tbody>${{rows}}</tbody></table>`
         : `<div class="empty">没有符合当前筛选条件的活动记录。</div>`;
       document.getElementById("activity-count").textContent = `${{filtered.length}} 条记录`;
+      document.getElementById("activity-page-info").textContent = `第 ${{state.activityPage}} / ${{totalPages}} 页`;
+      document.getElementById("activity-prev").disabled = state.activityPage <= 1;
+      document.getElementById("activity-next").disabled = state.activityPage >= totalPages;
+    }}
+
+    function viewMemoryDetail(backendRef) {{
+      if (!backendRef) return;
+      const root = document.getElementById("memory-results");
+      root.className = "empty";
+      root.textContent = "正在加载记忆详情…";
+      showView("memories");
+      api("/api/memories?q=" + encodeURIComponent(backendRef)).then(payload => {{
+        const memories = payload.memories || [];
+        if (memories.length) {{
+          renderMemories(payload, backendRef);
+        }} else {{
+          root.className = "empty";
+          root.textContent = "未找到关联记忆 " + backendRef + "。该引用可能已被归档或尚未通过审核。";
+          document.getElementById("memory-result-count").textContent = "0 条结果";
+        }}
+      }}).catch(err => {{
+        root.className = "empty";
+        root.textContent = "加载失败：" + (err.message || "未知错误");
+      }});
     }}
 
     function renderAudit(payload) {{
@@ -1937,6 +1980,9 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     }});
     document.getElementById("activity-query").addEventListener("input", renderAuditTable);
     document.getElementById("activity-result").addEventListener("change", renderAuditTable);
+    document.getElementById("activity-page-size").addEventListener("change", () => {{ state.activityPage = 1; renderAuditTable(); }});
+    document.getElementById("activity-prev").addEventListener("click", () => {{ if (state.activityPage > 1) {{ state.activityPage--; renderAuditTable(); }} }});
+    document.getElementById("activity-next").addEventListener("click", () => {{ state.activityPage++; renderAuditTable(); }});
     refreshAll();
   </script>
 </body>
