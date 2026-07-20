@@ -843,7 +843,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     .cell-title {{ font-weight: 650; line-height: 1.4; }}
     .cell-copy, .cell-meta {{ color: var(--muted); font-size: 12px; line-height: 1.45; margin-top: 4px; }}
     .cell-stack {{ display: grid; gap: 4px; min-width: 150px; }}
-    .capability-list {{ gap: 5px; max-width: 31rem; }}
+    .capability-list {{ display: flex; flex-wrap: wrap; gap: 5px; max-width: 31rem; }}
     .capability-list .badge {{ max-width: 100%; overflow-wrap: anywhere; white-space: normal; }}
     .record-details {{ color: var(--muted); font-size: 12px; margin-top: 7px; }}
     .record-details summary {{ cursor: pointer; width: fit-content; }}
@@ -859,7 +859,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       background: oklch(0.985 0.002 260);
     }}
     .section-tools input[type="search"] {{ width: min(360px, 100%); }}
-    .device-manage {{ margin-top: 10px; }}
+    .device-manage {{ position: relative; margin-top: 10px; }}
     .device-manage summary {{
       align-items: center;
       cursor: pointer;
@@ -878,20 +878,25 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     .device-manage[open] summary {{ border-color: oklch(0.72 0.03 260); }}
     .device-editor {{
       display: grid;
-      gap: 12px;
-      min-width: min(520px, 72vw);
-      margin-top: 10px;
-      padding: 14px;
+      gap: 14px;
+      position: absolute;
+      right: 0;
+      top: calc(100% + 6px);
+      width: min(560px, 88vw);
+      margin-top: 12px;
+      padding: 18px 20px;
       border: 1px solid var(--line);
-      border-radius: 9px;
+      border-radius: 10px;
       background: var(--surface);
+      box-shadow: 0 8px 24px oklch(0 0 0 / 0.08);
+      z-index: 200;
     }}
     .permission-grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 7px 14px;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 8px 16px;
     }}
-    .permission-option {{ align-items: center; display: flex; gap: 8px; min-height: 30px; }}
+    .permission-option {{ align-items: center; display: flex; gap: 10px; min-height: 34px; padding: 4px 0; }}
     .danger-zone {{ border-top: 1px solid var(--line); padding-top: 12px; }}
     .danger-zone .row-copy {{ max-width: 72ch; }}
     .source-cell {{ min-width: 220px; }}
@@ -917,7 +922,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       select {{ min-height: 44px; width: 100%; }}
       .section-tools {{ align-items: stretch; flex-direction: column; }}
       .toolbar-count {{ margin-left: 0; width: fit-content; }}
-      .device-editor {{ min-width: min(520px, calc(100vw - 72px)); }}
+      .device-editor {{ width: min(560px, calc(100vw - 48px)); right: auto; left: 0; }}
       th, td {{ padding: 10px 7px; }}
       .toast {{
         left: 16px;
