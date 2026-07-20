@@ -1324,6 +1324,27 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       }}).join("");
     }}
 
+    const resultLabels = {{
+      "confirmed": "已确认",
+      "confirmed_edit": "已确认编辑", 
+      "confirmed_superseding": "已取代",
+      "CANDIDATE_CREATED": "候选已创建",
+      "PENDING": "等待中",
+      "APPLIED": "已应用",
+      "REJECTED": "已拒绝",
+      "ARCHIVED": "已归档",
+      "retained": "已保留双方",
+      "reverted": "已撤销",
+      "ok": "正常",
+      "warn": "需关注",
+      "danger": "异常",
+      "paired": "已配对",
+      "queued": "已排队",
+    }};
+    function resultLabel(code) {{
+      return resultLabels[code] || String(code || "-");
+    }}
+
     function stateBadge(value) {{
       const normalized = String(value || "unknown").toLowerCase();
       const tone = ["active", "online", "bound", "ready", "healthy", "success", "confirmed", "applied", "accepted", "completed"].includes(normalized)
@@ -1440,15 +1461,15 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
         return `
         <tr>
           <td><div class="cell-title">${{escapeHTML(auditActionNames[item.action] || item.action || "管理操作")}}</div><div class="cell-meta">执行者：${{escapeHTML(item.actor_id || item.actor_type || "-")}}</div><details class="record-details"><summary>查看操作代码</summary>${{code(item.action)}}</details></td>
-          <td>${{stateBadge(item.result_code || "-")}}</td>
+          <td>${{stateBadge(resultLabel(item.result_code))}}</td>
           <td class="source-cell"><div class="source-summary"><span class="cell-title">${{escapeHTML(deviceName)}}</span>${{deviceMeta ? `<span class="badge">${{escapeHTML(deviceMeta)}}</span>` : ""}}</div><div class="cell-copy">${{escapeHTML(agentName)}}</div>${{agentMeta ? `<div class="cell-meta">${{escapeHTML(agentMeta)}}</div>` : ""}}<details class="record-details"><summary>查看来源标识</summary>${{item.device_id ? `设备：${{code(item.device_id)}}` : ""}}${{item.agent_installation_id ? `<br>Agent：${{code(item.agent_installation_id)}}` : ""}}</details></td>
           <td><div class="cell-copy">${{escapeHTML(item.target_ref || "未提供目标引用")}}</div></td>
-          <td><div class="cell-copy">${{escapeHTML(item.created_at || "-")}}</div><div class="cell-meta">${{code(item.trace_id)}}</div></td>
+          <td><div class="cell-copy">${{formatTime(item.created_at)}}</div><div class="cell-meta">${{code(item.trace_id)}}</div></td>
         </tr>
       `;
       }}).join("");
       document.getElementById("audit-list").innerHTML = rows
-        ? `<table><thead><tr><th>操作</th><th>结果</th><th>来源设备与 Agent</th><th>目标</th><th>时间与追踪</th></tr></thead><tbody>${{rows}}</tbody></table>`
+        ? `<table><thead><tr><th>操作</th><th>结果</th><th>来源设备与 Agent</th><th>目标</th><th>时间</th></tr></thead><tbody>${{rows}}</tbody></table>`
         : `<div class="empty">没有符合当前筛选条件的活动记录。</div>`;
       document.getElementById("activity-count").textContent = `${{filtered.length}} 条记录`;
     }}
@@ -1459,7 +1480,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       const preview = state.audit.slice(0, 5).map(item => `
         <div class="activity-row">
           <div><div class="row-title">${{escapeHTML(auditActionNames[item.action] || item.action || "管理操作")}}</div><div class="row-copy">${{escapeHTML(item.source_device_name || item.device_id || "系统任务")}} · ${{escapeHTML(item.source_agent_name || item.agent_installation_id || item.actor_id || "-")}}</div></div>
-          <div class="row-time">${{escapeHTML(item.created_at || "-")}}</div>
+          <div class="row-time">${{formatTime(item.created_at)}}</div>
         </div>`).join("");
       document.getElementById("overview-audit-list").innerHTML = preview || `<div class="empty">还没有可展示的近期活动。</div>`;
     }}
@@ -1468,7 +1489,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       const rows = (payload.dead_letters || []).map(item => `
         <tr>
           <td><div class="cell-title">${{escapeHTML(item.error_code || "未分类错误")}}</div><div class="cell-meta">${{escapeHTML(item.error_class || "-")}}</div></td>
-          <td><div class="cell-copy">${{escapeHTML(item.created_at || "-")}}</div></td>
+          <td><div class="cell-copy">${{formatTime(item.created_at)}}</div></td>
           <td><div class="cell-copy">事件：${{code(item.event_id)}}</div><div class="cell-meta">死信：${{code(item.dead_letter_id)}}</div></td>
         </tr>
       `).join("");
