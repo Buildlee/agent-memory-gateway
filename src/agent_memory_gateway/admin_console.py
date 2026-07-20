@@ -1443,7 +1443,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
           <td>${{stateBadge(item.result_code || "-")}}</td>
           <td class="source-cell"><div class="source-summary"><span class="cell-title">${{escapeHTML(deviceName)}}</span>${{deviceMeta ? `<span class="badge">${{escapeHTML(deviceMeta)}}</span>` : ""}}</div><div class="cell-copy">${{escapeHTML(agentName)}}</div>${{agentMeta ? `<div class="cell-meta">${{escapeHTML(agentMeta)}}</div>` : ""}}<details class="record-details"><summary>查看来源标识</summary>${{item.device_id ? `设备：${{code(item.device_id)}}` : ""}}${{item.agent_installation_id ? `<br>Agent：${{code(item.agent_installation_id)}}` : ""}}</details></td>
           <td><div class="cell-copy">${{escapeHTML(item.target_ref || "未提供目标引用")}}</div></td>
-          <td><div class="cell-copy">${{escapeHTML(item.created_at || "-")}}</div><div class="cell-meta">${{code(item.trace_id)}}</div></td>
+          <td><div class="cell-copy">${{formatTime(item.created_at)}}</div><div class="cell-meta">${{code(item.trace_id)}}</div></td>
         </tr>
       `;
       }}).join("");
@@ -1459,7 +1459,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       const preview = state.audit.slice(0, 5).map(item => `
         <div class="activity-row">
           <div><div class="row-title">${{escapeHTML(auditActionNames[item.action] || item.action || "管理操作")}}</div><div class="row-copy">${{escapeHTML(item.source_device_name || item.device_id || "系统任务")}} · ${{escapeHTML(item.source_agent_name || item.agent_installation_id || item.actor_id || "-")}}</div></div>
-          <div class="row-time">${{escapeHTML(item.created_at || "-")}}</div>
+          <div class="row-time">${{formatTime(item.created_at)}}</div>
         </div>`).join("");
       document.getElementById("overview-audit-list").innerHTML = preview || `<div class="empty">还没有可展示的近期活动。</div>`;
     }}
@@ -1468,7 +1468,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       const rows = (payload.dead_letters || []).map(item => `
         <tr>
           <td><div class="cell-title">${{escapeHTML(item.error_code || "未分类错误")}}</div><div class="cell-meta">${{escapeHTML(item.error_class || "-")}}</div></td>
-          <td><div class="cell-copy">${{escapeHTML(item.created_at || "-")}}</div></td>
+          <td><div class="cell-copy">${{formatTime(item.created_at)}}</div></td>
           <td><div class="cell-copy">事件：${{code(item.event_id)}}</div><div class="cell-meta">死信：${{code(item.dead_letter_id)}}</div></td>
         </tr>
       `).join("");
