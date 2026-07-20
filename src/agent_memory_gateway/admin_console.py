@@ -901,6 +901,28 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     .danger-zone .row-copy {{ max-width: 72ch; }}
     .source-cell {{ min-width: 220px; }}
     .source-summary {{ display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }}
+
+    .page-nav {{
+      align-items: center;
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      padding: 14px 0 4px;
+      font-size: 13px;
+      color: var(--muted);
+    }}
+    .page-nav button {{
+      min-width: 80px;
+      padding: 5px 14px;
+    }}
+    .page-nav button:disabled {{
+      opacity: 0.35;
+      cursor: default;
+    }}
+    .page-nav span {{
+      min-width: 100px;
+      text-align: center;
+    }}
     .toolbar-count {{ margin-left: auto; }}
     @media (max-width: 860px) {{
       .shell {{ grid-template-columns: 1fr; }}
@@ -1459,7 +1481,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
           item.source_device_type,
           item.source_agent_type
         ].filter(Boolean).join(" ").toLowerCase();
-        return (!query || haystack.includes(query)) && (!tone || auditTone(item.result_code) === tone);
+        return (!query || haystack.includes(query)) && (!tone || resultTone(item.result_code) === tone);
       }});
       const rows = filtered.map(item => {{
         const deviceName = item.source_device_name || item.device_id || "未识别设备";
