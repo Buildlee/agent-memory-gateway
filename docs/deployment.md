@@ -89,7 +89,15 @@ memory-gateway gbrain-migrate --gbrain-dsn $env:MEMORY_GBRAIN_MIGRATOR_DSN --ver
 
 ## 容器启动 Gateway、Worker 和 HTTPS 入口
 
-仓库提供一份 Compose 配置。运行前把示例环境文件复制到受保护位置，明确传入路径：
+仓库提供三份 Compose 文件，分别对应不同服务：
+
+| 文件 | 用途 |
+|---|---|
+| `deploy/fn/compose.yaml` | **核心服务**：Gateway + Worker + Caddy HTTPS 代理 |
+| `deploy/fn/admin-console.compose.yaml` | **管理控制台**：独立管理 Sidecar + Web 管理界面（叠加到核心上） |
+| `deploy/fn/memory-mcp-bridge.compose.yaml` | **容器 Bridge**：让 Docker 内的 Agent 通过同网络命名空间接入共享记忆（独立部署） |
+
+### 启动核心服务
 
 ```powershell
 docker compose --env-file "<受保护环境文件路径>" -f deploy/fn/compose.yaml config
@@ -97,6 +105,18 @@ docker compose --env-file "<受保护环境文件路径>" -f deploy/fn/compose.y
 ```
 
 先执行 `config`，确认密钥、数据库端口和卷映射没有暴露到公共网络。Gateway 和 Worker 使用同一版本镜像，只由代理暴露 HTTPS 入口；数据库不映射到宿主机公开端口。
+
+### 叠加管理控制台
+
+管理控制台依赖核心服务已运行。按[中枢管理页](central-admin.md)配置后，在中枢环境上使用双 Compose 文件启动：
+
+```powershell
+docker compose --env-file ".env" -f deploy/fn/compose.yaml -f deploy/fn/admin-console.compose.yaml up -d admin-sidecar admin-console
+```
+
+### 容器内 Agent 接入
+
+Docker 内的 Agent（如 NAS Hermes）使用通用 Bridge 模板，与目标容器共用网络命名空间。详见[容器内 Agent 的统一接入](container-sidecar.md)。
 
 ---
 

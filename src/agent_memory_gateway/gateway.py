@@ -116,6 +116,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 "/v1/admin/devices/revoke": "memory.manage",
                 "/v1/admin/audit/list": "memory.manage",
                 "/v1/admin/dead-letters/list": "memory.manage",
+                "/v1/admin/memories/list": "memory.search",
+                "/v1/admin/graph": "memory.search",
             }.get(path)
             if capability is None:
                 self._json({"error": "not_found"}, status=404)
@@ -203,6 +205,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 if self.admin_service is None:
                     raise ValueError("NOT_IMPLEMENTED")
                 self._json(self.admin_service.list_dead_letters(payload, principal))
+            elif path == "/v1/admin/memories/list":
+                if self.admin_service is None:
+                    raise ValueError("NOT_IMPLEMENTED")
+                self._json(self.admin_service.list_memories(payload, principal))
+            elif path == "/v1/admin/graph":
+                if self.admin_service is None:
+                    raise ValueError("NOT_IMPLEMENTED")
+                self._json(self.admin_service.memory_graph(payload, principal))
         except AuthError as exc:
             self._json({"error": exc.code}, status=exc.status)
         except DatabasePoolBusy as exc:

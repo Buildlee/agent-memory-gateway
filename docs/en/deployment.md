@@ -89,7 +89,15 @@ Migration commands must **not** be chained into the Gateway startup script. The 
 
 ## Launch Gateway, Worker, and HTTPS Entry Point with Containers
 
-The repository provides a Compose configuration. Before running it, copy the example environment file to a protected location and explicitly pass the path:
+The repository provides three Compose files for different services:
+
+| File | Purpose |
+|---|---|
+| `deploy/fn/compose.yaml` | **Core services**: Gateway + Worker + Caddy HTTPS proxy |
+| `deploy/fn/admin-console.compose.yaml` | **Admin console**: standalone admin Sidecar + web management UI (layered on top of core) |
+| `deploy/fn/memory-mcp-bridge.compose.yaml` | **Container Bridge**: connects Docker-based Agents to shared memory via shared network namespace (independently deployed) |
+
+### Launch Core Services
 
 ```powershell
 docker compose --env-file "<protected environment file path>" -f deploy/fn/compose.yaml config
@@ -97,6 +105,18 @@ docker compose --env-file "<protected environment file path>" -f deploy/fn/compo
 ```
 
 Always run `config` first to verify that secrets, database ports, and volume mappings are not exposed to the public network. Gateway and Worker use the same image version. Only the proxy should expose an HTTPS entry point; the database should not be mapped to a public host port.
+
+### Layer on Admin Console
+
+The admin console depends on core services already running. After following the [central admin setup](central-admin.md), launch with dual Compose files:
+
+```powershell
+docker compose --env-file ".env" -f deploy/fn/compose.yaml -f deploy/fn/admin-console.compose.yaml up -d admin-sidecar admin-console
+```
+
+### Container-Based Agent Access
+
+Docker-based Agents (e.g., NAS Hermes) use the generic Bridge template, sharing the network namespace with the target container. See [Container-Based Agent Integration](container-sidecar.md).
 
 ---
 

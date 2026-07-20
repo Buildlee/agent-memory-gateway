@@ -90,6 +90,8 @@ class _SidecarRPCHandler(BaseHTTPRequestHandler):
                 "revoke_admin_device",
                 "list_admin_audit",
                 "list_admin_dead_letters",
+                "list_memories",
+                "memory_graph",
             ):
                 method_impl = getattr(self.client, admin_method, None)
                 if callable(method_impl):

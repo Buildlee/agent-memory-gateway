@@ -983,6 +983,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       <nav aria-label="管理页">
         <button class="nav-button" data-view="overview" aria-current="page"><span class="dot"></span>概览</button>
         <button class="nav-button" data-view="memories"><span class="dot"></span>记忆</button>
+        <button class="nav-button" data-view="graph"><span class="dot"></span>图谱</button>
         <button class="nav-button" data-view="reviews"><span class="dot"></span>审核</button>
         <button class="nav-button" data-view="devices"><span class="dot"></span>设备与权限</button>
         <button class="nav-button" data-view="runtime"><span class="dot"></span>运行</button>
@@ -1049,6 +1050,12 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
           <div class="panel">
             <div class="panel-head"><div class="panel-title">检索结果</div><span id="memory-result-count" class="badge">等待查询</span></div>
             <div class="panel-body"><div id="memory-results" class="empty">输入至少两个字开始查询。搜索不会修改记忆或同步队列。</div></div>
+          </div>
+        </section>
+        <section id="graph" class="view">
+          <div class="panel">
+            <div class="panel-head"><div><div class="panel-title">记忆关系图谱</div><div class="subtle">当前工作区内记忆与设备、Agent 的关联网络。虚线表示取代关系。</div></div></div>
+            <div class="panel-body"><div id="graph-container"><div class="empty">正在加载图谱…</div></div></div>
           </div>
         </section>
         <section id="reviews" class="view">
@@ -1148,7 +1155,8 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
 
     const labels = {{
       overview: ["共享记忆管理", "当前工作区：" + state.workspaceId],
-      memories: ["记忆", "检索当前工作区中已经授权给你的记忆"],
+      memories: ["共享记忆库", "浏览所有共享记忆，按关键词检索"],
+      graph: ["记忆关系图谱", "查看记忆、设备与 Agent 之间的关联"],
       reviews: ["审核候选", "只处理需要人工判断的候选记忆"],
       devices: ["设备与权限", "查看设备、Agent 和工作区能力，不显示凭据"],
       runtime: ["运行", "查看同步、重试和死信的只读状态"],
@@ -1540,20 +1548,28 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       const memories = payload.memories || [];
       const retrieval = payload.retrieval || {{}};
       const badge = document.getElementById("memory-result-count");
-      badge.textContent = `${{memories.length}} 条结果`;
+      const isBrowse = !query;
+      badge.textContent = isBrowse ? `${{memories.length}} 条共享记忆` : `${{memories.length}} 条结果`;
       badge.className = "badge";
       if (!memories.length) {{
         document.getElementById("memory-results").className = "empty";
-        document.getElementById("memory-results").textContent = `没有找到与“${{query}}”匹配的已授权记忆。`;
+        document.getElementById("memory-results").textContent = isBrowse
+          ? "当前工作区还没有共享记忆。记忆经过写入→审核确认后才会出现在这里。"
+          : `没有找到与"${{query}}"匹配的已授权记忆。`;
         return;
       }}
       document.getElementById("memory-results").className = "memory-list";
       document.getElementById("memory-results").innerHTML = memories.map(item => `
         <article class="memory-row">
           <div>
-            <div class="row-title">${{escapeHTML(item.kind || "记忆")}} <span class="badge">${{escapeHTML(item.status || "confirmed")}}</span></div>
+            <div class="row-title">${{escapeHTML(item.kind || item.memory_type || "记忆")}} <span class="badge">${{escapeHTML(item.lifecycle_status || item.status || "active")}}</span></div>
             <div class="memory-content">${{escapeHTML(item.content || "")}}</div>
-            <div class="memory-meta"><span>${{escapeHTML(item.scope || "-")}}</span><span>·</span><span>${{code(item.memory_id)}}</span></div>
+            <div class="memory-meta">
+              <span>${{escapeHTML(item.scope || "-")}}</span><span>·</span>
+              <span>来源：${{escapeHTML((item.source_device_id || item.source_agent_id || "")).replace(/-windows-.*|-fn.*|central-.*/,"").trim() || "记忆中枢"}}</span><span>·</span>
+              <span>${{code(item.backend_ref || item.memory_id)}}</span>
+              ${{item.superseded_by ? `<span>·</span><span class="badge">已被 ${{code(item.superseded_by)}} 取代</span>` : ""}}
+            </div>
           </div>
           <div class="row-time">置信度<br>${{escapeHTML(item.confidence ?? "-")}}</div>
         </article>`).join("");
@@ -1690,6 +1706,91 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {{
         window.scrollTo({{top: 0, behavior: "smooth"}});
       }}
+      if (view === "memories") loadAllMemories();
+      if (view === "graph") loadGraph();
+    }}
+
+    function loadAllMemories() {{
+      const root = document.getElementById("memory-results");
+      const badge = document.getElementById("memory-result-count");
+      root.className = "empty";
+      root.textContent = "正在加载共享记忆…";
+      badge.textContent = "加载中";
+      try {{
+        api("/api/memories").then(payload => renderMemories(payload, null));
+      }} catch (error) {{
+        root.className = "empty";
+        root.textContent = "记忆加载失败：" + (error.message || "未知错误");
+        badge.textContent = "暂不可用";
+      }}
+    }}
+
+    function loadGraph() {{
+      const root = document.getElementById("graph-container");
+      root.innerHTML = '<div class="skeleton" style="height:500px"></div>';
+      api("/api/memory-graph").then(payload => renderGraph(payload))
+        .catch(err => {{ root.innerHTML = `<div class="empty">图谱数据暂不可用：${{err.message}}</div>`; }});
+    }}
+
+    function renderGraph(payload) {{
+      const nodes = payload.nodes || [];
+      const edges = payload.edges || [];
+      const root = document.getElementById("graph-container");
+      if (!nodes.length) {{
+        root.innerHTML = "<div class='empty'>当前还没有可展示的内存关系数据。</div>";
+        return;
+      }}
+      const groups = {{memory: "#2f6fed", device: "#b45309", agent: "#7c3aed"}};
+      const byId = {{}};
+      nodes.forEach(n => {{ n.x = null; n.y = null; byId[n.id] = n; }});
+      
+      root.innerHTML = `<div style="padding:1rem;font-size:0.85rem;color:var(--subtle)">
+        节点 ${{nodes.length}} · 连线 ${{edges.length}}
+        <span style="margin-left:1rem">${{Object.entries(groups).map(([k,v]) => `<span style="color:${{v}}">■</span> ${{k}}`).join(" &nbsp; ")}}</span>
+      </div><canvas id="graph-canvas" style="width:100%;height:550px;display:block"></canvas>`;
+      
+      const canvas = document.getElementById("graph-canvas");
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      const W = canvas.parentElement.clientWidth;
+      canvas.width = W * 2; canvas.height = 1100;
+      canvas.style.width = W + "px"; canvas.style.height = "550px";
+      ctx.scale(2, 2);
+      
+      const cx = W / 2, cy = 275, rx = W * 0.38, ry = 220;
+      nodes.forEach((n, i) => {{
+        const angle = (2 * Math.PI * i) / nodes.length - Math.PI / 2;
+        n.x = cx + rx * Math.cos(angle);
+        n.y = cy + ry * Math.sin(angle);
+      }});
+      
+      edges.forEach(e => {{
+        const from = byId[e.from], to = byId[e.to];
+        if (!from || !to) return;
+        ctx.beginPath();
+        ctx.strokeStyle = e.dashes ? "#b45309" : "rgba(47,111,237,0.3)";
+        ctx.lineWidth = 1;
+        if (e.dashes) ctx.setLineDash([4, 3]);
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }});
+      
+      nodes.forEach(n => {{
+        const color = n.status === "archived" ? "#999" : (groups[n.group] || "#666");
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, 18, 0, 2 * Math.PI);
+        ctx.fillStyle = n.status === "archived" ? "rgba(153,153,153,0.15)" : (color + "18");
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.font = "11px -apple-system, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(n.label.slice(0, 12), n.x, n.y + 32);
+      }});
     }}
 
     function resolveReview(index, action, targetRef) {{
@@ -1951,9 +2052,15 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
                 self._json(sidecar.list_admin_dead_letters(payload | {"limit": 50}))
             elif path == "/api/memories":
                 text = str(((query or {}).get("q") or [""])[0]).strip()
-                if not 2 <= len(text) <= 256:
-                    raise AdminConsoleError("MEMORY_QUERY_INVALID")
-                self._json(sidecar.search(payload | {"query": text, "limit": 20}))
+                if text and 2 <= len(text) <= 256:
+                    self._json(sidecar.search(payload | {"query": text, "limit": 20}))
+                else:
+                    try:
+                        self._json(sidecar.list_memories(payload | {"limit": 200}))
+                    except AttributeError:
+                        self._json(sidecar.search(payload | {"query": "", "limit": 20}))
+            elif path == "/api/memory-graph":
+                self._json(sidecar.memory_graph(payload))
             else:
                 self._json({"error": "NOT_FOUND"}, status=404)
         except (AdminConsoleError, SidecarDaemonError) as exc:

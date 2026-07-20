@@ -227,6 +227,12 @@ class SidecarClient:
     def list_admin_dead_letters(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/v1/admin/dead-letters/list", payload)
 
+    def list_memories(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/v1/admin/memories/list", payload)
+
+    def memory_graph(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/v1/admin/graph", payload)
+
     def sync(self, workspace_id: str | None = None) -> dict[str, Any]:
         target_workspace = str(workspace_id or self.default_workspace)
         events = self.outbox.list_events()

@@ -234,13 +234,13 @@ class AdminConsoleTests(unittest.TestCase):
         )
         self.assertNotIn("MEMORY_OUTBOX_KEY", json.dumps([overview, health, reviews, memories], ensure_ascii=False))
 
-    def test_memory_search_rejects_empty_or_too_short_queries(self):
+    def test_empty_short_queries_no_longer_reject(self):
+        """空查询和过短查询不再拒绝——记忆页默认浏览全部，返回空结果即可。"""
         cookie = self._open_session()
         for path in ("/api/memories", "/api/memories?q=x"):
-            with self.assertRaises(HTTPError) as context:
-                self._json(path, cookie)
-            self.assertEqual(context.exception.code, 400)
-            self.assertIn("MEMORY_QUERY_INVALID", context.exception.read().decode("utf-8"))
+            resp = self._json(path, cookie)
+            self.assertIsNotNone(resp)
+            self.assertIn("memories", resp or {})
 
     def test_resolve_requires_explicit_page_confirmation(self):
         cookie = self._open_session()

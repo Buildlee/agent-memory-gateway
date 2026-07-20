@@ -490,6 +490,119 @@ class PostgresAdminService:
             "status": "revoked",
         }
 
+    def list_memories(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
+        """返回工作区内所有可见记忆，含来源设备和生命周期状态。"""
+
+        workspace_id = self._workspace_id(payload, principal)
+        limit = self._limit(payload.get("limit"), default=200, maximum=500)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT event.backend_ref, event.event_id, event.scope,
+                       event.device_id, event.agent_installation_id,
+                       event.received_at, event.server_revision,
+                       lifecycle.status AS lifecycle_status,
+                       lifecycle.superseded_by, lifecycle.confidence,
+                       lifecycle.instruction_like
+                FROM gateway_events AS event
+                LEFT JOIN memory_lifecycle AS lifecycle
+                  ON lifecycle.backend_ref = event.backend_ref
+                WHERE event.tenant_id = %s
+                  AND event.user_id = %s
+                  AND event.status = 'applied'
+                  AND event.backend_ref IS NOT NULL
+                  AND (
+                    event.scope = 'user'
+                    OR (event.scope = 'workspace' AND event.workspace_id = %s)
+                  )
+                ORDER BY event.server_revision DESC
+                LIMIT %s
+                """,
+                (principal.tenant_id, principal.user_id, workspace_id, limit),
+            ).fetchall()
+        memories = []
+        for row in rows:
+            memories.append(
+                {
+                    "backend_ref": str(self._value(row, 0, "backend_ref")),
+                    "event_id": str(self._value(row, 1, "event_id")),
+                    "scope": str(self._value(row, 2, "scope")),
+                    "source_device_id": str(self._value(row, 3, "device_id")),
+                    "source_agent_id": str(self._value(row, 4, "agent_installation_id")),
+                    "received_at": self._timestamp(self._value(row, 5, "received_at")),
+                    "server_revision": int(self._value(row, 6, "server_revision") or 0),
+                    "lifecycle_status": str(self._value(row, 7, "lifecycle_status") or "active"),
+                    "superseded_by": self._optional_text(self._value(row, 8, "superseded_by")),
+                    "confidence": float(self._value(row, 9, "confidence") or 0),
+                    "instruction_like": bool(self._value(row, 10, "instruction_like")),
+                }
+            )
+        return {"workspace_id": workspace_id, "memories": memories}
+
+    def memory_graph(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
+        """返回工作区记忆实体关系图谱数据，用于可视化。"""
+
+        workspace_id = self._workspace_id(payload, principal)
+        with self._connect() as connection:
+            event_rows = connection.execute(
+                """
+                SELECT backend_ref, device_id, agent_installation_id,
+                       scope FROM gateway_events
+                WHERE tenant_id = %s AND user_id = %s
+                  AND backend_ref IS NOT NULL AND status = 'applied'
+                  AND (scope = 'workspace' AND workspace_id = %s OR scope = 'user')
+                ORDER BY server_revision DESC LIMIT 300
+                """,
+                (principal.tenant_id, principal.user_id, workspace_id),
+            ).fetchall()
+            lifecycle_rows = connection.execute(
+                """
+                SELECT backend_ref, lifecycle.status, superseded_by
+                FROM memory_lifecycle lifecycle
+                JOIN gateway_events event
+                  ON event.backend_ref = lifecycle.backend_ref
+                WHERE event.tenant_id = %s AND event.user_id = %s
+                  AND (event.scope = 'workspace' AND event.workspace_id = %s OR event.scope = 'user')
+                """,
+                (principal.tenant_id, principal.user_id, workspace_id),
+            ).fetchall()
+        nodes = []
+        edges = []
+        seen = set()
+        agent_ids = set()
+        device_ids = set()
+        for row in event_rows:
+            ref = str(self._value(row, 0, "backend_ref"))
+            if ref in seen:
+                continue
+            seen.add(ref)
+            device = str(self._value(row, 1, "device_id") or "")
+            agent = str(self._value(row, 2, "agent_installation_id") or "")
+            scope = str(self._value(row, 3, "scope") or "")
+            nodes.append({"id": ref, "label": ref.split(":")[-1] if ":" in ref else ref, "group": "memory", "scope": scope})
+            if device:
+                device_ids.add(device)
+                edges.append({"from": ref, "to": f"device:{device}", "label": "from"})
+            if agent:
+                agent_ids.add(agent)
+        for device in device_ids:
+            nodes.append({"id": f"device:{device}", "label": device, "group": "device"})
+        for agent in agent_ids:
+            nodes.append({"id": f"agent:{agent}", "label": agent, "group": "agent"})
+        life_edges = 0
+        for row in lifecycle_rows:
+            ref = str(self._value(row, 0, "backend_ref"))
+            status = str(self._value(row, 1, "status") or "")
+            sup = self._optional_text(self._value(row, 2, "superseded_by"))
+            if sup:
+                edges.append({"from": sup, "to": ref, "label": "supersedes", "dashes": True})
+                life_edges += 1
+            if status == "archived":
+                node = next((n for n in nodes if n["id"] == ref), None)
+                if node:
+                    node["status"] = "archived"
+        return {"workspace_id": workspace_id, "nodes": nodes, "edges": edges}
+
     def list_dead_letters(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
         """列出未处理死信的元数据，供运维排障使用。"""
 
