@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Any
 
-from .auth import Principal
+from .auth import AuthError, Principal
+from .identity_service import _audit
+
+
+MANAGEABLE_CAPABILITIES = (
+    "memory.feedback",
+    "memory.forget",
+    "memory.manage",
+    "memory.read_context",
+    "memory.search",
+    "memory.sync",
+    "memory.write_event",
+)
 
 
 class AdminServiceError(ValueError):
@@ -135,9 +148,16 @@ class PostgresAdminService:
                     "capabilities": sorted(str(value) for value in (self._value(row, 11, "capabilities") or [])),
                     "binding_status": str(self._value(row, 12, "binding_status")),
                     "binding_updated_at": self._timestamp(self._value(row, 13, "binding_updated_at")),
+                    "is_current_device": str(self._value(row, 0, "device_id")) == principal.device_id,
+                    "is_current_agent": str(self._value(row, 6, "agent_installation_id"))
+                    == principal.agent_installation_id,
                 }
             )
-        return {"workspace_id": workspace_id, "devices": records}
+        return {
+            "workspace_id": workspace_id,
+            "capability_catalog": list(MANAGEABLE_CAPABILITIES),
+            "devices": records,
+        }
 
     def list_audit(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
         workspace_id = self._workspace_id(payload, principal)
@@ -145,16 +165,28 @@ class PostgresAdminService:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT audit_id, actor_type, actor_id, action, result_code, trace_id,
-                       device_id, agent_installation_id, target_ref, created_at
+                SELECT audit.audit_id, audit.actor_type, audit.actor_id, audit.action,
+                       audit.result_code, audit.trace_id, audit.device_id,
+                       audit.agent_installation_id, audit.target_ref, audit.created_at,
+                       source_device.display_name AS source_device_name,
+                       source_device.device_type AS source_device_type,
+                       source_device.status AS source_device_status,
+                       source_agent.display_name AS source_agent_name,
+                       source_agent.agent_type AS source_agent_type,
+                       source_agent.status AS source_agent_status
                 FROM audit_log AS audit
                 JOIN workspaces AS workspace ON workspace.workspace_id = audit.workspace_id
+                LEFT JOIN agent_installations AS source_agent
+                  ON source_agent.agent_installation_id = audit.agent_installation_id
+                LEFT JOIN devices AS source_device
+                  ON source_device.device_id = COALESCE(audit.device_id, source_agent.device_id)
+                 AND source_device.tenant_id = audit.tenant_id
                 WHERE audit.tenant_id = %s AND workspace.user_id = %s
                   AND audit.workspace_id = %s
                 ORDER BY audit.created_at DESC, audit.audit_id DESC
                 LIMIT %s
                 """,
-                (principal.tenant_id, workspace_id, limit),
+                (principal.tenant_id, principal.user_id, workspace_id, limit),
             ).fetchall()
         entries = []
         for row in rows:
@@ -172,9 +204,291 @@ class PostgresAdminService:
                     ),
                     "target_ref": self._optional_text(self._value(row, 8, "target_ref")),
                     "created_at": self._timestamp(self._value(row, 9, "created_at")),
+                    "source_device_name": self._optional_text(
+                        self._value(row, 10, "source_device_name")
+                    ),
+                    "source_device_type": self._optional_text(
+                        self._value(row, 11, "source_device_type")
+                    ),
+                    "source_device_status": self._optional_text(
+                        self._value(row, 12, "source_device_status")
+                    ),
+                    "source_agent_name": self._optional_text(
+                        self._value(row, 13, "source_agent_name")
+                    ),
+                    "source_agent_type": self._optional_text(
+                        self._value(row, 14, "source_agent_type")
+                    ),
+                    "source_agent_status": self._optional_text(
+                        self._value(row, 15, "source_agent_status")
+                    ),
                 }
             )
         return {"workspace_id": workspace_id, "entries": entries}
+
+    def update_binding(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
+        """更新当前工作区内某个 Agent 的能力，并防止管理端锁死自身。"""
+
+        workspace_id = self._workspace_id(payload, principal)
+        self._require_confirmation(payload)
+        agent_id = self._required_text(
+            payload,
+            "target_agent_installation_id",
+            "TARGET_AGENT_INSTALLATION_ID_REQUIRED",
+        )
+        idempotency_key = self._required_text(payload, "idempotency_key", "IDEMPOTENCY_KEY_REQUIRED")
+        expected = self._existing_capabilities(
+            payload.get("expected_capabilities"),
+            "EXPECTED_CAPABILITIES_INVALID",
+        )
+        capabilities = self._existing_capabilities(
+            payload.get("capabilities"),
+            "WORKSPACE_CAPABILITIES_INVALID",
+        )
+        allowed = set(MANAGEABLE_CAPABILITIES)
+        if set(expected).difference(allowed) != set(capabilities).difference(allowed):
+            raise AdminServiceError("WORKSPACE_CAPABILITIES_INVALID")
+        if agent_id == principal.agent_installation_id and "memory.manage" not in capabilities:
+            raise AuthError("ADMIN_SELF_LOCKOUT_FORBIDDEN", status=409)
+
+        with self._connect() as connection:
+            with self._transaction(connection):
+                row = connection.execute(
+                    """
+                    SELECT d.device_id, d.display_name AS device_name, d.status AS device_status,
+                           a.display_name AS agent_name, a.status AS agent_status,
+                           b.capabilities, b.status AS binding_status
+                    FROM workspace_bindings AS b
+                    JOIN agent_installations AS a
+                      ON a.agent_installation_id = b.agent_installation_id
+                    JOIN devices AS d ON d.device_id = a.device_id
+                    JOIN workspaces AS w ON w.workspace_id = b.workspace_id
+                    WHERE b.agent_installation_id = %s AND b.workspace_id = %s
+                      AND w.tenant_id = %s AND w.user_id = %s
+                      AND d.tenant_id = %s AND d.user_id = %s
+                    FOR UPDATE OF b, a, d
+                    """,
+                    (
+                        agent_id,
+                        workspace_id,
+                        principal.tenant_id,
+                        principal.user_id,
+                        principal.tenant_id,
+                        principal.user_id,
+                    ),
+                ).fetchone()
+                if row is None:
+                    raise AuthError("ADMIN_TARGET_NOT_FOUND", status=404)
+                current = tuple(sorted(str(value) for value in (self._value(row, 5, "capabilities") or [])))
+                if tuple(expected) != current:
+                    raise AuthError("ADMIN_STATE_CHANGED", status=409)
+                if any(
+                    self._value(row, index, key) != "active"
+                    for index, key in ((2, "device_status"), (4, "agent_status"), (6, "binding_status"))
+                ):
+                    raise AuthError("ADMIN_TARGET_INACTIVE", status=409)
+                if tuple(capabilities) != current:
+                    connection.execute(
+                        """
+                        UPDATE workspace_bindings
+                        SET capabilities = %s, updated_at = now()
+                        WHERE agent_installation_id = %s AND workspace_id = %s
+                        """,
+                        (list(capabilities), agent_id, workspace_id),
+                    )
+                    _audit(
+                        connection,
+                        tenant_id=principal.tenant_id,
+                        actor_type="agent",
+                        actor_id=principal.agent_installation_id,
+                        action="auth.workspace.capabilities.update",
+                        result_code="updated",
+                        device_id=str(self._value(row, 0, "device_id")),
+                        agent_installation_id=agent_id,
+                        workspace_id=workspace_id,
+                        target_ref=workspace_id,
+                        details={
+                            "before": list(current),
+                            "after": list(capabilities),
+                            "idempotency_key": idempotency_key,
+                        },
+                    )
+                    status = "updated"
+                else:
+                    status = "unchanged"
+        return {
+            "workspace_id": workspace_id,
+            "agent_installation_id": agent_id,
+            "capabilities": list(capabilities),
+            "status": status,
+        }
+
+    def revoke_agent(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
+        """撤销一个 Agent；该动作会影响它在所有工作区的访问。"""
+
+        workspace_id = self._workspace_id(payload, principal)
+        self._require_confirmation(payload)
+        agent_id = self._required_text(
+            payload,
+            "target_agent_installation_id",
+            "TARGET_AGENT_INSTALLATION_ID_REQUIRED",
+        )
+        expected_epoch = self._positive_int(payload.get("expected_auth_epoch"), "EXPECTED_AUTH_EPOCH_REQUIRED")
+        idempotency_key = self._required_text(payload, "idempotency_key", "IDEMPOTENCY_KEY_REQUIRED")
+        if agent_id == principal.agent_installation_id:
+            raise AuthError("ADMIN_SELF_REVOKE_FORBIDDEN", status=409)
+
+        with self._connect() as connection:
+            with self._transaction(connection):
+                row = connection.execute(
+                    """
+                    SELECT d.device_id, d.status AS device_status,
+                           a.status AS agent_status, a.auth_epoch AS agent_auth_epoch
+                    FROM agent_installations AS a
+                    JOIN devices AS d ON d.device_id = a.device_id
+                    JOIN workspace_bindings AS b ON b.agent_installation_id = a.agent_installation_id
+                    JOIN workspaces AS w ON w.workspace_id = b.workspace_id
+                    WHERE a.agent_installation_id = %s AND b.workspace_id = %s
+                      AND w.tenant_id = %s AND w.user_id = %s
+                      AND d.tenant_id = %s AND d.user_id = %s
+                    FOR UPDATE OF a, d
+                    """,
+                    (
+                        agent_id,
+                        workspace_id,
+                        principal.tenant_id,
+                        principal.user_id,
+                        principal.tenant_id,
+                        principal.user_id,
+                    ),
+                ).fetchone()
+                if row is None:
+                    raise AuthError("ADMIN_TARGET_NOT_FOUND", status=404)
+                if int(self._value(row, 3, "agent_auth_epoch")) != expected_epoch:
+                    raise AuthError("ADMIN_STATE_CHANGED", status=409)
+                if self._value(row, 1, "device_status") != "active" or self._value(row, 2, "agent_status") != "active":
+                    raise AuthError("ADMIN_TARGET_INACTIVE", status=409)
+                changed = connection.execute(
+                    """
+                    UPDATE agent_installations
+                    SET status = 'revoked', auth_epoch = auth_epoch + 1, updated_at = now()
+                    WHERE agent_installation_id = %s AND auth_epoch = %s AND status = 'active'
+                    RETURNING auth_epoch
+                    """,
+                    (agent_id, expected_epoch),
+                ).fetchone()
+                if changed is None:
+                    raise AuthError("ADMIN_STATE_CHANGED", status=409)
+                device_id = str(self._value(row, 0, "device_id"))
+                _audit(
+                    connection,
+                    tenant_id=principal.tenant_id,
+                    actor_type="agent",
+                    actor_id=principal.agent_installation_id,
+                    action="auth.agent.revoke",
+                    result_code="revoked",
+                    device_id=device_id,
+                    agent_installation_id=agent_id,
+                    workspace_id=workspace_id,
+                    target_ref=agent_id,
+                    details={"idempotency_key": idempotency_key},
+                )
+        return {
+            "workspace_id": workspace_id,
+            "device_id": device_id,
+            "agent_installation_id": agent_id,
+            "auth_epoch": int(self._value(changed, 0, "auth_epoch")),
+            "status": "revoked",
+        }
+
+    def revoke_device(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
+        """撤销设备、设备上的 Agent 和刷新凭据，不删除任何记录。"""
+
+        workspace_id = self._workspace_id(payload, principal)
+        self._require_confirmation(payload)
+        device_id = self._required_text(payload, "target_device_id", "TARGET_DEVICE_ID_REQUIRED")
+        expected_epoch = self._positive_int(payload.get("expected_auth_epoch"), "EXPECTED_AUTH_EPOCH_REQUIRED")
+        idempotency_key = self._required_text(payload, "idempotency_key", "IDEMPOTENCY_KEY_REQUIRED")
+        if device_id == principal.device_id:
+            raise AuthError("ADMIN_SELF_REVOKE_FORBIDDEN", status=409)
+
+        with self._connect() as connection:
+            with self._transaction(connection):
+                row = connection.execute(
+                    """
+                    SELECT d.status AS device_status, d.auth_epoch AS device_auth_epoch
+                    FROM devices AS d
+                    JOIN agent_installations AS a ON a.device_id = d.device_id
+                    JOIN workspace_bindings AS b ON b.agent_installation_id = a.agent_installation_id
+                    JOIN workspaces AS w ON w.workspace_id = b.workspace_id
+                    WHERE d.device_id = %s AND b.workspace_id = %s
+                      AND w.tenant_id = %s AND w.user_id = %s
+                      AND d.tenant_id = %s AND d.user_id = %s
+                    LIMIT 1
+                    FOR UPDATE OF d
+                    """,
+                    (
+                        device_id,
+                        workspace_id,
+                        principal.tenant_id,
+                        principal.user_id,
+                        principal.tenant_id,
+                        principal.user_id,
+                    ),
+                ).fetchone()
+                if row is None:
+                    raise AuthError("ADMIN_TARGET_NOT_FOUND", status=404)
+                if int(self._value(row, 1, "device_auth_epoch")) != expected_epoch:
+                    raise AuthError("ADMIN_STATE_CHANGED", status=409)
+                if self._value(row, 0, "device_status") != "active":
+                    raise AuthError("ADMIN_TARGET_INACTIVE", status=409)
+                changed = connection.execute(
+                    """
+                    UPDATE devices
+                    SET status = 'revoked', revoked_at = now(),
+                        auth_epoch = auth_epoch + 1, updated_at = now()
+                    WHERE device_id = %s AND auth_epoch = %s AND status = 'active'
+                    RETURNING auth_epoch
+                    """,
+                    (device_id, expected_epoch),
+                ).fetchone()
+                if changed is None:
+                    raise AuthError("ADMIN_STATE_CHANGED", status=409)
+                connection.execute(
+                    """
+                    UPDATE agent_installations
+                    SET status = 'revoked', auth_epoch = auth_epoch + 1, updated_at = now()
+                    WHERE device_id = %s AND status <> 'revoked'
+                    """,
+                    (device_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE refresh_credentials
+                    SET revoked_at = now()
+                    WHERE device_id = %s AND revoked_at IS NULL
+                    """,
+                    (device_id,),
+                )
+                _audit(
+                    connection,
+                    tenant_id=principal.tenant_id,
+                    actor_type="agent",
+                    actor_id=principal.agent_installation_id,
+                    action="auth.device.revoke",
+                    result_code="revoked",
+                    device_id=device_id,
+                    agent_installation_id=principal.agent_installation_id,
+                    workspace_id=workspace_id,
+                    target_ref=device_id,
+                    details={"idempotency_key": idempotency_key},
+                )
+        return {
+            "workspace_id": workspace_id,
+            "device_id": device_id,
+            "auth_epoch": int(self._value(changed, 0, "auth_epoch")),
+            "status": "revoked",
+        }
 
     def list_dead_letters(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
         """列出未处理死信的元数据，供运维排障使用。"""
@@ -254,3 +568,60 @@ class PostgresAdminService:
     @staticmethod
     def _optional_text(value: Any) -> str | None:
         return None if value is None else str(value)
+
+    @staticmethod
+    def _transaction(connection: Any) -> Any:
+        transaction = getattr(connection, "transaction", None)
+        return transaction() if callable(transaction) else nullcontext()
+
+    @staticmethod
+    def _required_text(payload: dict[str, Any], key: str, code: str, maximum: int = 256) -> str:
+        value = str(payload.get(key) or "").strip()
+        if not value or len(value) > maximum:
+            raise AdminServiceError(code)
+        return value
+
+    @staticmethod
+    def _positive_int(value: Any, code: str) -> int:
+        if isinstance(value, bool):
+            raise AdminServiceError(code)
+        try:
+            converted = int(value)
+        except (TypeError, ValueError) as exc:
+            raise AdminServiceError(code) from exc
+        if converted <= 0:
+            raise AdminServiceError(code)
+        return converted
+
+    @staticmethod
+    def _capabilities(value: Any, code: str) -> tuple[str, ...]:
+        if not isinstance(value, list):
+            raise AdminServiceError(code)
+        capabilities = tuple(sorted({str(item).strip() for item in value if str(item).strip()}))
+        if not capabilities or any(item not in MANAGEABLE_CAPABILITIES for item in capabilities):
+            raise AdminServiceError(code)
+        return capabilities
+
+    @staticmethod
+    def _existing_capabilities(value: Any, code: str) -> tuple[str, ...]:
+        """允许原样携带既有扩展能力，但不允许页面增删它们。"""
+
+        if not isinstance(value, list):
+            raise AdminServiceError(code)
+        capabilities = tuple(sorted({str(item).strip() for item in value if str(item).strip()}))
+        if (
+            not capabilities
+            or len(capabilities) > 32
+            or any(
+                len(item) > 128
+                or not item.replace(".", "").replace("_", "").isalnum()
+                for item in capabilities
+            )
+        ):
+            raise AdminServiceError(code)
+        return capabilities
+
+    @staticmethod
+    def _require_confirmation(payload: dict[str, Any]) -> None:
+        if not bool(payload.get("confirmed_by_user")):
+            raise AdminServiceError("USER_CONFIRMATION_REQUIRED")

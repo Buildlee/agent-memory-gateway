@@ -22,6 +22,8 @@
 
 The repository retains only variable templates such as `deploy/fn/.env.example`. Environment files, main configuration, certificates, and private keys that you create from these templates should be placed in a protected local directory already excluded by `.gitignore`.
 
+When the admin UI should run beside the Gateway, configure its separate admin Sidecar and one-time browser session through the [Central Admin UI guide](central-admin.md). Do not expose the local loopback console to the LAN.
+
 ---
 
 ## Self-Check on the Deployment Machine
@@ -112,7 +114,7 @@ Start **exactly one** Sidecar per device. We recommend using the setup wizard fo
   -InstallAutostart
 ```
 
-The administrator provides a one-time pairing code in advance. The wizard reads it via hidden input, and after successful pairing stores the refresh credential in Windows Credential Manager. The generated MCP JSON files are placed in `%LOCALAPPDATA%\memory-gateway\mcp`; import them into the corresponding client and restart the Agent. If you need custom directories, manual Sidecar startup, or non-Windows environments, you can still use `start-sidecar.ps1`, `install-sidecar-autostart.ps1`, and the [example documentation](../examples/README.md).
+The administrator provides a one-time pairing code in advance. The wizard reads it via hidden input, and after successful pairing stores the refresh credential in Windows Credential Manager. The generated MCP JSON files are placed in `%LOCALAPPDATA%\memory-gateway\mcp`; import them into the corresponding client and restart the Agent. If you need custom directories, manual Sidecar startup, or non-Windows environments, you can still use `start-sidecar.ps1`, `install-sidecar-autostart.ps1`, and the [example documentation](../../examples/README.md).
 
 The Sidecar listens only on the local loopback address. Connect to the internal HTTPS address directly within the LAN; from outside the LAN, reach it through a VPN, zero-trust network, or controlled tunnel back to the same network boundary. Regardless of the network path, **never disable TLS certificate verification**.
 
@@ -130,7 +132,7 @@ By default, the script deploys from the repository it resides in. When you need 
 
 `DefaultWorkspace` is **not** a placeholder name — it is a formally registered workspace ID. The MCP configuration must pass the same value at startup. If a tool does not specify a workspace, it will error out immediately rather than guessing or switching to a different workspace.
 
-Configuration files and field descriptions for Codex, Hermes, and OpenClaw are available in [examples/README.md](../examples/README.md). The MCP configuration should contain only the script path and Agent installation instance ID; secrets are managed by the local protected storage and the Sidecar.
+Configuration files and field descriptions for Codex, Hermes, and OpenClaw are available in [examples/README.md](../../examples/README.md). The MCP configuration should contain only the script path and Agent installation instance ID; secrets are managed by the local protected storage and the Sidecar.
 
 ### Agent Inside a Container
 
