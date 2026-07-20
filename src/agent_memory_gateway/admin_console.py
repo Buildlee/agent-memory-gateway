@@ -1566,13 +1566,25 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     function viewMemoryDetail(backendRef) {{
       if (!backendRef) return;
       const root = document.getElementById("memory-results");
+      const cached = (state.allMemories || []).filter(m => m.backend_ref === backendRef || m.memory_id === backendRef);
+      showView("memories");
+      if (cached.length) {{
+        state.allMemories = [cached[0]];
+        state.memoryQuery = backendRef;
+        state.memoryPage = 1;
+        renderMemoryPage();
+        document.getElementById("memory-results").scrollIntoView({{behavior: "smooth"}});
+        return;
+      }}
       root.className = "empty";
       root.textContent = "正在加载记忆详情…";
-      showView("memories");
       api("/api/memories?q=" + encodeURIComponent(backendRef)).then(payload => {{
         const memories = payload.memories || [];
         if (memories.length) {{
-          renderMemories(payload, backendRef);
+          state.allMemories = memories;
+          state.memoryQuery = backendRef;
+          state.memoryPage = 1;
+          renderMemoryPage();
         }} else {{
           root.className = "empty";
           root.textContent = "未找到关联记忆 " + backendRef + "。该引用可能已被归档或尚未通过审核。";
