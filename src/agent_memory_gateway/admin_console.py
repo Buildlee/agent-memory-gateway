@@ -843,6 +843,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     .cell-title {{ font-weight: 650; line-height: 1.4; }}
     .online-dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: oklch(0.55 0.15 150); margin-right: 8px; vertical-align: middle; }}
     .online-dot.off {{ background: oklch(0.7 0 0); }}
+    .badge.offline {{ background: oklch(0.88 0.02 260); color: oklch(0.45 0.02 260); }}
     .cell-copy, .cell-meta {{ color: var(--muted); font-size: 12px; line-height: 1.45; margin-top: 4px; }}
     .cell-stack {{ display: grid; gap: 4px; min-width: 150px; }}
     .capability-list {{ display: flex; flex-wrap: wrap; gap: 5px; max-width: 31rem; }}
@@ -1473,7 +1474,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
           <tr data-device-row="${{index}}">
             <td><div class="cell-title">${{onlineDot}}${{escapeHTML(deviceName)}}</div><div class="cell-meta"><span class="badge">${{escapeHTML(item.device_type || "device")}}</span></div><details class="record-details"><summary>查看技术标识</summary>${{identifiers}}</details></td>
             <td><div class="cell-title">${{escapeHTML(agentName)}}</div><div class="cell-meta"><span class="badge">${{escapeHTML(item.agent_type || "agent")}}</span></div></td>
-            <td><div class="cell-stack"><div><span class="label">设备</span> ${{stateBadge(deviceStatus)}}</div><div><span class="label">Agent</span> ${{stateBadge(agentStatus)}}</div><div><span class="label">绑定</span> ${{stateBadge(bindingStatus)}}</div></div></td>
+            <td><div class="cell-stack"><div><span class="label">设备</span><span class="badge ${{online ? "ok" : "offline"}}">${{online ? "已连线" : "未连线"}}</span></div><div><span class="label">Agent</span> ${{stateBadge(agentStatus)}}</div><div><span class="label">绑定</span> ${{stateBadge(bindingStatus)}}</div></div></td>
             <td><div class="capability-list">${{capabilities}}</div></td>
             <td><div class="cell-stack"><div><span class="label">最近出现</span><div class="cell-copy">${{escapeHTML(lastSeen)}}</div></div><div><span class="label">绑定更新</span><div class="cell-copy">${{escapeHTML(bindingUpdated)}}</div></div></div></td>
             <td>
