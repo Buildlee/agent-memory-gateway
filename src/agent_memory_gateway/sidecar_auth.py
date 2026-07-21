@@ -15,7 +15,7 @@ from .file_credential import (
     read_file_credential,
     replace_file_credential,
 )
-from .gateway_tls import gateway_ssl_context
+from .gateway_tls import GatewayTLSConfigurationError, gateway_ssl_context, validate_gateway_url
 from .windows_credential import (
     WindowsCredentialError,
     read_generic_credential,
@@ -37,10 +37,11 @@ class _RefreshTokenProvider:
     """仅由独立 Sidecar 读取刷新凭据并换取短期 token。"""
 
     def __init__(self, gateway_url: str, credential_location: str) -> None:
-        self._gateway_url = gateway_url.rstrip("/")
+        try:
+            self._gateway_url = validate_gateway_url(gateway_url)
+        except GatewayTLSConfigurationError as exc:
+            raise SidecarAuthError(str(exc)) from exc
         self._credential_location = credential_location.strip()
-        if not self._gateway_url.startswith(("http://", "https://")):
-            raise SidecarAuthError("GATEWAY_URL_INVALID")
         if not self._credential_location or len(self._credential_location) > 1024:
             raise SidecarAuthError("REFRESH_CREDENTIAL_LOCATION_REQUIRED")
         self._ssl_context = gateway_ssl_context(self._gateway_url)

@@ -15,7 +15,10 @@ param(
     [string]$BackendNetwork = "memory-backend",
 
     [Parameter(Mandatory)]
-    [string]$GatewayAddress,
+    [string]$GatewayPublicName,
+
+    [Parameter(Mandatory)]
+    [string]$GatewayBindAddress,
 
     [int]$HttpsPort = 8443,
 
@@ -45,8 +48,11 @@ if ($SecretsFile -notmatch "^/[A-Za-z0-9._/-]+$") {
 if ($BackendNetwork -notmatch "^[A-Za-z0-9_.-]+$") {
     throw "Docker 后端网络名包含不允许的字符"
 }
-if ($GatewayAddress -notmatch "^[A-Za-z0-9.-]+$") {
-    throw "GatewayAddress 必须是内部 DNS 名称或 IP 地址"
+if ($GatewayPublicName -notmatch "^[A-Za-z0-9.-]+$") {
+    throw "GatewayPublicName 必须是内部 DNS 名称或 IP 地址"
+}
+if ($GatewayBindAddress -notmatch "^(\d{1,3}\.){3}\d{1,3}$") {
+    throw "GatewayBindAddress 必须是 IPv4 地址"
 }
 if ($HttpsPort -lt 1024 -or $HttpsPort -gt 65535) {
     throw "HttpsPort 必须在 1024 到 65535 之间"
@@ -96,7 +102,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "设置 Caddy 公开配置文件权限失败，退出码：$LASTEXITCODE"
 }
 
-$environmentCommand = "umask 077; printf '%s\n' 'MEMORY_GATEWAY_SECRETS_FILE=$SecretsFile' 'MEMORY_GATEWAY_BACKEND_NETWORK=$BackendNetwork' 'MEMORY_GATEWAY_PUBLIC_NAME=$GatewayAddress' 'MEMORY_GATEWAY_BIND_ADDRESS=$GatewayAddress' 'MEMORY_GATEWAY_HTTPS_PORT=$HttpsPort' 'MEMORY_WORKER_HEARTBEAT_MAX_SECONDS=$WorkerHeartbeatMaxSeconds' > '$remoteRelease/.env'"
+$environmentCommand = "umask 077; printf '%s\n' 'MEMORY_GATEWAY_SECRETS_FILE=$SecretsFile' 'MEMORY_GATEWAY_BACKEND_NETWORK=$BackendNetwork' 'MEMORY_GATEWAY_PUBLIC_NAME=$GatewayPublicName' 'MEMORY_GATEWAY_BIND_ADDRESS=$GatewayBindAddress' 'MEMORY_GATEWAY_HTTPS_PORT=$HttpsPort' 'MEMORY_WORKER_HEARTBEAT_MAX_SECONDS=$WorkerHeartbeatMaxSeconds' > '$remoteRelease/.env'"
 & ssh @sshArguments $environmentCommand
 if ($LASTEXITCODE -ne 0) {
     throw "写入不含密钥的发布环境文件失败，退出码：$LASTEXITCODE"
@@ -135,5 +141,5 @@ if ($LASTEXITCODE -ne 0) {
     ssh_port = $SshPort
     built = [bool]$Build
     started = [bool]$Start
-    endpoint = "https://$GatewayAddress`:$HttpsPort"
+    endpoint = "https://$GatewayPublicName`:$HttpsPort"
 }

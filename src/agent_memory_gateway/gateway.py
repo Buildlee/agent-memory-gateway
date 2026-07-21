@@ -122,9 +122,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if capability is None:
                 self._json({"error": "not_found"}, status=404)
                 return
-            principal.require_capability(capability)
+            workspace_id = payload.get("workspace_id")
+            if workspace_id is not None:
+                principal.require_workspace_capability(str(workspace_id), capability)
+            else:
+                principal.require_capability(capability)
             if path == "/v1/memories/feedback" and payload.get("action") == "pin":
-                principal.require_capability("memory.manage")
+                if workspace_id is not None:
+                    principal.require_workspace_capability(str(workspace_id), "memory.manage")
+                else:
+                    principal.require_capability("memory.manage")
             if path == "/v1/events":
                 if self.event_ledger is not None:
                     self._json(self.event_ledger.record_proposed_event(payload, principal))
@@ -157,10 +164,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 store = MemoryStore(self.db_path)
                 self._json(store.feedback(payload, principal))
             elif path == "/v1/memories/forget":
-                if self.event_ledger is not None:
-                    raise ValueError("NOT_IMPLEMENTED")
-                store = MemoryStore(self.db_path)
-                self._json(store.forget(payload, principal))
+                if self.review_service is not None:
+                    self._json(self.review_service.forget(payload, principal))
+                else:
+                    store = MemoryStore(self.db_path)
+                    self._json(store.forget(payload, principal))
             elif path == "/v1/reviews/list":
                 if self.review_service is None:
                     raise ValueError("NOT_IMPLEMENTED")

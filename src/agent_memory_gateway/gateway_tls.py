@@ -12,11 +12,27 @@ class GatewayTLSConfigurationError(RuntimeError):
     """Gateway CA 文件或地址不符合安全要求。"""
 
 
+def validate_gateway_url(gateway_url: str) -> str:
+    parsed = urlsplit(str(gateway_url).strip())
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise GatewayTLSConfigurationError("GATEWAY_URL_INVALID")
+    return parsed.geturl().rstrip("/")
+
+
 def gateway_ssl_context(gateway_url: str) -> ssl.SSLContext | None:
     """只在 HTTPS 且显式指定 CA 文件时建立独立的校验证书上下文。"""
 
+    gateway_url = validate_gateway_url(gateway_url)
     configured_path = os.environ.get("MEMORY_GATEWAY_CA_CERTIFICATE", "").strip()
-    scheme = urlsplit(str(gateway_url)).scheme.lower()
+    scheme = urlsplit(gateway_url).scheme.lower()
     if not configured_path:
         return None
     if scheme != "https":

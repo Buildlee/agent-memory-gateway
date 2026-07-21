@@ -67,7 +67,7 @@ def scan(source: Path, batch: str, output: Path) -> None:
                     "import_batch_id": batch,
                     "source_path": str(path),
                     "original_content_hash": content_hash(chunk),
-                    "content": chunk,
+                    **({"content": chunk} if not sensitive else {}),
                     "scope": infer_scope(path, chunk),
                     "status": "blocked_sensitive" if sensitive else "imported_candidate",
                 }

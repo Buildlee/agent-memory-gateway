@@ -41,6 +41,9 @@ class ReleaseSafetyTests(unittest.TestCase):
     def test_fn_release_script_uses_the_requested_ssh_port_for_upload_and_remote_commands(self) -> None:
         script = (ROOT / "scripts" / "deploy-fn-release.ps1").read_text(encoding="utf-8")
         self.assertIn("[int]$SshPort = 22", script)
+        self.assertIn("[string]$GatewayPublicName", script)
+        self.assertIn("[string]$GatewayBindAddress", script)
+        self.assertIn("MEMORY_GATEWAY_BIND_ADDRESS=$GatewayBindAddress", script)
         self.assertIn('$sshArguments = @("-p", [string]$SshPort, $SshHost)', script)
         self.assertIn("& ssh @sshArguments $prepareCommand", script)
         self.assertIn("& scp -P $SshPort -r", script)

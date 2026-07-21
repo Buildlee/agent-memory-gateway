@@ -367,8 +367,9 @@ def main() -> None:
     encoded_key = os.environ.get("MEMORY_OUTBOX_KEY", "")
     token = daemon_auth_token(encoded_key)
     provider = refresh_token_provider_from_environment()
+    client = SidecarClient()
     server = create_sidecar_server(
-        SidecarClient(),
+        client,
         token,
         host=args.host,
         port=args.port,
@@ -383,11 +384,11 @@ def main() -> None:
             try:
                 if provider is not None:
                     token = provider.access_token("hermes-desktop")
-                    server.client.token = token
-                    server.client.agent_id = "hermes-desktop"
-                    server.client.sync()
-            except Exception:
-                pass
+                    client.token = token
+                    client.agent_id = "hermes-desktop"
+                    client.sync()
+            except Exception as exc:  # noqa: BLE001
+                print(f"Memory Sidecar heartbeat failed: {type(exc).__name__}", flush=True)
     import threading as _threading
     _threading.Thread(target=_heartbeat, daemon=True, name="memory-sidecar-heartbeat").start()
     try:

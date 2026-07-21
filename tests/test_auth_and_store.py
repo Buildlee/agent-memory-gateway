@@ -26,6 +26,10 @@ def principal(*, agent: str = "codex", device: str = "pc", workspaces: tuple[str
         agent_installation_id=agent,
         workspace_ids=frozenset(workspaces),
         capabilities=frozenset({"memory.write_event", "memory.search", "memory.read_context"}),
+        workspace_capabilities={
+            workspace: frozenset({"memory.write_event", "memory.search", "memory.read_context"})
+            for workspace in workspaces
+        },
     )
 
 

@@ -7,7 +7,7 @@ import hmac
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .access_token import AccessTokenError, AccessTokenSigner
 
@@ -31,6 +31,7 @@ class Principal:
     agent_installation_id: str
     workspace_ids: frozenset[str]
     capabilities: frozenset[str]
+    workspace_capabilities: Mapping[str, frozenset[str]] | None = None
     device_auth_epoch: int = 1
     agent_auth_epoch: int = 1
     token_id: str | None = None
@@ -43,6 +44,12 @@ class Principal:
 
     def require_capability(self, capability: str) -> None:
         if capability not in self.capabilities:
+            raise AuthError("CAPABILITY_FORBIDDEN")
+
+    def require_workspace_capability(self, workspace_id: str, capability: str) -> None:
+        self.require_workspace(workspace_id)
+        capabilities = (self.workspace_capabilities or {}).get(workspace_id, self.capabilities)
+        if capability not in capabilities:
             raise AuthError("CAPABILITY_FORBIDDEN")
 
 
@@ -90,6 +97,7 @@ class TokenAuthenticator:
                 agent_installation_id=str(entry["agent_installation_id"]),
                 workspace_ids=workspace_ids,
                 capabilities=capabilities,
+                workspace_capabilities={workspace_id: capabilities for workspace_id in workspace_ids},
             )
         return cls(principals)
 
@@ -199,8 +207,11 @@ class PostgresTokenAuthenticator(TokenAuthenticator):
                     (claims.agent_installation_id, claims.tenant_id, claims.user_id),
                 )
             )
-        workspace_ids = frozenset(str(binding[0]) for binding in bindings)
-        capabilities = frozenset(str(value) for binding in bindings for value in binding[1])
+        workspace_capabilities = {
+            str(binding[0]): frozenset(str(value) for value in binding[1]) for binding in bindings
+        }
+        workspace_ids = frozenset(workspace_capabilities)
+        capabilities = frozenset(value for values in workspace_capabilities.values() for value in values)
         return Principal(
             tenant_id=claims.tenant_id,
             user_id=claims.user_id,
@@ -208,6 +219,7 @@ class PostgresTokenAuthenticator(TokenAuthenticator):
             agent_installation_id=claims.agent_installation_id,
             workspace_ids=workspace_ids,
             capabilities=capabilities,
+            workspace_capabilities=workspace_capabilities,
             device_auth_epoch=claims.device_auth_epoch,
             agent_auth_epoch=claims.agent_auth_epoch,
             token_id=claims.token_id,
