@@ -51,7 +51,8 @@ python -m compileall -q src
   -SshPort 22 `
   -RemoteRoot "/srv/memory-gateway" `
   -SecretsFile "/srv/memory-gateway/secrets.env" `
-  -GatewayAddress "memory-gateway.internal"
+  -GatewayPublicName "memory-gateway.internal" `
+  -GatewayBindAddress "192.168.1.100"
 ```
 
 进入维护窗口、确认备份和迁移状态后，在同一条命令末尾加 `-Apply`。这时才会创建发布目录、上传公开代码、构建镜像并启动 Gateway、Worker 和 HTTPS 代理。

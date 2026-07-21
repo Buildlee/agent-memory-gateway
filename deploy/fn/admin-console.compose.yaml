@@ -105,3 +105,9 @@ services:
         source: ${MEMORY_ADMIN_CONSOLE_STATE_DIR:?必须指定管理会话状态目录}
         target: /admin-state
         read_only: false
+
+networks:
+  backend:
+    external: true
+  ingress:
+    external: true
