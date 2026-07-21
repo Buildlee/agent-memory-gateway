@@ -91,6 +91,8 @@ class PostgresAdminService:
                 JOIN workspaces AS w ON w.workspace_id = b.workspace_id
                 WHERE w.tenant_id = %s AND w.user_id = %s AND b.workspace_id = %s
                   AND d.status = 'active' AND a.status = 'active' AND b.status = 'active'
+                  AND d.last_seen_at IS NOT NULL
+                  AND d.last_seen_at > now() - interval '15 minutes'
                 """,
                 (principal.tenant_id, principal.user_id, workspace_id),
             )
