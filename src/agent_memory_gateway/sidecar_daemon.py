@@ -381,7 +381,11 @@ def main() -> None:
         while True:
             _time.sleep(300)
             try:
-                server.client.sync()
+                if provider is not None:
+                    token = provider.access_token("hermes-desktop")
+                    server.client.token = token
+                    server.client.agent_id = "hermes-desktop"
+                    server.client.sync()
             except Exception:
                 pass
     import threading as _threading
