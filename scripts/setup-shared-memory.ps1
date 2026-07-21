@@ -24,7 +24,9 @@ param(
 
     [string]$BackendNetwork = "memory-backend",
 
-    [string]$GatewayAddress,
+    [string]$GatewayPublicName,
+
+    [string]$GatewayBindAddress,
 
     [ValidateRange(1024, 65535)]
     [int]$HttpsPort = 8443,
@@ -252,10 +254,11 @@ if ($Mode -eq "server") {
             "SshHost" = $SshHost
             "RemoteRoot" = $RemoteRoot
             "SecretsFile" = $SecretsFile
-            "GatewayAddress" = $GatewayAddress
+            "GatewayPublicName" = $GatewayPublicName
         }.GetEnumerator()) {
         Require-Value -Name $required.Key -Value $required.Value
     }
+    $bindAddress = if ($GatewayBindAddress) { $GatewayBindAddress } else { $GatewayPublicName }
     if (-not $Apply) {
         [pscustomobject]@{
             mode = "server"
@@ -263,7 +266,8 @@ if ($Mode -eq "server") {
             message = "已核对发布参数。确认维护窗口后，加上 -Apply 执行构建和启动。"
             ssh_host = $SshHost
             ssh_port = $SshPort
-            gateway_address = $GatewayAddress
+            gateway_public_name = $GatewayPublicName
+            gateway_bind_address = $bindAddress
         }
         exit 0
     }
@@ -273,7 +277,8 @@ if ($Mode -eq "server") {
         -RemoteRoot $RemoteRoot `
         -SecretsFile $SecretsFile `
         -BackendNetwork $BackendNetwork `
-        -GatewayAddress $GatewayAddress `
+        -GatewayPublicName $GatewayPublicName `
+        -GatewayBindAddress $bindAddress `
         -HttpsPort $HttpsPort `
         -ProjectRoot $projectRoot `
         -Build `

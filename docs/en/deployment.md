@@ -45,13 +45,14 @@ Tests passing only confirms the code baseline is usable — it does **not** mean
 Once you have prepared your secrets, certificates, database backups, and protected environment files, you can use a single entry point for deployment. On the first run, omit `-Apply` to only review the parameters and see which SSH host, port, and Gateway name will be used:
 
 ```powershell
-.\scripts\setup-shared-memory.ps1 `
+.\\scripts\\setup-shared-memory.ps1 `
   -Mode server `
   -SshHost "deploy-user@server" `
   -SshPort 22 `
   -RemoteRoot "/srv/memory-gateway" `
   -SecretsFile "/srv/memory-gateway/secrets.env" `
-  -GatewayAddress "memory-gateway.internal"
+  -GatewayPublicName "memory-gateway.internal" `
+  -GatewayBindAddress "192.168.1.100"
 ```
 
 After entering the maintenance window and confirming backups and migration status, append `-Apply` to the same command. Only then will it create the deployment directory, upload public code, build the image, and start Gateway, Worker, and the HTTPS proxy.
