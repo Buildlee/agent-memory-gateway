@@ -2204,13 +2204,7 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
                 self._json(sidecar.list_admin_dead_letters(payload | {"limit": 50}))
             elif path == "/api/memories":
                 text = str(((query or {}).get("q") or [""])[0]).strip()
-                if text and 2 <= len(text) <= 256:
-                    self._json(sidecar.search(payload | {"query": text, "limit": 20}))
-                else:
-                    try:
-                        self._json(sidecar.list_memories(payload | {"limit": 200}))
-                    except AttributeError:
-                        self._json(sidecar.search(payload | {"query": "", "limit": 20}))
+                self._json(sidecar.search(payload | {"query": text if text and 2 <= len(text) <= 256 else "", "limit": 50}))
             elif path == "/api/memory-graph":
                 self._json(sidecar.memory_graph(payload))
             else:
