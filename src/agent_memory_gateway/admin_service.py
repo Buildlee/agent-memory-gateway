@@ -557,7 +557,9 @@ class PostgresAdminService:
                 """,
                 (principal.tenant_id, principal.user_id, workspace_id),
             ).fetchall()
-            lifecycle_rows = connection.execute(
+            lifecycle_rows = []
+            try:
+                lifecycle_rows = connection.execute(
                 """
                 SELECT backend_ref, lifecycle.status, superseded_by
                 FROM memory_lifecycle lifecycle
@@ -568,6 +570,8 @@ class PostgresAdminService:
                 """,
                 (principal.tenant_id, principal.user_id, workspace_id),
             ).fetchall()
+            except Exception:
+                pass
         nodes = []
         edges = []
         seen = set()
