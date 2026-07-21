@@ -13,7 +13,8 @@ def reviewer() -> Principal:
         device_id="review-pc",
         agent_installation_id="codex-review",
         workspace_ids=frozenset({"workspace-a"}),
-        capabilities=frozenset({"memory.manage"}),
+        capabilities=frozenset({"memory.manage", "memory.forget"}),
+        workspace_capabilities={"workspace-a": frozenset({"memory.manage", "memory.forget"})},
     )
 
 
@@ -65,6 +66,8 @@ class ReviewConnection:
             return Cursor(rows=self.conflicts)
         if normalized.startswith("SELECT status, pinned FROM memory_lifecycle"):
             return Cursor(("active", False))
+        if normalized.startswith("SELECT status, updated_server_revision FROM memory_lifecycle"):
+            return Cursor(("active", 20))
         if "SELECT state_value FROM gateway_state" in normalized:
             return Cursor((str(self.revision),))
         if normalized.startswith("UPDATE gateway_state"):
@@ -250,3 +253,14 @@ class ReviewServiceTests(unittest.TestCase):
             if "INSERT INTO memory_lifecycle_history" in sql
         )
         self.assertLess(revert_operation_index, revert_history_index)
+
+    def test_forget_archives_memory_and_writes_tombstone(self):
+        connection = ReviewConnection(self.candidate_row())
+        backend = FakeGBrain()
+        result = self.service(connection, backend).forget(
+            {"workspace_id": "workspace-a", "memory_id": "gbrain:fact:200"}, reviewer()
+        )
+        self.assertEqual(result["status"], "archived")
+        self.assertEqual(backend.archives[0]["reference"], "gbrain:fact:200")
+        self.assertTrue(any("UPDATE memory_lifecycle SET status = 'archived'" in sql for sql, _ in connection.executed))
+        self.assertTrue(any("INSERT INTO memory_tombstones" in sql for sql, _ in connection.executed))

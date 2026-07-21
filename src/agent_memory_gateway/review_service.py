@@ -176,6 +176,43 @@ class PostgresReviewService:
                     connection, candidate, principal, action, idempotency_key
                 )
 
+    def forget(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
+        workspace_id = self._required_text(payload.get("workspace_id"), "WORKSPACE_REQUIRED", 256)
+        backend_ref = self._required_text(payload.get("memory_id"), "MEMORY_ID_REQUIRED", 128)
+        if bool(payload.get("hard_delete")):
+            raise ReviewError("HARD_DELETE_NOT_SUPPORTED")
+        with self._connect() as connection:
+            with connection.transaction():
+                PostgresEventLedger._require_binding(connection, principal, workspace_id, "memory.forget")
+                row = connection.execute(
+                    """
+                    SELECT status, updated_server_revision
+                    FROM memory_lifecycle
+                    WHERE backend_ref = %s AND tenant_id = %s AND user_id = %s AND workspace_id = %s
+                    FOR UPDATE
+                    """,
+                    (backend_ref, principal.tenant_id, principal.user_id, workspace_id),
+                ).fetchone()
+                if row is None:
+                    raise ReviewError("MEMORY_NOT_FOUND")
+                if str(row[0]) != "active":
+                    return {"memory_id": backend_ref, "status": str(row[0]), "server_revision": int(row[1])}
+                self._gbrain.archive(
+                    idempotency_key=self._gbrain_key("forget", backend_ref, workspace_id), reference=backend_ref
+                )
+                server_revision = self._next_revision(connection)
+                connection.execute(
+                    """
+                    UPDATE memory_lifecycle
+                    SET status = 'archived', updated_server_revision = %s, updated_at = now()
+                    WHERE backend_ref = %s
+                    """,
+                    (server_revision, backend_ref),
+                )
+                self._insert_tombstone(connection, backend_ref, principal, server_revision, "forgotten")
+                self._mark_backend_crystal_stale(connection, backend_ref, server_revision)
+        return {"memory_id": backend_ref, "status": "archived", "server_revision": server_revision}
+
     def revert(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
         workspace_id = self._required_text(payload.get("workspace_id"), "WORKSPACE_REQUIRED", 256)
         review_id = self._required_text(payload.get("review_id"), "REVIEW_ID_REQUIRED", 128)
@@ -424,6 +461,9 @@ class PostgresReviewService:
                 connection, str(backend_ref), principal, "compensate_archive", "active", "archived",
                 server_revision, operation_id, str(target_ref) if target_ref else None,
             )
+            self._insert_tombstone(
+                connection, str(backend_ref), principal, server_revision, "archived"
+            )
             self._mark_backend_crystal_stale(connection, str(backend_ref), server_revision)
         if action == "supersede" and target_ref:
             connection.execute(
@@ -542,6 +582,9 @@ class PostgresReviewService:
         self._insert_history(
             connection, target_ref, candidate.origin, "supersede", "active", "superseded",
             server_revision, operation_id, backend_ref,
+        )
+        self._insert_tombstone(
+            connection, target_ref, candidate.origin, server_revision, "superseded"
         )
         mark_crystal_stale(connection, binding_hash, server_revision)
 
@@ -839,6 +882,28 @@ class PostgresReviewService:
             (
                 history_id, backend_ref, operation_id, principal.tenant_id, principal.user_id,
                 action, from_status, to_status, related_ref, server_revision,
+            ),
+        )
+
+    def _insert_tombstone(
+        self,
+        connection: Any,
+        backend_ref: str,
+        principal: Principal,
+        server_revision: int,
+        reason_code: str,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO memory_tombstones (
+              memory_id, tenant_id, user_id, backend_ref, deleted_revision,
+              deleted_by_device_id, reason_code
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (backend_ref) DO NOTHING
+            """,
+            (
+                backend_ref, principal.tenant_id, principal.user_id, backend_ref,
+                server_revision, principal.device_id, reason_code,
             ),
         )
 

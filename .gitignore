@@ -22,6 +22,7 @@ import-preview-*.jsonl
 principals.json
 principals.*.local.json
 *.pem
+*.crt
 *.key
 *.pfx
 *.p12
@@ -44,6 +45,7 @@ scripts/verify_gbrain_page_insert.py
 scripts/verify_persisted_memory.py
 scripts/verify_shared_sidecar.py
 scripts/write_approved_memory.py
+src/agent_memory_gateway/admin_console_tmp.py
 
 # One-off operational scripts for a specific deployment. Keep these local;
 # reusable templates belong in version-controlled scripts with placeholder values.
@@ -61,3 +63,4 @@ scripts/verify_gbrain_page_insert.py
 scripts/verify_persisted_memory.py
 scripts/verify_shared_sidecar.py
 scripts/write_approved_memory.py
+src/agent_memory_gateway/admin_console_tmp.py

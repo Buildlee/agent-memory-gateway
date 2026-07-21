@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agent_memory_gateway.file_credential import read_file_credential, write_file_credential
-from agent_memory_gateway.sidecar_auth import FileRefreshTokenProvider, WindowsRefreshTokenProvider
+from agent_memory_gateway.sidecar_auth import FileRefreshTokenProvider, SidecarAuthError, WindowsRefreshTokenProvider
 
 
 class _Response:
@@ -24,6 +24,16 @@ class _Response:
 
 
 class WindowsRefreshTokenProviderTests(unittest.TestCase):
+    def test_gateway_url_rejects_userinfo_query_fragment_and_path(self):
+        for url in (
+            "https://trusted@untrusted.invalid",
+            "https://gateway.internal/?x=1",
+            "https://gateway.internal/#frag",
+            "https://gateway.internal/admin",
+        ):
+            with self.subTest(url=url), self.assertRaises(SidecarAuthError):
+                WindowsRefreshTokenProvider(url, "AgentMemoryGateway/test-device")
+
     def test_refresh_rotates_credential_and_caches_short_token(self):
         provider = WindowsRefreshTokenProvider(
             "http://127.0.0.1:8787",

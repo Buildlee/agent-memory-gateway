@@ -146,17 +146,18 @@ class Outbox:
             CREATE INDEX IF NOT EXISTS idx_outbox_events_v3_state
               ON outbox_events_v3 (state, next_attempt_at, device_seq);
 
-            CREATE TABLE IF NOT EXISTS sidecar_cache_v1 (
-              cache_id TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS sidecar_cache_v2 (
+              cache_id TEXT NOT NULL,
               workspace_id TEXT NOT NULL,
               server_revision INTEGER NOT NULL,
               payload_ciphertext BLOB NOT NULL,
               payload_nonce BLOB NOT NULL,
               payload_key_version TEXT NOT NULL,
-              updated_at TEXT NOT NULL
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY (workspace_id, cache_id)
             );
-            CREATE INDEX IF NOT EXISTS idx_sidecar_cache_v1_workspace_revision
-              ON sidecar_cache_v1 (workspace_id, server_revision DESC);
+            CREATE INDEX IF NOT EXISTS idx_sidecar_cache_v2_workspace_revision
+              ON sidecar_cache_v2 (workspace_id, server_revision DESC);
             """
         )
         migrated = self.conn.execute(
@@ -453,7 +454,7 @@ class Outbox:
 
         with self._thread_lock:
             with self.conn:
-                self.conn.execute("DELETE FROM sidecar_cache_v1 WHERE workspace_id = ?", (workspace_id,))
+                self.conn.execute("DELETE FROM sidecar_cache_v2 WHERE workspace_id = ?", (workspace_id,))
                 self._set_sync_values(
                     workspace_id,
                     {
@@ -506,7 +507,7 @@ class Outbox:
                 (
                     cache_id,
                     revision,
-                    self._cipher.encrypt_json(memory, aad=self._cache_aad(cache_id)),
+                    self._cipher.encrypt_json(memory, aad=self._cache_aad(workspace_id, cache_id)),
                 )
             )
         with self._thread_lock:
@@ -514,18 +515,17 @@ class Outbox:
                 for cache_id, revision, encrypted in encrypted_memories:
                     self.conn.execute(
                         """
-                        INSERT INTO sidecar_cache_v1 (
+                        INSERT INTO sidecar_cache_v2 (
                           cache_id, workspace_id, server_revision, payload_ciphertext,
                           payload_nonce, payload_key_version, updated_at
                         ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT (cache_id) DO UPDATE SET
-                          workspace_id = excluded.workspace_id,
+                        ON CONFLICT (workspace_id, cache_id) DO UPDATE SET
                           server_revision = excluded.server_revision,
                           payload_ciphertext = excluded.payload_ciphertext,
                           payload_nonce = excluded.payload_nonce,
                           payload_key_version = excluded.payload_key_version,
                           updated_at = excluded.updated_at
-                        WHERE excluded.server_revision >= sidecar_cache_v1.server_revision
+                        WHERE excluded.server_revision >= sidecar_cache_v2.server_revision
                         """,
                         (
                             cache_id,
@@ -543,7 +543,7 @@ class Outbox:
                     backend_ref = str(tombstone.get("backend_ref") or "")
                     if backend_ref:
                         self.conn.execute(
-                            "DELETE FROM sidecar_cache_v1 WHERE cache_id = ? AND workspace_id = ?",
+                            "DELETE FROM sidecar_cache_v2 WHERE cache_id = ? AND workspace_id = ?",
                             (backend_ref, workspace_id),
                         )
                 self._set_sync_values(
@@ -566,7 +566,7 @@ class Outbox:
             rows = self.conn.execute(
                 """
                 SELECT cache_id, payload_ciphertext, payload_nonce, payload_key_version
-                FROM sidecar_cache_v1
+                FROM sidecar_cache_v2
                 WHERE workspace_id = ?
                 ORDER BY server_revision DESC
                 """,
@@ -576,7 +576,9 @@ class Outbox:
             for row in rows:
                 encrypted = EncryptedPayload(bytes(row[1]), bytes(row[2]), str(row[3]))
                 try:
-                    memory = self._cipher.decrypt_json(encrypted, aad=self._cache_aad(str(row[0])))
+                    memory = self._cipher.decrypt_json(
+                        encrypted, aad=self._cache_aad(workspace_id, str(row[0]))
+                    )
                 except EncryptionError as exc:
                     raise OutboxError("无法解密 Sidecar 授权缓存") from exc
                 if normalized_query and normalized_query not in str(memory.get("content") or "").lower():
@@ -640,8 +642,8 @@ class Outbox:
             )
 
     @staticmethod
-    def _cache_aad(cache_id: str) -> bytes:
-        return f"memory-sidecar-cache:{cache_id}".encode("utf-8")
+    def _cache_aad(workspace_id: str, cache_id: str) -> bytes:
+        return f"memory-sidecar-cache:{workspace_id}:{cache_id}".encode("utf-8")
 
     @staticmethod
     def _aad(event_id: str) -> bytes:

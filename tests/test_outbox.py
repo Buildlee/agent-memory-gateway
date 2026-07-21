@@ -195,7 +195,7 @@ class OutboxEncryptionTests(unittest.TestCase):
                     ["gbrain:fact:43"],
                 )
                 raw = outbox.conn.execute(
-                    "SELECT payload_ciphertext FROM sidecar_cache_v1 WHERE cache_id = 'gbrain:fact:43'"
+                    "SELECT payload_ciphertext FROM sidecar_cache_v2 WHERE cache_id = 'gbrain:fact:43'"
                 ).fetchone()[0]
                 self.assertNotIn("仍然有效的缓存".encode("utf-8"), bytes(raw))
                 state = outbox.sync_state("workspace-a")

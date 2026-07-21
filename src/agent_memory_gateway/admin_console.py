@@ -137,6 +137,8 @@ def _public_base_url(value: str | None, mount_path: str) -> str:
     if (
         parsed.scheme != "https"
         or not parsed.netloc
+        or parsed.username
+        or parsed.password
         or parsed.query
         or parsed.fragment
         or parsed.path.rstrip("/") != mount_path
