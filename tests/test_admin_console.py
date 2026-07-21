@@ -230,7 +230,7 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertEqual(memories["memories"][0]["memory_id"], "gbrain:fact:1")
         self.assertEqual(
             self.sidecar.search_payloads,
-            [{"workspace_id": "workspace-a", "query": "发布", "limit": 20}],
+            [{"workspace_id": "workspace-a", "query": "发布", "limit": 50}],
         )
         self.assertNotIn("MEMORY_OUTBOX_KEY", json.dumps([overview, health, reviews, memories], ensure_ascii=False))
 

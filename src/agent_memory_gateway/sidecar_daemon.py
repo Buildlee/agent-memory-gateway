@@ -258,6 +258,12 @@ class LocalSidecarProxy:
     def cleanup_confirmed(self, confirmed_by_user: bool = False) -> dict[str, Any]:
         return self._call("cleanup", {"confirmed_by_user": bool(confirmed_by_user)})
 
+    def list_memories(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("list_memories", payload)
+
+    def memory_graph(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("memory_graph", payload)
+
     def _call(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(
             {
@@ -370,6 +376,20 @@ def main() -> None:
         allowed_agent_ids=_allowed_agent_ids_from_environment(),
     )
     print(f"Memory Sidecar listening on http://{args.host}:{args.port}", flush=True)
+    def _heartbeat() -> None:
+        import time as _time
+        while True:
+            _time.sleep(300)
+            try:
+                if provider is not None:
+                    token = provider.access_token("hermes-desktop")
+                    server.client.token = token
+                    server.client.agent_id = "hermes-desktop"
+                    server.client.sync()
+            except Exception:
+                pass
+    import threading as _threading
+    _threading.Thread(target=_heartbeat, daemon=True, name="memory-sidecar-heartbeat").start()
     try:
         server.serve_forever()
     finally:

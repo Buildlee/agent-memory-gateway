@@ -558,6 +558,11 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       display: flex;
       gap: 8px;
     }}
+    .memory-search button {{
+      flex-shrink: 0;
+      min-width: 64px;
+      white-space: nowrap;
+    }}
     input[type="search"], select {{
       background: white;
       border: 1px solid var(--line);
@@ -843,6 +848,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     .cell-title {{ font-weight: 650; line-height: 1.4; }}
     .online-dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: oklch(0.55 0.15 150); margin-right: 8px; vertical-align: middle; }}
     .online-dot.off {{ background: oklch(0.7 0 0); }}
+    .badge.offline {{ background: oklch(0.88 0.02 260); color: oklch(0.45 0.02 260); }}
     .cell-copy, .cell-meta {{ color: var(--muted); font-size: 12px; line-height: 1.45; margin-top: 4px; }}
     .cell-stack {{ display: grid; gap: 4px; min-width: 150px; }}
     .capability-list {{ display: flex; flex-wrap: wrap; gap: 5px; max-width: 31rem; }}
@@ -1435,7 +1441,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
 
     function deviceOnline(lastSeenAt) {{
       if (!lastSeenAt) return false;
-      return (Date.now() - new Date(lastSeenAt).getTime()) < 5 * 60 * 1000;
+      return (Date.now() - new Date(lastSeenAt).getTime()) < 15 * 60 * 1000;
     }}
 
     function renderDevices(payload) {{
@@ -1461,8 +1467,8 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
         const bindingUpdated = formatTime(item.binding_updated_at);
         const online = deviceOnline(item.device_last_seen_at);
         const onlineDot = online
-          ? `<span class="online-dot" title="5 分钟内活跃"></span>`
-          : `<span class="online-dot off" title="超过 5 分钟未出现"></span>`;
+          ? `<span class="online-dot" title="15 分钟内活跃"></span>`
+          : `<span class="online-dot off" title="超过 15 分钟未出现"></span>`;
         const identifiers = [
           item.device_id ? `设备：${{code(item.device_id)}}` : "",
           item.agent_installation_id ? `Agent：${{code(item.agent_installation_id)}}` : "",
@@ -1473,7 +1479,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
           <tr data-device-row="${{index}}">
             <td><div class="cell-title">${{onlineDot}}${{escapeHTML(deviceName)}}</div><div class="cell-meta"><span class="badge">${{escapeHTML(item.device_type || "device")}}</span></div><details class="record-details"><summary>查看技术标识</summary>${{identifiers}}</details></td>
             <td><div class="cell-title">${{escapeHTML(agentName)}}</div><div class="cell-meta"><span class="badge">${{escapeHTML(item.agent_type || "agent")}}</span></div></td>
-            <td><div class="cell-stack"><div><span class="label">设备</span> ${{stateBadge(deviceStatus)}}</div><div><span class="label">Agent</span> ${{stateBadge(agentStatus)}}</div><div><span class="label">绑定</span> ${{stateBadge(bindingStatus)}}</div></div></td>
+            <td><div class="cell-stack"><div><span class="label">设备</span><span class="badge ${{online ? "ok" : "offline"}}">${{online ? "已连线" : "未连线"}}</span></div><div><span class="label">Agent</span> ${{stateBadge(agentStatus)}}</div><div><span class="label">绑定</span> ${{stateBadge(bindingStatus)}}</div></div></td>
             <td><div class="capability-list">${{capabilities}}</div></td>
             <td><div class="cell-stack"><div><span class="label">最近出现</span><div class="cell-copy">${{escapeHTML(lastSeen)}}</div></div><div><span class="label">绑定更新</span><div class="cell-copy">${{escapeHTML(bindingUpdated)}}</div></div></div></td>
             <td>
@@ -1531,7 +1537,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
           item.source_device_type,
           item.source_agent_type
         ].filter(Boolean).join(" ").toLowerCase();
-        return (!query || haystack.includes(query)) && (!tone || resultTone(item.result_code) === tone);
+        return (!query || haystack.includes(query)) && (!tone || auditTone(item.result_code) === tone);
       }});
       const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
       if (state.activityPage > totalPages) state.activityPage = totalPages;
@@ -2198,13 +2204,7 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
                 self._json(sidecar.list_admin_dead_letters(payload | {"limit": 50}))
             elif path == "/api/memories":
                 text = str(((query or {}).get("q") or [""])[0]).strip()
-                if text and 2 <= len(text) <= 256:
-                    self._json(sidecar.search(payload | {"query": text, "limit": 20}))
-                else:
-                    try:
-                        self._json(sidecar.list_memories(payload | {"limit": 200}))
-                    except AttributeError:
-                        self._json(sidecar.search(payload | {"query": "", "limit": 20}))
+                self._json(sidecar.search(payload | {"query": text if text and 2 <= len(text) <= 256 else "", "limit": 50}))
             elif path == "/api/memory-graph":
                 self._json(sidecar.memory_graph(payload))
             else:
