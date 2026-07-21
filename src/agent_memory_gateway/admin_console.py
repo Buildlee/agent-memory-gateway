@@ -1441,7 +1441,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
 
     function deviceOnline(lastSeenAt) {{
       if (!lastSeenAt) return false;
-      return (Date.now() - new Date(lastSeenAt).getTime()) < 5 * 60 * 1000;
+      return (Date.now() - new Date(lastSeenAt).getTime()) < 15 * 60 * 1000;
     }}
 
     function renderDevices(payload) {{
@@ -1467,8 +1467,8 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
         const bindingUpdated = formatTime(item.binding_updated_at);
         const online = deviceOnline(item.device_last_seen_at);
         const onlineDot = online
-          ? `<span class="online-dot" title="5 分钟内活跃"></span>`
-          : `<span class="online-dot off" title="超过 5 分钟未出现"></span>`;
+          ? `<span class="online-dot" title="15 分钟内活跃"></span>`
+          : `<span class="online-dot off" title="超过 15 分钟未出现"></span>`;
         const identifiers = [
           item.device_id ? `设备：${{code(item.device_id)}}` : "",
           item.agent_installation_id ? `Agent：${{code(item.agent_installation_id)}}` : "",
