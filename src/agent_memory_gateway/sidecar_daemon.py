@@ -376,6 +376,16 @@ def main() -> None:
         allowed_agent_ids=_allowed_agent_ids_from_environment(),
     )
     print(f"Memory Sidecar listening on http://{args.host}:{args.port}", flush=True)
+    def _heartbeat() -> None:
+        import time as _time
+        while True:
+            _time.sleep(300)
+            try:
+                server.client.sync()
+            except Exception:
+                pass
+    import threading as _threading
+    _threading.Thread(target=_heartbeat, daemon=True, name="memory-sidecar-heartbeat").start()
     try:
         server.serve_forever()
     finally:
