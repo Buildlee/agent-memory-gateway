@@ -558,6 +558,11 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       display: flex;
       gap: 8px;
     }}
+    .memory-search button {{
+      flex-shrink: 0;
+      min-width: 64px;
+      white-space: nowrap;
+    }}
     input[type="search"], select {{
       background: white;
       border: 1px solid var(--line);

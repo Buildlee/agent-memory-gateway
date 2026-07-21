@@ -258,6 +258,12 @@ class LocalSidecarProxy:
     def cleanup_confirmed(self, confirmed_by_user: bool = False) -> dict[str, Any]:
         return self._call("cleanup", {"confirmed_by_user": bool(confirmed_by_user)})
 
+    def list_memories(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("list_memories", payload)
+
+    def memory_graph(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("memory_graph", payload)
+
     def _call(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(
             {
