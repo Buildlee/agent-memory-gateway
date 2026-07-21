@@ -1537,7 +1537,7 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
           item.source_device_type,
           item.source_agent_type
         ].filter(Boolean).join(" ").toLowerCase();
-        return (!query || haystack.includes(query)) && (!tone || resultTone(item.result_code) === tone);
+        return (!query || haystack.includes(query)) && (!tone || auditTone(item.result_code) === tone);
       }});
       const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
       if (state.activityPage > totalPages) state.activityPage = totalPages;
