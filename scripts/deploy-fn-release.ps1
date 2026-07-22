@@ -24,6 +24,11 @@ param(
 
     [int]$WorkerHeartbeatMaxSeconds = 30,
 
+    [ValidateSet("slim", "split")]
+    [string]$DeploymentProfile = "slim",
+
+    [string]$AdminEnvironmentFile,
+
     [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot),
 
     [switch]$Build,
@@ -60,6 +65,14 @@ if ($HttpsPort -lt 1024 -or $HttpsPort -gt 65535) {
 if ($WorkerHeartbeatMaxSeconds -lt 1 -or $WorkerHeartbeatMaxSeconds -gt 3600) {
     throw "WorkerHeartbeatMaxSeconds 必须在 1 到 3600 之间"
 }
+if ($DeploymentProfile -eq "slim") {
+    if ([string]::IsNullOrWhiteSpace($AdminEnvironmentFile)) {
+        throw "slim 默认模式需要 AdminEnvironmentFile，用于复用已登记的中枢管理身份。"
+    }
+    if ($AdminEnvironmentFile -notmatch "^/[A-Za-z0-9._/-]+$") {
+        throw "AdminEnvironmentFile 必须是不含空格的 Linux 绝对路径"
+    }
+}
 $projectRoot = (Resolve-Path -LiteralPath $ProjectRoot -ErrorAction Stop).ProviderPath
 foreach ($path in @("pyproject.toml", "README.md", "src", "schema", "deploy")) {
     if (-not (Test-Path -LiteralPath (Join-Path $projectRoot $path))) {
@@ -75,7 +88,8 @@ $releaseId = "release-" + (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss
 $remoteRelease = "$RemoteRoot/releases/$releaseId"
 $sshArguments = @("-p", [string]$SshPort, $SshHost)
 
-$prepareCommand = "set -eu; docker network inspect '$BackendNetwork' >/dev/null; test -r '$SecretsFile'; mkdir -p '$RemoteRoot/releases'; test ! -e '$remoteRelease'; mkdir -m 0750 '$remoteRelease'"
+$adminCheck = if ($DeploymentProfile -eq "slim") { "test -r '$AdminEnvironmentFile';" } else { "" }
+$prepareCommand = "set -eu; docker network inspect '$BackendNetwork' >/dev/null; test -r '$SecretsFile'; $adminCheck mkdir -p '$RemoteRoot/releases'; test ! -e '$remoteRelease'; mkdir -m 0750 '$remoteRelease'"
 & ssh @sshArguments $prepareCommand
 if ($LASTEXITCODE -ne 0) {
     throw "远端发布前置检查失败，退出码：$LASTEXITCODE"
@@ -96,7 +110,7 @@ finally {
     Pop-Location
 }
 
-$publicConfigCommand = "chmod 0644 '$remoteRelease/deploy/fn/Caddyfile'"
+$publicConfigCommand = "chmod 0644 '$remoteRelease/deploy/fn/Caddyfile' '$remoteRelease/deploy/fn/Caddyfile.slim'"
 & ssh @sshArguments $publicConfigCommand
 if ($LASTEXITCODE -ne 0) {
     throw "设置 Caddy 公开配置文件权限失败，退出码：$LASTEXITCODE"
@@ -108,14 +122,17 @@ if ($LASTEXITCODE -ne 0) {
     throw "写入不含密钥的发布环境文件失败，退出码：$LASTEXITCODE"
 }
 
-$validateCommand = "cd '$remoteRelease' && docker compose --project-name memory-gateway --env-file .env -f deploy/fn/compose.yaml config -q"
+$composeFile = if ($DeploymentProfile -eq "slim") { "deploy/fn/compose.slim.yaml" } else { "deploy/fn/compose.yaml" }
+$adminEnvArgument = if ($DeploymentProfile -eq "slim") { "--env-file '$AdminEnvironmentFile'" } else { "" }
+$composeCommand = "docker compose --project-name memory-gateway --env-file .env $adminEnvArgument -f '$composeFile'"
+$validateCommand = "cd '$remoteRelease' && $composeCommand config -q"
 & ssh @sshArguments $validateCommand
 if ($LASTEXITCODE -ne 0) {
     throw "远端 Compose 校验失败，退出码：$LASTEXITCODE"
 }
 
 if ($Build) {
-    $buildCommand = "cd '$remoteRelease' && docker compose --project-name memory-gateway --env-file .env -f deploy/fn/compose.yaml build --pull"
+    $buildCommand = "cd '$remoteRelease' && $composeCommand build --pull"
     & ssh @sshArguments $buildCommand
     if ($LASTEXITCODE -ne 0) {
         throw "远端 Gateway 镜像构建失败，退出码：$LASTEXITCODE"
@@ -123,7 +140,7 @@ if ($Build) {
 }
 
 if ($Start) {
-    $startCommand = "cd '$remoteRelease' && docker compose --project-name memory-gateway --env-file .env -f deploy/fn/compose.yaml up -d --no-build --force-recreate"
+    $startCommand = "cd '$remoteRelease' && $composeCommand up -d --no-build --force-recreate"
     & ssh @sshArguments $startCommand
     if ($LASTEXITCODE -ne 0) {
         throw "远端 Gateway 服务启动失败，退出码：$LASTEXITCODE"
@@ -141,5 +158,6 @@ if ($LASTEXITCODE -ne 0) {
     ssh_port = $SshPort
     built = [bool]$Build
     started = [bool]$Start
+    deployment_profile = $DeploymentProfile
     endpoint = "https://$GatewayPublicName`:$HttpsPort"
 }

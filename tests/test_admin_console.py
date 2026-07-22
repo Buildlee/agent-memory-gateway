@@ -88,6 +88,17 @@ class FakeSidecar:
     def list_admin_dead_letters(self, payload):
         return {"workspace_id": payload["workspace_id"], "dead_letters": []}
 
+    def memory_impact(self, payload):
+        return {
+            "workspace_id": payload["workspace_id"],
+            "summary": {"recall_count_24h": 2, "recalled_items_24h": 4, "feedback_count_30d": 1, "positive_rate_30d": 1.0},
+            "agents": [],
+            "recent_feedback": [],
+        }
+
+    def list_memory_sources(self, payload):
+        return {"workspace_id": payload["workspace_id"], "sources": [], "recent_bindings": []}
+
     def search(self, payload):
         self.search_payloads.append(payload)
         return {
@@ -184,6 +195,8 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("Memory Admin", html)
         self.assertIn('id="confirm-dialog"', html)
         self.assertIn('data-view="memories"', html)
+        self.assertIn('data-view="impact"', html)
+        self.assertIn('data-view="sources"', html)
         self.assertIn('data-view="activity"', html)
         self.assertIn("LOCAL_METHOD_UNSUPPORTED", html)
         self.assertIn("Promise.allSettled", html)
@@ -223,11 +236,15 @@ class AdminConsoleTests(unittest.TestCase):
         health = self._json("/api/health", cookie)
         reviews = self._json("/api/reviews", cookie)
         memories = self._json("/api/memories?q=%E5%8F%91%E5%B8%83", cookie)
+        impact = self._json("/api/impact", cookie)
+        sources = self._json("/api/sources", cookie)
 
         self.assertEqual(overview["workspace_id"], "workspace-a")
         self.assertTrue(health["ok"])
         self.assertEqual(reviews["count"], 1)
         self.assertEqual(memories["memories"][0]["memory_id"], "gbrain:fact:1")
+        self.assertEqual(impact["summary"]["recall_count_24h"], 2)
+        self.assertEqual(sources["sources"], [])
         self.assertEqual(
             self.sidecar.search_payloads,
             [{"workspace_id": "workspace-a", "query": "发布", "limit": 50}],

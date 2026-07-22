@@ -19,6 +19,58 @@ class ReconcileResultTests(unittest.TestCase):
         self.assertEqual(result["backend_ref"], "gbrain:fact:42")
         self.assertEqual(result["server_revision"], 7)
 
+    def test_external_provenance_accepts_only_opaque_safe_identifiers(self):
+        payload = {
+            "metadata": {
+                "provenance": {
+                    "provider_type": "files",
+                    "provider_instance_id": "hermes-local",
+                    "source_record_id": "local_123",
+                    "source_revision": "a" * 64,
+                    "capture_mode": "manual_selection",
+                }
+            }
+        }
+        provenance = PendingEventWorker._external_provenance(payload)
+        self.assertEqual(provenance["provider_instance_id"], "hermes-local")
+        payload["metadata"]["provenance"]["source_record_id"] = "C:\\private\\MEMORY.md"
+        self.assertIsNone(PendingEventWorker._external_provenance(payload))
+
+    def test_external_binding_contains_no_content_or_file_path(self):
+        class Connection:
+            def __init__(self):
+                self.sql = ""
+                self.params = None
+
+            def execute(self, sql, params=None):
+                self.sql = " ".join(sql.split())
+                self.params = params
+                return Cursor()
+
+        connection = Connection()
+        principal = type("P", (), {
+            "tenant_id": "personal",
+            "user_id": "lee",
+            "device_id": "pc",
+            "agent_installation_id": "codex",
+            "workspace_ids": frozenset({"workspace-a"}),
+        })()
+        provenance = {
+            "provider_type": "files",
+            "provider_instance_id": "codex-local",
+            "source_record_id": "local_123",
+            "source_revision": "b" * 64,
+            "capture_mode": "automatic_whitelist",
+        }
+        PendingEventWorker._register_external_binding(
+            connection, principal, "evt_1", provenance, None
+        )
+        self.assertIn("workspace_id, provider_instance_id", connection.sql)
+        serialized = repr(connection.params)
+        self.assertIn("local_123", serialized)
+        self.assertNotIn("MEMORY.md", serialized)
+        self.assertNotIn("content", connection.sql.lower())
+
 
 class ReconcileCycleTests(unittest.TestCase):
     def test_once_calls_only_one_event(self):

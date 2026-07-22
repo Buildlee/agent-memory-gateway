@@ -48,3 +48,7 @@ Keep the preview file in a local protected directory. Check for passwords, token
 - Does it need an expiry date, archive status, or scheduled re-check?
 
 Batch import's write, rollback, and crystal rebuild will continue building on the preview and review workflow, preventing old material from affecting new collaboration unchecked.
+
+## Ongoing local memory sharing
+
+Use `memory-import` for a one-time history migration. For a source that keeps changing, configure a local Provider, inspect records with `memory_local_preview`, then use `memory_share_selected` or the allowlisted `memory_propose_local_candidates` flow. Providers never upload local paths and never write central results back into the original system.

@@ -7,8 +7,8 @@
 </p>
 
 <p align="center">
-  <strong>多 Agent 共用一个长期记忆 —— 每个读写都有来源、有权限、可审计。</strong><br>
-  离线队列、加密同步、敏感内容识别，开箱即用。
+  <strong>让 Codex、Hermes 和未来接入的 Agent 共享真正可用的长期记忆。</strong><br>
+  有来源、有权限、可离线、能反馈，也能接住各端原有的个性化记忆。
 </p>
 
 <p align="center">
@@ -19,7 +19,9 @@
   <a href="#三分钟体验"><img src="https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python" alt="Python 3.10+"></a>
 </p>
 
-不同 Agent 各自独立运行时，跨设备共享长期记忆总会遇到几个问题：谁写的、谁可以看、设备离线怎么办、重复提交怎么去重。这个项目把共享记忆做成独立服务，不依赖提示词约定。每台设备只跑一个本机 Sidecar，Gateway 负责身份验证、权限判断、审计和记忆生命周期。项目包含 45 个 Python 模块和 46 个测试文件，支持 SQLite 和 PostgreSQL 双后端。
+不同 Agent 各自保存记忆时，信息很快会散落在设备、工作区和各自的记忆插件里。Agent Memory Gateway 在它们之间增加一层受控的共享记忆：每台设备只运行一个本机 Sidecar，中枢负责身份、权限、去重、审核、召回和审计。现有 Markdown、JSON、JSONL 或第三方记忆系统不必被替换，可以通过 Provider 按需提议到共享库。
+
+它带来的变化不是“多存一份资料”，而是让 Agent 在回答前先召回跨端积累，并把有用、过时或错误的结果反馈给后续排序。每次召回都有 `recall_id`，管理页能看到哪些设备和 Agent 真正使用了共享记忆，同时不会展示原始查询或端侧文件路径。
 
 ## 🚀 快速上手
 
@@ -51,22 +53,19 @@ Stop-Process -Id <脚本输出的 process_id>
   -InstallAutostart
 ```
 
-向导完成设备配对、密钥和凭据写入、启动只监听 `127.0.0.1` 的 Sidecar，最后生成 MCP 配置。首次部署服务端用 `-Mode server`（加 `-Apply` 执行），详见[部署说明](docs/deployment.md)。
+向导完成设备配对、密钥和凭据写入、启动只监听 `127.0.0.1` 的 Sidecar，最后生成 MCP 配置。服务端用 `-Mode server`（加 `-Apply` 执行）。默认是 `memory-app + Caddy` 两个容器；已有的拆分部署仍可作为高隔离模式使用。详见[部署说明](docs/deployment.md)。
 
 ## 🔧 系统结构
 
 ```mermaid
 flowchart LR
   A["Codex / Hermes / OpenClaw"] -->|MCP 或本机 HTTP| S["Memory Sidecar<br/>(127.0.0.1 only)"]
-  S -->|HTTPS| G["Memory Gateway<br/>(auth / permission / audit)"]
-  G --> M[("元数据与审计<br/>PostgreSQL / SQLite")]
-  G --> B[("长期记忆<br/>SQLite / GBrain")]
-  W["Worker<br/>(重试 / 死信 / 结晶)"] --> M
-  W --> B
-  R["中枢管理页"] -->|"HTTPS /admin"| P["Caddy"]
-  P --> A["Admin Console"]
-  A --> AS["管理 Sidecar"]
-  AS -->|"短期令牌 + 授权"| G
+  S -->|HTTPS| P["Caddy<br/>唯一公开入口"]
+  P --> APP["memory-app<br/>Gateway · Worker · Admin"]
+  APP --> M[("元数据与审计<br/>PostgreSQL / SQLite")]
+  APP --> B[("长期记忆<br/>SQLite / GBrain")]
+  L["端侧记忆<br/>Markdown / JSON / 插件"] -->|"人工选择或白名单提议"| S
+  R["中枢管理页"] -->|"HTTPS /admin"| P
 ```
 
 | 层 | 组件 | 职责 |
@@ -76,13 +75,14 @@ flowchart LR
 | 服务层 | Memory Gateway | 身份验证、权限判断、事件账本、查询和审核 |
 | 存储层 | PostgreSQL / SQLite / GBrain | 审计日志、授权信息、可检索的记忆内容 |
 
-正式环境的管理页部署在 Gateway 所在中枢，通过固定 HTTPS `/admin/` 地址访问。浏览器首次完成一次性授权后，会话在有效期内跨 `admin-console` 重启保留；日常打开不需要反复执行命令。设备页支持调整当前工作区权限和撤销失去信任的身份，活动页会显示来源设备与 Agent，所有变更都经过确认、版本校验和审计。
+正式环境的管理页部署在 Gateway 所在中枢，通过固定 HTTPS `/admin/` 地址访问。浏览器首次完成一次性授权后，会话在有效期内保持；日常可以直接打开该地址。除了审核、设备和运行状态，页面还会展示各 Agent 的实际召回、用户反馈和端侧来源汇总。设备权限变更与撤销都经过确认、版本校验和审计。
 
 ## 📦 CLI 命令
 
 | 命令 | 作用 | 示例 |
 |------|------|------|
 | `memory-gateway` | 启动 HTTP Gateway | `memory-gateway --host 127.0.0.1 --port 8787` |
+| `memory-app` | 启动默认一体化服务 | `memory-app` |
 | `memory-sidecar-mcp` | MCP Sidecar 桥接 | `memory-sidecar-mcp --transport streamable-http --port 8767` |
 | `memory-sidecar-daemon` | 本机 Sidecar 守护进程 | `memory-sidecar-daemon --gateway-url "https://..."` |
 | `memory-import` | 导入既有记忆 | `memory-import scan --source ./notes --batch 2026_07` |
@@ -115,6 +115,7 @@ memory-gateway --help
 | SQLite 存储 | `store.py` | 共享记忆的 SQLite 实现 |
 | 元数据账本 | `metadata_store.py` | 事件审计、工作区授权、设备注册 |
 | 查询服务 | `query_service.py` | 授权过滤后检索 |
+| 反馈服务 | `feedback_service.py` | 记录召回反馈并提供有界排序信号 |
 | 混合检索 | `hybrid_retrieval.py` | 关键词 + CJK n-gram + 去重 + 预算裁剪 + MMR 多样性 |
 | 评分衰减 | `scoring.py` | 记忆按半衰期衰减（preference 180d / fact 90d / temporary 3d） |
 | 向量索引 | `gbrain_backend.py`, `gbrain.py` | 长期记忆的向量检索后端 |
@@ -134,6 +135,7 @@ memory-gateway --help
 | 模块 | 文件 | 职责 |
 |------|------|------|
 | MCP Sidecar | `sidecar_mcp.py` | 暴露 `memory_context`/`memory_write`/`memory_sync_status` |
+| 端侧 Provider | `local_provider.py` | 读取本机记忆并安全提议到共享库 |
 | 本机 Daemon | `sidecar_daemon.py` | 单实例，多 Agent 通过回环 RPC 共用 |
 | 审核服务 | `review_service.py` | 待审核观察与审批工作流 |
 | 管理控制台 | `admin_console.py`, `admin_check.py` | 本机备用入口、中枢 Web 管理页和健康检查 |
@@ -143,7 +145,7 @@ memory-gateway --help
 
 ```
 写入 → 敏感检查(security.py) → 幂等去重(metadata_store.py) → 确认/审核
-  → 授权过滤检索(query_service.py + hybrid_retrieval.py) → 反馈/遗忘/归档/撤销
+  → 授权过滤检索(query_service.py + hybrid_retrieval.py) → recall_id → 反馈/遗忘/归档/撤销
 ```
 
 稳定记忆可整理为结晶页（`crystal_service.py`），来源变化后需显式重建。

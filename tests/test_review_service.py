@@ -181,6 +181,7 @@ class ReviewServiceTests(unittest.TestCase):
         self.assertEqual(len(backend.upserts), 1)
         self.assertTrue(any("INSERT INTO review_operations" in sql for sql, _ in connection.executed))
         self.assertTrue(any("INSERT INTO memory_lifecycle" in sql for sql, _ in connection.executed))
+        self.assertTrue(any("UPDATE external_memory_bindings" in sql for sql, _ in connection.executed))
         operation_index = next(
             index for index, (sql, _) in enumerate(connection.executed)
             if "INSERT INTO review_operations" in sql

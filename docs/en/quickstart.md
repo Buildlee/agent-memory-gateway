@@ -108,6 +108,22 @@ This only calls the Sidecar health endpoint on `127.0.0.1` — it does not read 
 
 ---
 
+### Connect an Agent's existing local memory
+
+The shared service does not take over or write back to an Agent's original store. Configure each source explicitly:
+
+```powershell
+$env:MEMORY_LOCAL_PROVIDER_CONFIG = '{"providers":[{"id":"personal-notes","type":"files","display_name":"Personal notes","paths":["<local-memory-file>"]}]}'
+```
+
+The built-in file Provider supports Markdown, JSON, and JSONL. Third-party systems can implement the same Python Provider entry point without changing the Gateway.
+
+Call `memory_local_sources`, then `memory_local_preview`. Use `memory_share_selected` for manual selection. `memory_propose_local_candidates` only auto-proposes user preferences, project decisions, stable facts, and long-term conventions. Sensitive, instruction-like, and oversized records are blocked locally, and local paths are never uploaded.
+
+For normal work, call `memory_context` before answering. Pass its `recall_id` to `memory_feedback` with `useful`, `pin`, `outdated`, or `incorrect`. Feedback adjusts future ranking within a fixed bound; it never directly deletes or rewrites a memory.
+
+---
+
 ## Common issues
 
 | Message | Check first |

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -118,6 +119,17 @@ class PendingEventWorker:
                     event_payload = envelope.get("payload")
                     if not isinstance(event_payload, dict):
                         raise EncryptionError("待处理事件缺少 payload")
+                    provenance = self._external_provenance(event_payload)
+                    if provenance is not None:
+                        duplicate_ref = self._existing_external_binding(connection, principal, provenance)
+                        if duplicate_ref is not None:
+                            return self._complete_source_duplicate(
+                                connection,
+                                principal,
+                                event_id,
+                                trace_id,
+                                duplicate_ref or None,
+                            )
                     if bool(row[9]) or str(event_payload.get("evidence") or "") != "user_explicit":
                         return self._create_review_candidate(
                             connection,
@@ -125,6 +137,7 @@ class PendingEventWorker:
                             event_id,
                             encrypted,
                             trace_id,
+                            provenance,
                         )
                     backend_ref = self._gbrain.upsert_confirmed(
                         idempotency_key=f"{principal.device_id}:{event_id}",
@@ -175,6 +188,13 @@ class PendingEventWorker:
                     backend_ref,
                     revision,
                 )
+                self._register_external_binding(
+                    connection,
+                    principal,
+                    event_id,
+                    provenance,
+                    backend_ref,
+                )
                 connection.execute(
                     """
                     INSERT INTO event_receipts (
@@ -197,6 +217,7 @@ class PendingEventWorker:
         event_id: str,
         encrypted: EncryptedPayload,
         trace_id: str,
+        provenance: dict[str, str] | None = None,
     ) -> ReconcileResult:
         """普通 Agent 观察只进入审核，不直接变成 GBrain 长期事实。"""
 
@@ -236,8 +257,149 @@ class PendingEventWorker:
             """,
             (principal.device_id, event_id, f"ack_{uuid.uuid4().hex}", revision, trace_id),
         )
+        self._register_external_binding(
+            connection,
+            principal,
+            event_id,
+            provenance,
+            None,
+        )
         self._audit(connection, principal, event_id, trace_id, "review.created", "CANDIDATE_CREATED")
         return ReconcileResult(status="applied", event_id=event_id, server_revision=revision)
+
+    @staticmethod
+    def _external_provenance(event_payload: dict[str, Any]) -> dict[str, str] | None:
+        """只接受端侧适配器的最小来源指纹，不保存文件路径或记忆正文。"""
+
+        metadata = event_payload.get("metadata")
+        raw = metadata.get("provenance") if isinstance(metadata, dict) else None
+        if not isinstance(raw, dict):
+            return None
+        values = {
+            "provider_type": str(raw.get("provider_type") or "").strip(),
+            "provider_instance_id": str(raw.get("provider_instance_id") or "").strip(),
+            "source_record_id": str(raw.get("source_record_id") or "").strip(),
+            "source_revision": str(raw.get("source_revision") or "").strip().lower(),
+            "capture_mode": str(raw.get("capture_mode") or "").strip(),
+        }
+        identifier = re.compile(r"[A-Za-z0-9_.@:-]{1,128}\Z")
+        if not all(identifier.fullmatch(values[key]) for key in (
+            "provider_type", "provider_instance_id", "source_record_id"
+        )):
+            return None
+        if re.fullmatch(r"[0-9a-f]{64}", values["source_revision"]) is None:
+            return None
+        if values["capture_mode"] not in {"manual_selection", "automatic_whitelist"}:
+            return None
+        return values
+
+    @staticmethod
+    def _existing_external_binding(
+        connection: Any,
+        principal: Principal,
+        provenance: dict[str, str],
+    ) -> str | None:
+        row = connection.execute(
+            """
+            SELECT COALESCE(backend_ref, '')
+            FROM external_memory_bindings
+            WHERE tenant_id = %s AND user_id = %s
+              AND workspace_id = %s
+              AND provider_instance_id = %s AND source_record_id = %s
+              AND source_revision = %s
+            FOR UPDATE
+            """,
+            (
+                principal.tenant_id,
+                principal.user_id,
+                next(iter(principal.workspace_ids)),
+                provenance["provider_instance_id"],
+                provenance["source_record_id"],
+                provenance["source_revision"],
+            ),
+        ).fetchone()
+        return None if row is None else str(row[0] or "")
+
+    @staticmethod
+    def _register_external_binding(
+        connection: Any,
+        principal: Principal,
+        event_id: str,
+        provenance: dict[str, str] | None,
+        backend_ref: str | None,
+    ) -> None:
+        if provenance is None:
+            return
+        connection.execute(
+            """
+            INSERT INTO external_memory_bindings (
+              tenant_id, user_id, device_id, agent_installation_id, workspace_id,
+              provider_type, provider_instance_id, source_record_id, source_revision,
+              capture_mode, event_id, backend_ref
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (tenant_id, user_id, workspace_id, provider_instance_id, source_record_id, source_revision)
+            DO UPDATE SET backend_ref = COALESCE(EXCLUDED.backend_ref, external_memory_bindings.backend_ref),
+                          updated_at = now()
+            """,
+            (
+                principal.tenant_id,
+                principal.user_id,
+                principal.device_id,
+                principal.agent_installation_id,
+                next(iter(principal.workspace_ids)),
+                provenance["provider_type"],
+                provenance["provider_instance_id"],
+                provenance["source_record_id"],
+                provenance["source_revision"],
+                provenance["capture_mode"],
+                event_id,
+                backend_ref,
+            ),
+        )
+
+    def _complete_source_duplicate(
+        self,
+        connection: Any,
+        principal: Principal,
+        event_id: str,
+        trace_id: str,
+        backend_ref: str | None,
+    ) -> ReconcileResult:
+        revision = self._next_revision(connection)
+        connection.execute(
+            """
+            UPDATE gateway_events
+            SET status = 'applied', result_code = 'source_duplicate',
+                error_code = NULL, error_retryable = NULL, backend_ref = %s,
+                server_revision = %s, processed_at = now(), next_retry_at = NULL
+            WHERE device_id = %s AND event_id = %s
+            """,
+            (backend_ref, revision, principal.device_id, event_id),
+        )
+        connection.execute(
+            """
+            INSERT INTO event_receipts (
+              device_id, event_id, ack_id, status, result_code, backend_ref,
+              server_revision, trace_id, processed_at
+            ) VALUES (%s, %s, %s, 'applied', 'source_duplicate', %s, %s, %s, now())
+            ON CONFLICT (device_id, event_id) DO NOTHING
+            """,
+            (
+                principal.device_id,
+                event_id,
+                f"ack_{uuid.uuid4().hex}",
+                backend_ref,
+                revision,
+                trace_id,
+            ),
+        )
+        self._audit(connection, principal, event_id, trace_id, "event.deduplicated", "SOURCE_DUPLICATE")
+        return ReconcileResult(
+            status="applied",
+            event_id=event_id,
+            backend_ref=backend_ref,
+            server_revision=revision,
+        )
 
     @staticmethod
     def _register_active_lifecycle(

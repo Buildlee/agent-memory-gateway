@@ -15,11 +15,15 @@ The console never connects to the database directly and never stores Gateway tok
 
 ## Page Features
 
-The admin page has six tabs:
+The admin page has nine tabs:
 
 **Overview** — Four metric cards: pending reviews, retryable events, dead letters, and active devices. Priority tasks and last-hour activity preview below.
 
 **Memories** — Shows all shared memories for the workspace by default (no query required). Each entry shows source device/Agent, lifecycle status (active/superseded/archived), and confidence. Superseded memories show their replacement reference. Type two or more characters to search.
+
+**Memory Impact** — Summarizes 24-hour recalls, hits, and per-agent usage. Thirty-day feedback indicates whether shared memory is helping in practice. Raw queries are never displayed.
+
+**Memory Sources** — Groups federated sources by Provider instance, capture type, device, and Agent. It distinguishes pending and confirmed versions without exposing local paths or content.
 
 **Graph** — Canvas-rendered entity relationship network. Memory nodes are blue, devices orange, Agents purple. Edges show "originated from" connections; dashed edges represent superseded old facts. Archived memories are semi-transparent.
 
@@ -59,7 +63,7 @@ If admin identities or containers already exist, the script refuses to overwrite
 
 ## Opening the Page
 
-The fixed entry point is the configured HTTPS URL, e.g. `https://192.168.100.144:8443/admin/`. After initial authorization, the session is valid for 30 days. Container restarts do not invalidate it.
+The fixed entry point is the configured HTTPS URL, e.g. `https://memory-gateway.internal:8443/admin/`. After initial authorization, the session is valid for 30 days. Container restarts do not invalidate it.
 
 When the session expires or you switch browsers:
 
@@ -87,7 +91,7 @@ Without a valid cookie, the page shows "Authorization required for this browser"
 
 1. Gateway, Worker, proxy, and `admin-sidecar` are all healthy/running.
 2. Authorize via the open script; close the page, then visit the fixed URL directly without re-running the script.
-3. All seven tabs — Overview, Memories, Graph, Reviews, Devices, Runtime, Activity — load and are interactive.
+3. All nine tabs — Overview, Memories, Memory Impact, Memory Sources, Graph, Reviews, Devices, Runtime, and Activity — load and are interactive.
 4. The Memories tab shows all shared memories by default, with source device, Agent, and lifecycle status.
 5. Active devices show a green dot; offline devices show a grey dot.
 6. Activity pagination works; clicking a `gbrain:fact:` reference jumps to the linked memory.

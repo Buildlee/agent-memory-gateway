@@ -31,6 +31,11 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$HttpsPort = 8443,
 
+    [ValidateSet("slim", "split")]
+    [string]$DeploymentProfile = "slim",
+
+    [string]$AdminEnvironmentFile,
+
     [switch]$Apply,
 
     [string]$GatewayUrl,
@@ -255,8 +260,11 @@ if ($Mode -eq "server") {
             "RemoteRoot" = $RemoteRoot
             "SecretsFile" = $SecretsFile
             "GatewayPublicName" = $GatewayPublicName
-        }.GetEnumerator()) {
+    }.GetEnumerator()) {
         Require-Value -Name $required.Key -Value $required.Value
+    }
+    if ($DeploymentProfile -eq "slim") {
+        Require-Value -Name "AdminEnvironmentFile" -Value $AdminEnvironmentFile
     }
     $bindAddress = if ($GatewayBindAddress) { $GatewayBindAddress } else { $GatewayPublicName }
     if (-not $Apply) {
@@ -268,6 +276,7 @@ if ($Mode -eq "server") {
             ssh_port = $SshPort
             gateway_public_name = $GatewayPublicName
             gateway_bind_address = $bindAddress
+            deployment_profile = $DeploymentProfile
         }
         exit 0
     }
@@ -280,6 +289,8 @@ if ($Mode -eq "server") {
         -GatewayPublicName $GatewayPublicName `
         -GatewayBindAddress $bindAddress `
         -HttpsPort $HttpsPort `
+        -DeploymentProfile $DeploymentProfile `
+        -AdminEnvironmentFile $AdminEnvironmentFile `
         -ProjectRoot $projectRoot `
         -Build `
         -Start

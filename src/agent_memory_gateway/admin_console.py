@@ -993,6 +993,8 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       <nav aria-label="管理页">
         <button class="nav-button" data-view="overview" aria-current="page"><span class="dot"></span>概览</button>
         <button class="nav-button" data-view="memories"><span class="dot"></span>记忆</button>
+        <button class="nav-button" data-view="impact"><span class="dot"></span>记忆影响</button>
+        <button class="nav-button" data-view="sources"><span class="dot"></span>记忆来源</button>
         <button class="nav-button" data-view="graph"><span class="dot"></span>图谱</button>
         <button class="nav-button" data-view="reviews"><span class="dot"></span>审核</button>
         <button class="nav-button" data-view="devices"><span class="dot"></span>设备与权限</button>
@@ -1073,6 +1075,27 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
             </div>
           </div>
         </section>
+        <section id="impact" class="view">
+          <div class="grid" id="impact-metrics"></div>
+          <div class="panel">
+            <div class="panel-head"><div><div class="panel-title">Agent 召回情况</div><div class="subtle">近 30 天各 Agent 实际读取共享记忆的次数与条数。</div></div></div>
+            <div class="panel-body" id="impact-agents"><div class="empty">打开本页后加载。</div></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><div><div class="panel-title">最近反馈</div><div class="subtle">反馈只作为有上限的排序信号，不会直接删除或改写记忆。</div></div></div>
+            <div class="panel-body" id="impact-feedback"><div class="empty">暂无反馈。</div></div>
+          </div>
+        </section>
+        <section id="sources" class="view">
+          <div class="panel">
+            <div class="panel-head"><div><div class="panel-title">来源适配器</div><div class="subtle">只显示 Provider 类型、实例和汇总数据，不显示端侧文件路径或记忆正文。</div></div></div>
+            <div class="panel-body" id="source-summary"><div class="empty">还没有端侧来源。</div></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><div><div class="panel-title">最近接入</div><div class="subtle">可核对来自哪台设备和哪个 Agent，以及是手动选择还是白名单提议。</div></div></div>
+            <div class="panel-body" id="source-recent"><div class="empty">暂无接入记录。</div></div>
+          </div>
+        </section>
         <section id="graph" class="view">
           <div class="panel">
             <div class="panel-head"><div><div class="panel-title">记忆关系图谱</div><div class="subtle">当前工作区内记忆与设备、Agent 的关联网络。虚线表示取代关系。</div></div></div>
@@ -1151,6 +1174,8 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       overview: null,
       audit: [],
       devices: [],
+      impact: null,
+      sources: null,
       capabilityCatalog: []
     }};
 
@@ -1188,6 +1213,8 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
     const labels = {{
       overview: ["共享记忆管理", "当前工作区：" + state.workspaceId],
       memories: ["共享记忆库", "浏览所有共享记忆，按关键词检索"],
+      impact: ["记忆影响", "查看记忆是否被真正召回、使用与反馈"],
+      sources: ["记忆来源", "查看端侧记忆适配器和最近接入情况"],
       graph: ["记忆关系图谱", "查看记忆、设备与 Agent 之间的关联"],
       reviews: ["审核候选", "只处理需要人工判断的候选记忆"],
       devices: ["设备与权限", "查看设备、Agent 和工作区能力，不显示凭据"],
@@ -1778,6 +1805,56 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       }});
     }}
 
+    function renderImpact(payload) {{
+      state.impact = payload;
+      const summary = payload.summary || {{}};
+      const rate = summary.positive_rate_30d == null ? "—" : Math.round(summary.positive_rate_30d * 100) + "%";
+      document.getElementById("impact-metrics").innerHTML = [
+        metric("近 24 小时召回", summary.recall_count_24h || 0, null, "impact", "Agent 请求共享记忆的次数"),
+        metric("近 24 小时命中", summary.recalled_items_24h || 0, null, "impact", "返回给 Agent 的记忆条数"),
+        metric("近 30 天反馈", summary.feedback_count_30d || 0, null, "impact", "有用、固定、过时与错误反馈"),
+        metric("正向反馈率", rate, null, "impact", "暂无反馈时不计算")
+      ].join("");
+      const agents = payload.agents || [];
+      document.getElementById("impact-agents").innerHTML = agents.length ? `<table>
+        <thead><tr><th>Agent 与设备</th><th>召回次数</th><th>命中条数</th><th>最近召回</th></tr></thead>
+        <tbody>${{agents.map(item => `<tr>
+          <td><div class="cell-title">${{escapeHTML(item.agent_name || item.agent_installation_id)}}</div><div class="cell-meta">${{escapeHTML(item.device_name || item.device_id)}}</div></td>
+          <td>${{escapeHTML(item.recall_count || 0)}}</td><td>${{escapeHTML(item.recalled_items || 0)}}</td>
+          <td>${{escapeHTML(formatTime(item.last_recalled_at))}}</td>
+        </tr>`).join("")}}</tbody></table>` : `<div class="empty">近 30 天还没有 Agent 召回记录。</div>`;
+      const feedbackNames = {{useful: "有用", pin: "固定", outdated: "已过时", incorrect: "不正确"}};
+      const feedback = payload.recent_feedback || [];
+      document.getElementById("impact-feedback").innerHTML = feedback.length ? feedback.map(item => `<article class="activity-row">
+        <div><div class="row-title">${{escapeHTML(feedbackNames[item.action] || item.action)}} · ${{escapeHTML(item.agent_name || item.agent_installation_id)}}</div>
+        <div class="row-copy">${{escapeHTML(item.device_name || item.device_id)}} · ${{code(item.memory_id)}}</div></div>
+        <div class="row-time">${{escapeHTML(formatTime(item.created_at))}}</div>
+      </article>`).join("") : `<div class="empty">还没有记忆反馈。Agent 召回后可标记有用、固定、过时或不正确。</div>`;
+    }}
+
+    function renderSources(payload) {{
+      state.sources = payload;
+      const sources = payload.sources || [];
+      document.getElementById("source-summary").innerHTML = sources.length ? `<table>
+        <thead><tr><th>Provider</th><th>接入方式</th><th>版本</th><th>已确认</th><th>覆盖范围</th><th>最近更新</th></tr></thead>
+        <tbody>${{sources.map(item => `<tr>
+          <td><div class="cell-title">${{escapeHTML(item.provider_instance_id)}}</div><div class="cell-meta">${{escapeHTML(item.provider_type)}}</div></td>
+          <td>${{escapeHTML(item.capture_mode === "manual_selection" ? "手动选择" : "白名单提议")}}</td>
+          <td>${{escapeHTML(item.version_count || 0)}}</td><td>${{escapeHTML(item.confirmed_count || 0)}}</td>
+          <td>${{escapeHTML(item.device_count || 0)}} 设备 · ${{escapeHTML(item.agent_count || 0)}} Agent</td>
+          <td>${{escapeHTML(formatTime(item.last_seen_at))}}</td>
+        </tr>`).join("")}}</tbody></table>` : `<div class="empty">还没有端侧记忆来源。未明确配置的本地记忆不会被上传。</div>`;
+      const recent = payload.recent_bindings || [];
+      document.getElementById("source-recent").innerHTML = recent.length ? `<table>
+        <thead><tr><th>来源记录</th><th>设备与 Agent</th><th>状态</th><th>最近更新</th></tr></thead>
+        <tbody>${{recent.map(item => `<tr>
+          <td><div class="cell-title">${{escapeHTML(item.provider_instance_id)}}</div><div class="cell-meta">${{code(item.source_record_id)}} · ${{escapeHTML(item.provider_type)}}</div></td>
+          <td><div class="cell-title">${{escapeHTML(item.agent_name || item.agent_installation_id)}}</div><div class="cell-meta">${{escapeHTML(item.device_name || item.device_id)}}</div></td>
+          <td>${{stateBadge(item.status === "confirmed" ? "已确认" : "待审核", item.status === "confirmed" ? "ok" : "warn")}}</td>
+          <td>${{escapeHTML(formatTime(item.updated_at))}}</td>
+        </tr>`).join("")}}</tbody></table>` : `<div class="empty">暂无最近接入记录。</div>`;
+    }}
+
     async function refreshAll() {{
       const refreshButton = document.getElementById("refresh");
       refreshButton.disabled = true;
@@ -1788,13 +1865,15 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       document.getElementById("priority-list").innerHTML = `<div class="skeleton"></div><div class="skeleton"></div>`;
       setConnection("正在读取状态", "");
       try {{
-        const [overviewResult, healthResult, reviewsResult, devicesResult, auditResult, deadLettersResult] = await Promise.allSettled([
+        const [overviewResult, healthResult, reviewsResult, devicesResult, auditResult, deadLettersResult, impactResult, sourcesResult] = await Promise.allSettled([
           api("/api/overview"),
           api("/api/health"),
           api("/api/reviews"),
           api("/api/devices"),
           api("/api/audit"),
-          api("/api/dead-letters")
+          api("/api/dead-letters"),
+          api("/api/impact"),
+          api("/api/sources")
         ]);
         if (overviewResult.status !== "fulfilled") throw overviewResult.reason;
         if (healthResult.status !== "fulfilled") throw healthResult.reason;
@@ -1825,7 +1904,19 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
         }} else {{
           renderUnavailable("dead-letter-list", rejectedCode(deadLettersResult));
         }}
-        const optionalFailures = [reviewsResult, devicesResult, auditResult, deadLettersResult]
+        if (impactResult.status === "fulfilled") {{
+          renderImpact(impactResult.value);
+        }} else {{
+          renderUnavailable("impact-agents", rejectedCode(impactResult));
+          renderUnavailable("impact-feedback", rejectedCode(impactResult));
+        }}
+        if (sourcesResult.status === "fulfilled") {{
+          renderSources(sourcesResult.value);
+        }} else {{
+          renderUnavailable("source-summary", rejectedCode(sourcesResult));
+          renderUnavailable("source-recent", rejectedCode(sourcesResult));
+        }}
+        const optionalFailures = [reviewsResult, devicesResult, auditResult, deadLettersResult, impactResult, sourcesResult]
           .filter(result => result.status !== "fulfilled");
         if (optionalFailures.length) {{
           toast("部分管理信息暂时未加载，可稍后刷新。");
@@ -2209,6 +2300,10 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
                 self._json(sidecar.search(payload | {"query": text if text and 2 <= len(text) <= 256 else "", "limit": 50}))
             elif path == "/api/memory-graph":
                 self._json(sidecar.memory_graph(payload))
+            elif path == "/api/impact":
+                self._json(sidecar.memory_impact(payload))
+            elif path == "/api/sources":
+                self._json(sidecar.list_memory_sources(payload))
             else:
                 self._json({"error": "NOT_FOUND"}, status=404)
         except (AdminConsoleError, SidecarDaemonError) as exc:

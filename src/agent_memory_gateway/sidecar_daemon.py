@@ -112,10 +112,21 @@ class _SidecarRPCHandler(BaseHTTPRequestHandler):
                 "list_admin_dead_letters",
                 "list_memories",
                 "memory_graph",
+                "memory_impact",
+                "list_memory_sources",
             ):
                 method_impl = getattr(self.client, admin_method, None)
                 if callable(method_impl):
                     allowed[admin_method] = method_impl
+            for local_method in (
+                "local_sources",
+                "local_preview",
+                "local_share_selected",
+                "local_propose_eligible",
+            ):
+                method_impl = getattr(self.client, local_method, None)
+                if callable(method_impl):
+                    allowed[local_method] = method_impl
             with self.operation_lock:
                 previous_token = getattr(self.client, "token", None)
                 previous_agent_id = getattr(self.client, "agent_id", None)
@@ -239,6 +250,18 @@ class LocalSidecarProxy:
     def feedback(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("feedback", payload)
 
+    def local_sources(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._call("local_sources", payload or {})
+
+    def local_preview(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("local_preview", payload)
+
+    def local_share_selected(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("local_share_selected", payload)
+
+    def local_propose_eligible(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("local_propose_eligible", payload)
+
     def forget(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("forget", payload)
 
@@ -286,6 +309,12 @@ class LocalSidecarProxy:
 
     def memory_graph(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("memory_graph", payload)
+
+    def memory_impact(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("memory_impact", payload)
+
+    def list_memory_sources(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("list_memory_sources", payload)
 
     def _call(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(

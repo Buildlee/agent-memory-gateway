@@ -48,6 +48,9 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assertIn("& ssh @sshArguments $prepareCommand", script)
         self.assertIn("& scp -P $SshPort -r", script)
         self.assertIn("[string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)", script)
+        self.assertIn('[string]$DeploymentProfile = "slim"', script)
+        self.assertIn("compose.slim.yaml", script)
+        self.assertIn("AdminEnvironmentFile", script)
         self.assertIn("发布副本缺少必要路径", script)
         self.assertIn("up -d --no-build --force-recreate", script)
 

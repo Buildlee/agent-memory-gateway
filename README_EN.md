@@ -1,8 +1,8 @@
 # Agent Memory Gateway
 
 <p align="center">
-  <strong>Shared long-term memory for multiple agents — every read and write is sourced, authorized, and auditable.</strong><br>
-  Offline queue, encrypted sync, sensitive content detection, out of the box.
+  <strong>Useful shared long-term memory for Codex, Hermes, and the agents you add next.</strong><br>
+  Sourced, authorized, offline-capable, feedback-aware, and compatible with local memory stores.
 </p>
 
 <p align="center">
@@ -19,7 +19,9 @@
   <a href="#3-minute-demo"><img src="https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python" alt="Python 3.10+"></a>
 </p>
 
-When multiple agents run independently, sharing long-term memory across devices raises a few questions: who wrote what, who can see it, what happens offline, how to deduplicate. This project turns shared memory into a standalone service — no prompt conventions required. Each device runs one local Sidecar; the Gateway handles auth, permissions, audit, and memory lifecycle. 45 Python modules and 46 test files, with both SQLite and PostgreSQL backends.
+When every agent keeps its own memory, useful context becomes fragmented across devices, workspaces, and plugins. Agent Memory Gateway adds a controlled shared layer between them. Each device runs one local Sidecar; the central service handles identity, permissions, deduplication, review, recall, and audit. Existing Markdown, JSON, JSONL, or third-party stores do not need to be replaced: a Provider can propose selected records to the shared library.
+
+The value is not another archive. Agents recall cross-device knowledge before answering, then report whether the result was useful, stale, or incorrect. Every recall has a `recall_id`, and the admin console shows which agents actually benefit without exposing raw queries or local file paths.
 
 ## 🚀 Quick start
 
@@ -51,22 +53,19 @@ After the admin generates a one-time pairing code, run on the client:
   -InstallAutostart
 ```
 
-The wizard completes device pairing, key generation, credential storage, starts the Sidecar (listening on `127.0.0.1`), and generates MCP config files. For first-time server deployment, use `-Mode server` with `-Apply`. See [deployment guide](docs/en/deployment.md).
+The wizard completes device pairing, key generation, credential storage, starts the Sidecar (listening on `127.0.0.1`), and generates MCP config files. For server deployment, use `-Mode server` with `-Apply`. The default profile runs two containers: `memory-app` and Caddy. The existing split profile remains available for stricter isolation. See the [deployment guide](docs/en/deployment.md).
 
 ## 🔧 Architecture
 
 ```mermaid
 flowchart LR
   A["Codex / Hermes / OpenClaw"] -->|MCP or HTTP| S["Memory Sidecar<br/>(127.0.0.1 only)"]
-  S -->|HTTPS| G["Memory Gateway<br/>(auth / permission / audit)"]
-  G --> M[("Metadata & Audit<br/>PostgreSQL / SQLite")]
-  G --> B[("Long-term Memory<br/>SQLite / GBrain")]
-  W["Worker<br/>(retry / dead letter / crystal)"] --> M
-  W --> B
-  R["Central Admin UI"] -->|"HTTPS /admin"| P["Caddy"]
-  P --> A["Admin Console"]
-  A --> AS["Admin Sidecar"]
-  AS -->|"short-lived token + authorization"| G
+  S -->|HTTPS| P["Caddy<br/>only public entry"]
+  P --> APP["memory-app<br/>Gateway · Worker · Admin"]
+  APP --> M[("Metadata & Audit<br/>PostgreSQL / SQLite")]
+  APP --> B[("Long-term Memory<br/>SQLite / GBrain")]
+  L["Local memory<br/>Markdown / JSON / plugins"] -->|"manual or allowlisted proposal"| S
+  R["Central Admin UI"] -->|"HTTPS /admin"| P
 ```
 
 | Layer | Component | Responsibility |
@@ -83,6 +82,7 @@ In production, the admin UI runs beside the Gateway and is reached through a fix
 | Command | Description | Example |
 |---------|-------------|---------|
 | `memory-gateway` | Start HTTP Gateway | `memory-gateway --host 127.0.0.1 --port 8787` |
+| `memory-app` | Start the default integrated service | `memory-app` |
 | `memory-sidecar-mcp` | MCP Sidecar bridge | `memory-sidecar-mcp --transport streamable-http --port 8767` |
 | `memory-sidecar-daemon` | Local Sidecar daemon | `memory-sidecar-daemon --gateway-url "https://..."` |
 | `memory-import` | Import existing memory | `memory-import scan --source ./notes --batch 2026_07` |
@@ -115,6 +115,7 @@ memory-gateway --help
 | SQLite Store | `store.py` | SQLite shared memory storage |
 | Metadata Ledger | `metadata_store.py` | Event audit, workspace authorization, device registration |
 | Query Service | `query_service.py` | Authorized memory retrieval |
+| Feedback Service | `feedback_service.py` | Store recall feedback and produce bounded ranking signals |
 | Hybrid Retrieval | `hybrid_retrieval.py` | Keyword + CJK n-gram + dedup + token budget + MMR diversity |
 | Scoring | `scoring.py` | Half-life decay scoring (preference 180d / fact 90d / temporary 3d) |
 | Vector Index | `gbrain_backend.py`, `gbrain.py` | Vector search backend for long-term memory |
@@ -134,6 +135,7 @@ memory-gateway --help
 | Module | File | Responsibility |
 |--------|------|---------------|
 | MCP Sidecar | `sidecar_mcp.py` | Expose `memory_context`/`memory_write`/`memory_sync_status` tools |
+| Local Providers | `local_provider.py` | Read local stores and safely propose selected records |
 | Local Daemon | `sidecar_daemon.py` | Single instance, shared via loopback RPC |
 | Review Service | `review_service.py` | Pending observation and approval workflow |
 | Admin Console | `admin_console.py`, `admin_check.py` | Local fallback UI, central web admin UI, and health checks |
@@ -143,7 +145,7 @@ memory-gateway --help
 
 ```
 Write → sensitive check (security.py) → idempotent dedup (metadata_store.py) → confirm / review
-  → authorized retrieval (query_service.py + hybrid_retrieval.py) → feedback / forget / archive / revoke
+  → authorized retrieval (query_service.py + hybrid_retrieval.py) → recall_id → feedback / forget / archive / revoke
 ```
 
 Stable memories can be compiled into crystal pages (`crystal_service.py`), rebuilt explicitly when source facts change.

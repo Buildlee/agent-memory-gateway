@@ -43,6 +43,14 @@ Clients read and write data through the Gateway and must not connect directly to
 
 ---
 
+## How Existing Local Memory Is Federated
+
+Each Agent keeps its original local store. The Gateway neither reads those databases directly nor writes central results back into them. A local Provider converts each source into a common record shape. The built-in implementation supports Markdown, JSON, and JSONL; third-party systems use a plugin entry point.
+
+Users can select records manually or enable proposals for user preferences, project decisions, stable facts, and long-term conventions. Unselected, sensitive, instruction-like, or oversized records stay local. The central service receives opaque provenance without local paths and deduplicates by user, Provider instance, source record, and source revision.
+
+---
+
 ## How a Memory Flows Through the System
 
 ```mermaid
@@ -184,6 +192,8 @@ Budget calculation: Chinese characters are counted per character; English consec
 
 Fixed safety instructions and return fields are not counted toward the budget. The returned result includes `token_estimate`, `token_budget`, and `retrieval` metadata.
 
+Every context recall also receives a `recall_id`. The central service stores only a query hash, recalled references, device, and Agent, never the raw query. `useful`, `pin`, `outdated`, and `incorrect` feedback contributes a bounded ranking adjustment and never bypasses authorization or directly changes lifecycle state.
+
 ---
 
 ### Forgetting and Scoring
@@ -260,7 +270,7 @@ Registered migration files must not be modified, only added. During recovery, fi
 
 ## Deployment Layout
 
-Containerized deployment includes at least Gateway, Worker, and HTTPS reverse proxy. The database is only reachable within the internal network; externally, only the protected Gateway or management entry is exposed. LAN clients connect directly to the internal HTTPS address; external clients access the same security boundary through VPN, zero-trust network, or controlled tunnel.
+The default container layout is `memory-app + Caddy`: the first supervises Gateway, Worker, admin Sidecar, and console, while Caddy is the only HTTPS entry. A split profile remains available for smaller failure domains. Both profiles use the same protocol, databases, and permission model. The database remains reachable only inside the private network.
 
 Deployment files, sample configurations, and documentation contain only variable names and placeholders. Environment files, certificates, private keys, principal configurations, database snapshots, site logs, and release records must remain in local protected locations, excluded by `.gitignore`.
 

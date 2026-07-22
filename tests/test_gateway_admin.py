@@ -42,6 +42,14 @@ class FakeAdminService:
         self.payloads.append((payload, principal.agent_installation_id))
         return {"workspace_id": payload["workspace_id"], "dead_letters": []}
 
+    def memory_impact(self, payload, principal):
+        self.payloads.append((payload, principal.agent_installation_id))
+        return {"workspace_id": payload["workspace_id"], "summary": {"recall_count_24h": 0}}
+
+    def list_memory_sources(self, payload, principal):
+        self.payloads.append((payload, principal.agent_installation_id))
+        return {"workspace_id": payload["workspace_id"], "sources": []}
+
 
 class GatewayAdminTests(unittest.TestCase):
     def setUp(self):
@@ -104,10 +112,14 @@ class GatewayAdminTests(unittest.TestCase):
         _, dead_letters = self.post(
             "/v1/admin/dead-letters/list", {"workspace_id": "workspace-a", "limit": 10}
         )
+        _, impact = self.post("/v1/admin/impact", {"workspace_id": "workspace-a"})
+        _, sources = self.post("/v1/admin/sources", {"workspace_id": "workspace-a"})
 
         self.assertEqual(devices["devices"], [])
         self.assertEqual(audit["entries"], [])
         self.assertEqual(dead_letters["dead_letters"], [])
+        self.assertEqual(impact["summary"]["recall_count_24h"], 0)
+        self.assertEqual(sources["sources"], [])
 
     def test_admin_device_management_routes_are_available_to_managers(self):
         _, binding = self.post(

@@ -108,6 +108,16 @@ class AdminConnection:
                     )
                 ]
             )
+        if "GROUP BY recall.agent_installation_id" in normalized:
+            return Cursor(rows=[("hermes-a", "Hermes", "device-b", "FN", 7, 19, "2026-07-23T08:00:00+00:00")])
+        if "FROM memory_recall_events AS recall" in normalized:
+            return Cursor((8, 21, 5, 4))
+        if "FROM memory_feedback_events AS feedback" in normalized:
+            return Cursor(rows=[("useful", "gbrain:fact:7", "hermes-a", "Hermes", "device-b", "FN", "2026-07-23T08:03:00+00:00")])
+        if "GROUP BY binding.provider_type" in normalized:
+            return Cursor(rows=[("files", "hermes-local", "manual_selection", 6, 5, 2, 2, "2026-07-23T08:04:00+00:00")])
+        if "FROM external_memory_bindings AS binding" in normalized:
+            return Cursor(rows=[("files", "hermes-local", "local_7", "manual_selection", "gbrain:fact:7", "device-b", "FN", "hermes-a", "Hermes", "2026-07-23T08:04:00+00:00")])
         raise AssertionError(f"unexpected query: {normalized}")
 
 
@@ -178,6 +188,24 @@ class AdminServiceTests(unittest.TestCase):
             self.service.list_devices({"workspace_id": "workspace-b"}, manager())
         with self.assertRaisesRegex(AdminServiceError, "LIMIT_INVALID"):
             self.service.list_audit({"workspace_id": "workspace-a", "limit": 101}, manager())
+
+    def test_memory_impact_exposes_usage_without_raw_queries_or_content(self):
+        result = self.service.memory_impact({"workspace_id": "workspace-a"}, manager())
+        self.assertEqual(result["summary"]["recall_count_24h"], 8)
+        self.assertEqual(result["summary"]["positive_rate_30d"], 0.8)
+        self.assertEqual(result["agents"][0]["agent_name"], "Hermes")
+        self.assertEqual(result["recent_feedback"][0]["action"], "useful")
+        serialized = str(result).lower()
+        self.assertNotIn("query_hash", serialized)
+        self.assertNotIn("content", serialized)
+
+    def test_memory_sources_exclude_paths_and_content(self):
+        result = self.service.list_memory_sources({"workspace_id": "workspace-a"}, manager())
+        self.assertEqual(result["sources"][0]["provider_instance_id"], "hermes-local")
+        self.assertEqual(result["recent_bindings"][0]["status"], "confirmed")
+        serialized = str(result).lower()
+        self.assertNotIn("path", serialized)
+        self.assertNotIn("content", serialized)
 
 
 class MutationConnection(AdminConnection):

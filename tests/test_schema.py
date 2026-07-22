@@ -37,7 +37,7 @@ class MetadataSchemaContractTests(unittest.TestCase):
             metadata_migrations, "repository_root", return_value=Path(directory)
         ):
             self.assertEqual(schema_directory(), bundled)
-            self.assertEqual(len(expected_checksums()), 8)
+            self.assertEqual(len(expected_checksums()), 9)
 
     def test_schema_declares_every_required_metadata_table(self):
         sql = "\n".join(read_schema(spec.path) for spec in migration_specs())
