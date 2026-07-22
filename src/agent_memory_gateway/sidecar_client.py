@@ -80,6 +80,11 @@ class SidecarClient:
                 "categories": sorted({finding.category for finding in assessment.sensitive_findings}),
                 "rule_version": assessment.rule_version,
             }
+        # 离线队列也必须携带本机扫描结论。Gateway 会再次独立评估，
+        # 但在网络恢复前，不能把命令式内容伪装成普通引用数据返回给 Agent。
+        payload["instruction_like"] = bool(assessment.instruction_like)
+        payload["instruction_rule_ids"] = list(assessment.instruction_rule_ids)
+        payload["security_rule_version"] = assessment.rule_version
         payload.setdefault("agent_id", self.agent_id)
         payload.setdefault("device_id", self.device_id)
         event = self.outbox.prepare_event(payload)

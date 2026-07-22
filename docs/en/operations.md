@@ -77,6 +77,8 @@ These tools do not return device public keys, credentials, `details_json`, event
 
 ## ⏳ Recovery Sequence
 
+**After reverting a supersede** — do not manually remove the tombstone. The system marks the old tombstone as revoked and republishes the restored memory at a new lifecycle revision. If `migrate.py --check` reports that `2026-07-22.1` is missing, back up the database and use the normal migration process in a maintenance window. This migration only adds a field, constraint, and index; it does not delete history.
+
 **When heartbeat expires** — first verify the HTTPS endpoint and Gateway health check, then check the worker logs for database connection, migration version, or backend dependency errors. After the service recovers, re-run the read-only check to confirm the heartbeat timestamp has advanced.
 
 **Retryable events** — normally the worker will handle them automatically according to the existing backoff strategy. Do not manually resubmit the original write requests; wait for dependencies to recover first, then observe whether the count decreases. If it keeps growing, pause new mutation operations, preserve the audit and event ledger, and identify the first error code.

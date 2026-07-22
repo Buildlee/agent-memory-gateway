@@ -224,9 +224,12 @@ Offline queries take candidates from the authorized encrypted cache and pending 
 Offline sync rules:
 
 - The local queue does not store plaintext sensitive memories.
+- The Sidecar stores the scanner's `instruction_like` result and rule IDs with the encrypted event. Offline retrieval skips those records, so command-like text cannot enter Agent context even if cached or queued data is malformed.
 - Must not fall back to unprotected public network addresses due to temporary disconnection.
 - Clearing synced ciphertext requires explicit user confirmation.
 - Two Sidecar processes must not hold the same outbox simultaneously.
+
+When sending tombstones, the Gateway filters them again by the memory's workspace, device, or Agent scope. A revoked tombstone remains in the audit trail; the restored memory is sent again at a new lifecycle revision rather than hiding history through a physical delete.
 
 ---
 

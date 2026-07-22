@@ -667,7 +667,8 @@ class Outbox:
                         "scope": str(event.get("scope") or "workspace"),
                         "status": "pending_local",
                         "content_role": "reference_data",
-                        "instruction_like": False,
+                        "instruction_like": bool(event.get("instruction_like")),
+                        "instruction_rule_ids": list(event.get("instruction_rule_ids") or []),
                     }
                 )
                 if len(results) >= bounded_limit:

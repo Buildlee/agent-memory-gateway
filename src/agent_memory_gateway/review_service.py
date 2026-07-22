@@ -478,6 +478,12 @@ class PostgresReviewService:
                 connection, str(target_ref), principal, "compensate_restore", "superseded", "active",
                 server_revision, operation_id, str(backend_ref),
             )
+            self._revoke_tombstone(
+                connection,
+                str(target_ref),
+                principal,
+                server_revision,
+            )
             self._mark_backend_crystal_stale(connection, str(target_ref), server_revision)
         connection.execute(
             """
@@ -897,15 +903,43 @@ class PostgresReviewService:
             """
             INSERT INTO memory_tombstones (
               memory_id, tenant_id, user_id, backend_ref, deleted_revision,
-              deleted_by_device_id, reason_code
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (backend_ref) DO NOTHING
+              deleted_by_device_id, reason_code, revoked_revision
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, NULL)
+            ON CONFLICT (backend_ref) DO UPDATE SET
+              deleted_revision = EXCLUDED.deleted_revision,
+              deleted_at = now(),
+              deleted_by_device_id = EXCLUDED.deleted_by_device_id,
+              reason_code = EXCLUDED.reason_code,
+              revoked_revision = NULL
             """,
             (
                 backend_ref, principal.tenant_id, principal.user_id, backend_ref,
                 server_revision, principal.device_id, reason_code,
             ),
         )
+
+    @staticmethod
+    def _revoke_tombstone(
+        connection: Any,
+        backend_ref: str,
+        principal: Principal,
+        server_revision: int,
+    ) -> None:
+        """撤销一次可见删除，而不物理删除审计记录。"""
+
+        changed = connection.execute(
+            """
+            UPDATE memory_tombstones
+            SET revoked_revision = %s
+            WHERE backend_ref = %s
+              AND tenant_id = %s
+              AND user_id = %s
+              AND revoked_revision IS NULL
+            """,
+            (server_revision, backend_ref, principal.tenant_id, principal.user_id),
+        ).rowcount
+        if changed != 1:
+            raise ReviewError("SUPERSEDE_TOMBSTONE_MISSING")
 
     @staticmethod
     def _mark_backend_crystal_stale(connection: Any, backend_ref: str, server_revision: int) -> None:

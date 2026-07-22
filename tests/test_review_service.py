@@ -3,7 +3,7 @@ import unittest
 
 from agent_memory_gateway.auth import Principal
 from agent_memory_gateway.crypto import EventCipher
-from agent_memory_gateway.review_service import PostgresReviewService
+from agent_memory_gateway.review_service import PostgresReviewService, ReviewError
 
 
 def reviewer() -> Principal:
@@ -28,6 +28,22 @@ class Cursor:
 
     def fetchall(self):
         return self.rows
+
+
+class UpdateCursor(Cursor):
+    def __init__(self, rowcount):
+        super().__init__()
+        self.rowcount = rowcount
+
+
+class TombstoneConnection:
+    def __init__(self, rowcount=1):
+        self.rowcount = rowcount
+        self.executed = []
+
+    def execute(self, sql, params=None):
+        self.executed.append((" ".join(sql.split()), params))
+        return UpdateCursor(self.rowcount)
 
 
 class ReviewConnection:
@@ -73,6 +89,8 @@ class ReviewConnection:
         if normalized.startswith("UPDATE gateway_state"):
             self.revision += 1
             return Cursor()
+        if normalized.startswith("UPDATE memory_tombstones SET revoked_revision"):
+            return UpdateCursor(1)
         return Cursor()
 
 
@@ -253,6 +271,13 @@ class ReviewServiceTests(unittest.TestCase):
             if "INSERT INTO memory_lifecycle_history" in sql
         )
         self.assertLess(revert_operation_index, revert_history_index)
+        tombstone_revoke_query, tombstone_revoke_params = next(
+            (sql, params)
+            for sql, params in revert_connection.executed
+            if sql.startswith("UPDATE memory_tombstones SET revoked_revision")
+        )
+        self.assertNotIn("DELETE", tombstone_revoke_query)
+        self.assertEqual(tombstone_revoke_params, (21, "gbrain:fact:199", "personal", "lee"))
 
     def test_forget_archives_memory_and_writes_tombstone(self):
         connection = ReviewConnection(self.candidate_row())
@@ -264,3 +289,8 @@ class ReviewServiceTests(unittest.TestCase):
         self.assertEqual(backend.archives[0]["reference"], "gbrain:fact:200")
         self.assertTrue(any("UPDATE memory_lifecycle SET status = 'archived'" in sql for sql, _ in connection.executed))
         self.assertTrue(any("INSERT INTO memory_tombstones" in sql for sql, _ in connection.executed))
+
+    def test_revoke_tombstone_requires_an_active_record(self):
+        connection = TombstoneConnection(rowcount=0)
+        with self.assertRaisesRegex(ReviewError, "SUPERSEDE_TOMBSTONE_MISSING"):
+            PostgresReviewService._revoke_tombstone(connection, "gbrain:fact:199", reviewer(), 21)

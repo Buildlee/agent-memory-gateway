@@ -16,6 +16,9 @@ from .hybrid_retrieval import (
 from .metadata_store import MetadataStoreError, PostgresEventLedger
 
 
+BACKEND_REF_BATCH_SIZE = 500
+
+
 class PostgresQueryService:
     """先从元数据库求授权 fact 引用，再把集合传给 GBrain。"""
 
@@ -89,7 +92,7 @@ class PostgresQueryService:
         max_tokens: int | None = None,
     ) -> HybridSelection:
         source_by_ref = {entry["backend_ref"]: entry for entry in allowed}
-        facts = self._gbrain.get_by_refs(source_by_ref)
+        facts = self._fetch_authorized_facts(allowed)
         candidates = []
         for fact in facts:
             source = source_by_ref.get(fact.backend_ref)
@@ -118,6 +121,15 @@ class PostgresQueryService:
             token_budget=selection.token_budget,
         )
 
+    def _fetch_authorized_facts(self, allowed: list[dict[str, str]]) -> list[Any]:
+        """分批读取所有已授权候选，批大小不构成召回截断。"""
+
+        facts: list[Any] = []
+        for offset in range(0, len(allowed), BACKEND_REF_BATCH_SIZE):
+            batch = allowed[offset : offset + BACKEND_REF_BATCH_SIZE]
+            facts.extend(self._gbrain.get_by_refs(entry["backend_ref"] for entry in batch))
+        return facts
+
     def _visible_backend_refs(
         self, principal: Principal, workspace_id: str, capability: str
     ) -> list[dict[str, str]]:
@@ -143,7 +155,6 @@ class PostgresQueryService:
                     OR (event.scope = 'private' AND event.device_id = %s AND event.agent_installation_id = %s)
                   )
                 ORDER BY event.server_revision DESC NULLS LAST
-                LIMIT 500
                 """,
                 (
                     principal.tenant_id,

@@ -26,6 +26,26 @@ class SidecarDaemonError(RuntimeError):
     """本机共用 Sidecar 无法建立或调用。"""
 
 
+def _sync_heartbeat(
+    client: Any,
+    token_provider: Any,
+    agent_installation_id: str,
+    operation_lock: threading.RLock,
+) -> None:
+    """在与 RPC 相同的临界区内以指定 Agent 身份完成心跳同步。"""
+
+    with operation_lock:
+        previous_token = client.token
+        previous_agent_id = client.agent_id
+        try:
+            client.token = token_provider.access_token(agent_installation_id)
+            client.agent_id = agent_installation_id
+            client.sync()
+        finally:
+            client.token = previous_token
+            client.agent_id = previous_agent_id
+
+
 def daemon_auth_token(encoded_outbox_key: str) -> str:
     try:
         padding = "=" * (-len(encoded_outbox_key) % 4)
@@ -169,18 +189,21 @@ def create_sidecar_server(
 ) -> ThreadingHTTPServer:
     if host not in {"127.0.0.1", "::1", "localhost"}:
         raise SidecarDaemonError("Sidecar daemon 只能监听回环地址")
+    operation_lock = threading.RLock()
     handler = type(
         "ConfiguredSidecarRPCHandler",
         (_SidecarRPCHandler,),
         {
             "client": client,
             "daemon_token": daemon_token,
-            "operation_lock": threading.RLock(),
+            "operation_lock": operation_lock,
             "token_provider": token_provider,
             "allowed_agent_ids": allowed_agent_ids,
         },
     )
-    return ThreadingHTTPServer((host, port), handler)
+    server = ThreadingHTTPServer((host, port), handler)
+    server.operation_lock = operation_lock
+    return server
 
 
 class LocalSidecarProxy:
@@ -384,10 +407,7 @@ def main() -> None:
             _time.sleep(300)
             try:
                 if provider is not None:
-                    token = provider.access_token(heartbeat_agent)
-                    client.token = token
-                    client.agent_id = heartbeat_agent
-                    client.sync()
+                    _sync_heartbeat(client, provider, heartbeat_agent, server.operation_lock)
             except Exception as exc:  # noqa: BLE001
                 print(f"Memory Sidecar heartbeat failed: {type(exc).__name__}", flush=True)
     import threading as _threading

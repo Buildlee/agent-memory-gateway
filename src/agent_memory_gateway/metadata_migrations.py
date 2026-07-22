@@ -41,6 +41,7 @@ REQUIRED_METADATA_COLUMNS = frozenset(
     {
         ("gateway_events", "scope"),
         ("gateway_events", "instruction_like"),
+        ("memory_tombstones", "revoked_revision"),
         ("devices", "last_contiguous_event_seq"),
         ("refresh_credentials", "replacement_ciphertext"),
         ("refresh_credentials", "replacement_nonce"),
@@ -126,6 +127,12 @@ def migration_specs(schema_path: str | Path | None = None) -> tuple[MigrationSpe
             MigrationSpec(
                 "2026-07-13.5",
                 schema_directory() / "migrations" / "20260713_5_crystal_state.sql",
+            )
+        )
+        specs.append(
+            MigrationSpec(
+                "2026-07-22.1",
+                schema_directory() / "migrations" / "20260722_1_tombstone_reactivation.sql",
             )
         )
     return tuple(specs)

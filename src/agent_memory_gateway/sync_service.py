@@ -190,24 +190,35 @@ class PostgresSyncService:
                 )
                 event_rows = connection.execute(
                     """
-                    SELECT device_id, event_id, agent_installation_id, workspace_id,
-                           scope, backend_ref, server_revision, payload_ciphertext,
-                           payload_nonce, payload_key_version
-                    FROM gateway_events
-                    WHERE tenant_id = %s
-                      AND user_id = %s
-                      AND status = 'applied'
-                      AND backend_ref IS NOT NULL
-                      AND instruction_like = false
-                      AND server_revision > %s
+                    SELECT source_event.device_id, source_event.event_id,
+                           source_event.agent_installation_id, lifecycle.workspace_id,
+                           lifecycle.scope, lifecycle.backend_ref,
+                           lifecycle.updated_server_revision,
+                           source_event.payload_ciphertext, source_event.payload_nonce,
+                           source_event.payload_key_version
+                    FROM memory_lifecycle AS lifecycle
+                    JOIN gateway_events AS source_event
+                      ON source_event.event_id = lifecycle.source_event_id
+                     AND source_event.tenant_id = lifecycle.tenant_id
+                     AND source_event.user_id = lifecycle.user_id
+                    WHERE lifecycle.tenant_id = %s
+                      AND lifecycle.user_id = %s
+                      AND lifecycle.status = 'active'
+                      AND lifecycle.instruction_like = false
+                      AND source_event.status = 'applied'
+                      AND lifecycle.updated_server_revision > %s
                       AND (
-                        scope = 'user'
-                        OR (scope = 'workspace' AND workspace_id = %s)
-                        OR (scope = 'device' AND device_id = %s)
-                        OR (scope = 'agent' AND agent_installation_id = %s)
-                        OR (scope = 'private' AND device_id = %s AND agent_installation_id = %s)
+                        lifecycle.scope = 'user'
+                        OR (lifecycle.scope = 'workspace' AND lifecycle.workspace_id = %s)
+                        OR (lifecycle.scope = 'device' AND lifecycle.source_device_id = %s)
+                        OR (lifecycle.scope = 'agent' AND lifecycle.source_agent_installation_id = %s)
+                        OR (
+                          lifecycle.scope = 'private'
+                          AND lifecycle.source_device_id = %s
+                          AND lifecycle.source_agent_installation_id = %s
+                        )
                       )
-                    ORDER BY server_revision ASC
+                    ORDER BY lifecycle.updated_server_revision ASC
                     LIMIT %s
                     """,
                     (
@@ -224,13 +235,43 @@ class PostgresSyncService:
                 ).fetchall()
                 tombstone_rows = connection.execute(
                     """
-                    SELECT memory_id, backend_ref, deleted_revision, deleted_at, reason_code
-                    FROM memory_tombstones
-                    WHERE tenant_id = %s AND user_id = %s AND deleted_revision > %s
-                    ORDER BY deleted_revision ASC
+                    SELECT tombstone.memory_id, tombstone.backend_ref,
+                           tombstone.deleted_revision, tombstone.deleted_at,
+                           tombstone.reason_code
+                    FROM memory_tombstones AS tombstone
+                    JOIN memory_lifecycle AS lifecycle
+                      ON lifecycle.backend_ref = tombstone.backend_ref
+                     AND lifecycle.tenant_id = tombstone.tenant_id
+                     AND lifecycle.user_id = tombstone.user_id
+                    WHERE tombstone.tenant_id = %s
+                      AND tombstone.user_id = %s
+                      AND tombstone.deleted_revision > %s
+                      AND tombstone.revoked_revision IS NULL
+                      AND (
+                        lifecycle.scope = 'user'
+                        OR (lifecycle.scope = 'workspace' AND lifecycle.workspace_id = %s)
+                        OR (lifecycle.scope = 'device' AND lifecycle.source_device_id = %s)
+                        OR (lifecycle.scope = 'agent' AND lifecycle.source_agent_installation_id = %s)
+                        OR (
+                          lifecycle.scope = 'private'
+                          AND lifecycle.source_device_id = %s
+                          AND lifecycle.source_agent_installation_id = %s
+                        )
+                      )
+                    ORDER BY tombstone.deleted_revision ASC
                     LIMIT %s
                     """,
-                    (principal.tenant_id, principal.user_id, start_revision, limit + 1),
+                    (
+                        principal.tenant_id,
+                        principal.user_id,
+                        start_revision,
+                        workspace_id,
+                        principal.device_id,
+                        principal.agent_installation_id,
+                        principal.device_id,
+                        principal.agent_installation_id,
+                        limit + 1,
+                    ),
                 ).fetchall()
 
         changes: list[tuple[int, str, Any]] = [

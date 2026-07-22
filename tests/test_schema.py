@@ -37,7 +37,7 @@ class MetadataSchemaContractTests(unittest.TestCase):
             metadata_migrations, "repository_root", return_value=Path(directory)
         ):
             self.assertEqual(schema_directory(), bundled)
-            self.assertEqual(len(expected_checksums()), 7)
+            self.assertEqual(len(expected_checksums()), 8)
 
     def test_schema_declares_every_required_metadata_table(self):
         sql = "\n".join(read_schema(spec.path) for spec in migration_specs())
@@ -130,6 +130,15 @@ class MetadataSchemaContractTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS memory_crystals", sql)
         self.assertIn("scope_binding_hash", sql)
         self.assertIn("source_refs JSONB", sql)
+        normalized = sql.upper()
+        for statement in ("DROP ", "DELETE ", "TRUNCATE "):
+            self.assertNotIn(statement, normalized)
+
+    def test_tombstone_reactivation_migration_preserves_audit_history(self):
+        sql = read_schema(migration_specs()[7].path)
+        self.assertIn("revoked_revision BIGINT", sql)
+        self.assertIn("memory_tombstones_revoked_revision_check", sql)
+        self.assertIn("WHERE revoked_revision IS NULL", sql)
         normalized = sql.upper()
         for statement in ("DROP ", "DELETE ", "TRUNCATE "):
             self.assertNotIn(statement, normalized)
