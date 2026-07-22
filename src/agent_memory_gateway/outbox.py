@@ -184,6 +184,52 @@ class Outbox:
                 """,
                 (utc_now(),),
             )
+        cache_migrated = self.conn.execute(
+            "SELECT 1 FROM outbox_state WHERE state_key = 'cache_v1_migrated'"
+        ).fetchone()
+        if cache_migrated is None:
+            v1_exists = self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='sidecar_cache_v1'"
+            ).fetchone()
+            if v1_exists:
+                v1_rows = self.conn.execute(
+                    "SELECT workspace_id, cache_id, server_revision,"
+                    " payload_ciphertext, payload_nonce, payload_key_version, updated_at"
+                    " FROM sidecar_cache_v1"
+                ).fetchall()
+                for row in v1_rows:
+                    workspace_id, cache_id, revision, ct, nonce, kv, updated = (
+                        str(row[0]), str(row[1]), int(row[2]),
+                        bytes(row[3]), bytes(row[4]), str(row[5]), str(row[6]),
+                    )
+                    try:
+                        old_aad = f"memory-sidecar-cache:{cache_id}".encode("utf-8")
+                        decrypted = self._cipher.decrypt_bytes(
+                            EncryptedPayload(ct, nonce, kv), aad=old_aad
+                        )
+                        encrypted = self._cipher.encrypt_bytes(
+                            decrypted, aad=self._cache_aad(workspace_id, cache_id)
+                        )
+                        self.conn.execute(
+                            """
+                            INSERT OR IGNORE INTO sidecar_cache_v2 (
+                              workspace_id, cache_id, server_revision,
+                              payload_ciphertext, payload_nonce, payload_key_version, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (workspace_id, cache_id, revision,
+                             encrypted.ciphertext, encrypted.nonce,
+                             encrypted.key_version, updated),
+                        )
+                    except EncryptionError:
+                        pass  # skip corrupt entries
+            self.conn.execute(
+                """
+                INSERT INTO outbox_state (state_key, state_value, updated_at)
+                VALUES ('cache_v1_migrated', '1', ?)
+                """,
+                (utc_now(),),
+            )
         self.conn.execute(
             """
             UPDATE outbox_events_v3
