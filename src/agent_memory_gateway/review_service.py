@@ -355,6 +355,14 @@ class PostgresReviewService:
             (self._metadata_binding_key(candidate, operation_id), backend_ref,
              candidate.origin.device_id, candidate.origin_event_id),
         )
+        connection.execute(
+            """
+            UPDATE external_memory_bindings
+            SET backend_ref = %s, updated_at = now()
+            WHERE device_id = %s AND event_id = %s
+            """,
+            (backend_ref, candidate.origin.device_id, candidate.origin_event_id),
+        )
         self._audit(connection, principal, candidate, f"review.{action}", result_code, result)
         return result
 

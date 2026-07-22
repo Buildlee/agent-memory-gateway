@@ -51,11 +51,12 @@ Once you have prepared your secrets, certificates, database backups, and protect
   -SshPort 22 `
   -RemoteRoot "/srv/memory-gateway" `
   -SecretsFile "/srv/memory-gateway/secrets.env" `
+  -AdminEnvironmentFile "/srv/memory-gateway/admin/admin.env" `
   -GatewayPublicName "memory-gateway.internal" `
-  -GatewayBindAddress "192.168.1.100"
+  -GatewayBindAddress "192.0.2.10"
 ```
 
-After entering the maintenance window and confirming backups and migration status, append `-Apply` to the same command. Only then will it create the deployment directory, upload public code, build the image, and start Gateway, Worker, and the HTTPS proxy.
+After entering the maintenance window and confirming backups and migration status, append `-Apply`. The script then creates the release directory, uploads public code, builds the image, and starts `memory-app` plus the HTTPS proxy. `memory-app` supervises Gateway, Worker, the admin Sidecar, and the console; Caddy is the only public entry point.
 
 The script will **not** replace protected environment files, generate or print secrets, or execute database migrations.
 
@@ -88,32 +89,35 @@ Migration commands must **not** be chained into the Gateway startup script. The 
 
 ---
 
-## Launch Gateway, Worker, and HTTPS Entry Point with Containers
+## Choose a Container Layout
 
-The repository provides three Compose files for different services:
+The default layout uses two containers. Choose the split layout only when the admin processes must be isolated from the Gateway.
 
 | File | Purpose |
 |---|---|
-| `deploy/fn/compose.yaml` | **Core services**: Gateway + Worker + Caddy HTTPS proxy |
-| `deploy/fn/admin-console.compose.yaml` | **Admin console**: standalone admin Sidecar + web management UI (layered on top of core) |
+| `deploy/fn/compose.slim.yaml` | **Default**: `memory-app` + Caddy, two containers total |
+| `deploy/fn/compose.yaml` | **Hardened core**: Gateway + Worker + Caddy |
+| `deploy/fn/admin-console.compose.yaml` | **Hardened admin**: standalone admin Sidecar + web console |
 | `deploy/fn/memory-mcp-bridge.compose.yaml` | **Container Bridge**: connects Docker-based Agents to shared memory via shared network namespace (independently deployed) |
 
-### Launch Core Services
+### Launch the Default Two-Container Service
 
 ```powershell
-docker compose --env-file "<protected environment file path>" -f deploy/fn/compose.yaml config
-docker compose --env-file "<protected environment file path>" -f deploy/fn/compose.yaml up -d --build
+docker compose --env-file "<release env file>" --env-file "<admin env file>" -f deploy/fn/compose.slim.yaml config
+docker compose --env-file "<release env file>" --env-file "<admin env file>" -f deploy/fn/compose.slim.yaml up -d --build
 ```
 
 Always run `config` first to verify that secrets, database ports, and volume mappings are not exposed to the public network. Gateway and Worker use the same image version. Only the proxy should expose an HTTPS entry point; the database should not be mapped to a public host port.
 
-### Layer on Admin Console
+### Use the Hardened Split Layout
 
 The admin console depends on core services already running. After following the [central admin setup](central-admin.md), launch with dual Compose files:
 
 ```powershell
 docker compose --env-file ".env" -f deploy/fn/compose.yaml -f deploy/fn/admin-console.compose.yaml up -d admin-sidecar admin-console
 ```
+
+Switching from split to slim leaves the old services as Compose orphans. The release script never removes or stops them and does not use `--remove-orphans`; verify the new service first and obtain explicit approval before handling old containers.
 
 ### Container-Based Agent Access
 
@@ -145,7 +149,7 @@ When a Windows scheduled task launches the Sidecar from a release copy, it shoul
 
 ### deploy-fn-release.ps1 Notes
 
-`scripts/deploy-fn-release.ps1` defaults to SSH port 22. If your FnOS uses a different port, explicitly pass `-SshPort <port>` (range 1–65535). The script uses the same port for remote checks, source upload, build, and startup — this ensures it does not reach a different host after the validation step.
+`scripts/deploy-fn-release.ps1` defaults to the `slim` profile and requires `-AdminEnvironmentFile` for the protected remote admin environment. Pass `-DeploymentProfile split` for the hardened layout. SSH port 22 remains the default; pass `-SshPort <port>` explicitly when needed.
 
 By default, the script deploys from the repository it resides in. When you need to build from an independent release copy, pass `-ProjectRoot <validated directory>`; this directory must contain `pyproject.toml`, `README.md`, `src`, `schema`, and `deploy`. This allows you to explicitly deploy only the merged version when there are uncommitted local changes.
 
@@ -165,7 +169,7 @@ Agents running inside Docker do not need a dedicated version. Use the [Container
 
 Check in order:
 
-1. Gateway and Worker health checks pass.
+1. `memory-app` and proxy health checks pass; then verify Gateway readiness, Worker heartbeat, admin Sidecar, and `/admin/` separately.
 2. Database migration `verify` passes and the runtime account has least-privilege permissions.
 3. Registered devices can obtain short-lived tokens; unregistered devices are rejected.
 4. One Agent can write, search, and retrieve context; another authorized Agent can see results in the same scope.

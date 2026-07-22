@@ -19,6 +19,7 @@ REQUIRED_METADATA_TABLES = frozenset(
         "dead_letters",
         "devices",
         "event_receipts",
+        "external_memory_bindings",
         "gateway_events",
         "gateway_state",
         "memory_tombstones",
@@ -26,6 +27,8 @@ REQUIRED_METADATA_TABLES = frozenset(
         "refresh_credentials",
         "memory_lifecycle",
         "memory_lifecycle_history",
+        "memory_feedback_events",
+        "memory_recall_events",
         "memory_crystals",
         "review_operations",
         "review_candidates",
@@ -55,6 +58,9 @@ REQUIRED_METADATA_COLUMNS = frozenset(
         ("memory_crystals", "status"),
         ("review_operations", "idempotency_key"),
         ("review_candidates", "last_operation_id"),
+        ("memory_recall_events", "query_hash"),
+        ("memory_feedback_events", "action"),
+        ("external_memory_bindings", "source_revision"),
     }
 )
 
@@ -133,6 +139,12 @@ def migration_specs(schema_path: str | Path | None = None) -> tuple[MigrationSpe
             MigrationSpec(
                 "2026-07-22.1",
                 schema_directory() / "migrations" / "20260722_1_tombstone_reactivation.sql",
+            )
+        )
+        specs.append(
+            MigrationSpec(
+                "2026-07-23.1",
+                schema_directory() / "migrations" / "20260723_1_memory_experience.sql",
             )
         )
     return tuple(specs)

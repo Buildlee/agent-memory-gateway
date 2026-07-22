@@ -1,0 +1,129 @@
+name: memory-gateway
+
+x-memory-security: &memory-security
+  user: "${MEMORY_ADMIN_SIDECAR_UID:-1000}:${MEMORY_ADMIN_SIDECAR_GID:-1001}"
+  read_only: true
+  tmpfs:
+    - /tmp:mode=1777,size=32m
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  pids_limit: 256
+  logging:
+    driver: local
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  app:
+    <<: *memory-security
+    build:
+      context: ../..
+      dockerfile: deploy/fn/Dockerfile
+    image: agent-memory-gateway:0.1.0
+    restart: unless-stopped
+    command: ["memory-app"]
+    environment:
+      MEMORY_GATEWAY_SECRETS_FILE: /run/secrets/metadata.env
+      MEMORY_GATEWAY_URL: http://127.0.0.1:8787
+      MEMORY_REFRESH_CREDENTIAL_FILE: /state/refresh-credential.json
+      MEMORY_AGENT_INSTALLATION_ID: ${MEMORY_ADMIN_AGENT_INSTALLATION_ID:?must set MEMORY_ADMIN_AGENT_INSTALLATION_ID}
+      MEMORY_SIDECAR_ALLOWED_AGENTS: ${MEMORY_ADMIN_AGENT_INSTALLATION_ID:?must set MEMORY_ADMIN_AGENT_INSTALLATION_ID}
+      MEMORY_DEFAULT_WORKSPACE: ${MEMORY_DEFAULT_WORKSPACE:?must set MEMORY_DEFAULT_WORKSPACE}
+      MEMORY_DEVICE_ID: ${MEMORY_ADMIN_DEVICE_ID:?must set MEMORY_ADMIN_DEVICE_ID}
+      MEMORY_HOME: /state/outbox
+      MEMORY_ADMIN_PUBLIC_BASE_URL: ${MEMORY_ADMIN_PUBLIC_BASE_URL:?must set MEMORY_ADMIN_PUBLIC_BASE_URL}
+      MEMORY_METADATA_POOL_MIN_SIZE: "1"
+      MEMORY_METADATA_POOL_MAX_SIZE: "4"
+      MEMORY_GBRAIN_POOL_MIN_SIZE: "1"
+      MEMORY_GBRAIN_POOL_MAX_SIZE: "2"
+      MEMORY_WORKER_METADATA_POOL_MIN_SIZE: "1"
+      MEMORY_WORKER_METADATA_POOL_MAX_SIZE: "2"
+      MEMORY_WORKER_GBRAIN_POOL_MIN_SIZE: "1"
+      MEMORY_WORKER_GBRAIN_POOL_MAX_SIZE: "2"
+      MEMORY_WORKER_HEARTBEAT_MAX_SECONDS: ${MEMORY_WORKER_HEARTBEAT_MAX_SECONDS:-30}
+    expose:
+      - "8787"
+      - "8767"
+    volumes:
+      - type: bind
+        source: ${MEMORY_GATEWAY_SECRETS_FILE:?must set MEMORY_GATEWAY_SECRETS_FILE}
+        target: /run/secrets/metadata.env
+        read_only: true
+      - type: bind
+        source: ${MEMORY_ADMIN_SIDECAR_STATE_DIR:?must set MEMORY_ADMIN_SIDECAR_STATE_DIR}
+        target: /state
+        read_only: false
+      - type: bind
+        source: ${MEMORY_ADMIN_CONSOLE_STATE_DIR:?must set MEMORY_ADMIN_CONSOLE_STATE_DIR}
+        target: /admin-state
+        read_only: false
+    networks:
+      - backend
+      - ingress
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          from http.client import HTTPConnection;
+          gateway = HTTPConnection('127.0.0.1', 8787, timeout=2);
+          gateway.request('GET', '/health/ready');
+          assert gateway.getresponse().status == 200;
+          admin = HTTPConnection('127.0.0.1', 8767, timeout=2);
+          admin.request('GET', '/admin/');
+          assert admin.getresponse().status in (200, 401)
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+
+  proxy:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    pids_limit: 128
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    environment:
+      MEMORY_GATEWAY_PUBLIC_NAME: ${MEMORY_GATEWAY_PUBLIC_NAME:?must set MEMORY_GATEWAY_PUBLIC_NAME}
+    ports:
+      - "${MEMORY_GATEWAY_BIND_ADDRESS:-127.0.0.1}:${MEMORY_GATEWAY_HTTPS_PORT:-8443}:8443"
+    volumes:
+      - type: bind
+        source: ./Caddyfile.slim
+        target: /etc/caddy/Caddyfile
+        read_only: true
+      - caddy_data:/data
+      - caddy_config:/config
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 33554432
+    networks:
+      - ingress
+    depends_on:
+      app:
+        condition: service_healthy
+
+networks:
+  backend:
+    external: true
+    name: ${MEMORY_GATEWAY_BACKEND_NETWORK:-memory-backend}
+  ingress:
+    name: memory-gateway-ingress
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

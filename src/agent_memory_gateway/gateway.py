@@ -18,6 +18,7 @@ from .admin_service import PostgresAdminService
 from .auth import AuthError, PostgresTokenAuthenticator, TokenAuthenticator
 from .crypto import EventCipher
 from .crystal_service import PostgresCrystalService
+from .feedback_service import PostgresFeedbackService
 from .db_pool import DatabasePoolBusy, PostgresConnectionPool
 from .gbrain_backend import GBrainBackend
 from .identity_service import PostgresIdentityService
@@ -47,6 +48,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
     query_service: PostgresQueryService | None = None
     review_service: PostgresReviewService | None = None
     crystal_service: PostgresCrystalService | None = None
+    feedback_service: PostgresFeedbackService | None = None
     sync_service: PostgresSyncService | None = None
     admin_service: PostgresAdminService | None = None
     readiness_probe: Callable[[], None] | None = None
@@ -118,6 +120,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 "/v1/admin/dead-letters/list": "memory.manage",
                 "/v1/admin/memories/list": "memory.search",
                 "/v1/admin/graph": "memory.search",
+                "/v1/admin/impact": "memory.manage",
+                "/v1/admin/sources": "memory.manage",
             }.get(path)
             if capability is None:
                 self._json({"error": "not_found"}, status=404)
@@ -160,9 +164,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     self._json(store.context(payload, principal))
             elif path == "/v1/memories/feedback":
                 if self.event_ledger is not None:
-                    raise ValueError("NOT_IMPLEMENTED")
-                store = MemoryStore(self.db_path)
-                self._json(store.feedback(payload, principal))
+                    if self.feedback_service is None:
+                        raise ValueError("NOT_IMPLEMENTED")
+                    self._json(self.feedback_service.record(payload, principal))
+                else:
+                    store = MemoryStore(self.db_path)
+                    self._json(store.feedback(payload, principal))
             elif path == "/v1/memories/forget":
                 if self.review_service is not None:
                     self._json(self.review_service.forget(payload, principal))
@@ -221,6 +228,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 if self.admin_service is None:
                     raise ValueError("NOT_IMPLEMENTED")
                 self._json(self.admin_service.memory_graph(payload, principal))
+            elif path == "/v1/admin/impact":
+                if self.admin_service is None:
+                    raise ValueError("NOT_IMPLEMENTED")
+                self._json(self.admin_service.memory_impact(payload, principal))
+            elif path == "/v1/admin/sources":
+                if self.admin_service is None:
+                    raise ValueError("NOT_IMPLEMENTED")
+                self._json(self.admin_service.list_memory_sources(payload, principal))
         except AuthError as exc:
             self._json({"error": exc.code}, status=exc.status)
         except DatabasePoolBusy as exc:
@@ -331,6 +346,7 @@ def main() -> None:
     GatewayHandler.query_service = None
     GatewayHandler.review_service = None
     GatewayHandler.crystal_service = None
+    GatewayHandler.feedback_service = None
     GatewayHandler.identity_service = None
     GatewayHandler.sync_service = None
     GatewayHandler.admin_service = None
@@ -398,6 +414,10 @@ def main() -> None:
         GatewayHandler.crystal_service = PostgresCrystalService(
             args.metadata_dsn,
             gbrain,
+            connection_factory=metadata_pool.connection,
+        )
+        GatewayHandler.feedback_service = PostgresFeedbackService(
+            args.metadata_dsn,
             connection_factory=metadata_pool.connection,
         )
         GatewayHandler.admin_service = PostgresAdminService(

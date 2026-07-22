@@ -111,6 +111,194 @@ class PostgresAdminService:
             "worker_heartbeat_at": self._timestamp(self._value(heartbeat_row, 0, "updated_at")),
         }
 
+    def memory_impact(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
+        """展示记忆是否真正被 Agent 召回与反馈，不返回查询或记忆正文。"""
+
+        workspace_id = self._workspace_id(payload, principal)
+        with self._connect() as connection:
+            summary = connection.execute(
+                """
+                SELECT COUNT(*) FILTER (WHERE recall.created_at > now() - interval '24 hours'),
+                       COALESCE(SUM(recall.item_count) FILTER (
+                         WHERE recall.created_at > now() - interval '24 hours'
+                       ), 0),
+                       (SELECT COUNT(*) FROM memory_feedback_events AS feedback
+                        WHERE feedback.tenant_id = %s AND feedback.user_id = %s
+                          AND feedback.workspace_id = %s
+                          AND feedback.created_at > now() - interval '30 days'),
+                       (SELECT COUNT(*) FROM memory_feedback_events AS feedback
+                        WHERE feedback.tenant_id = %s AND feedback.user_id = %s
+                          AND feedback.workspace_id = %s
+                          AND feedback.action IN ('useful', 'pin')
+                          AND feedback.created_at > now() - interval '30 days')
+                FROM memory_recall_events AS recall
+                WHERE recall.tenant_id = %s AND recall.user_id = %s
+                  AND recall.workspace_id = %s
+                """,
+                (
+                    principal.tenant_id,
+                    principal.user_id,
+                    workspace_id,
+                    principal.tenant_id,
+                    principal.user_id,
+                    workspace_id,
+                    principal.tenant_id,
+                    principal.user_id,
+                    workspace_id,
+                ),
+            ).fetchone()
+            agent_rows = connection.execute(
+                """
+                SELECT recall.agent_installation_id,
+                       COALESCE(agent.display_name, recall.agent_installation_id),
+                       recall.device_id,
+                       COALESCE(device.display_name, recall.device_id),
+                       COUNT(*) AS recall_count,
+                       COALESCE(SUM(recall.item_count), 0) AS recalled_items,
+                       MAX(recall.created_at) AS last_recalled_at
+                FROM memory_recall_events AS recall
+                LEFT JOIN agent_installations AS agent
+                  ON agent.agent_installation_id = recall.agent_installation_id
+                LEFT JOIN devices AS device ON device.device_id = recall.device_id
+                WHERE recall.tenant_id = %s AND recall.user_id = %s
+                  AND recall.workspace_id = %s
+                  AND recall.created_at > now() - interval '30 days'
+                GROUP BY recall.agent_installation_id, agent.display_name,
+                         recall.device_id, device.display_name
+                ORDER BY recall_count DESC, last_recalled_at DESC
+                LIMIT 50
+                """,
+                (principal.tenant_id, principal.user_id, workspace_id),
+            ).fetchall()
+            feedback_rows = connection.execute(
+                """
+                SELECT feedback.action, feedback.memory_id,
+                       feedback.agent_installation_id,
+                       COALESCE(agent.display_name, feedback.agent_installation_id),
+                       feedback.device_id,
+                       COALESCE(device.display_name, feedback.device_id),
+                       feedback.created_at
+                FROM memory_feedback_events AS feedback
+                LEFT JOIN agent_installations AS agent
+                  ON agent.agent_installation_id = feedback.agent_installation_id
+                LEFT JOIN devices AS device ON device.device_id = feedback.device_id
+                WHERE feedback.tenant_id = %s AND feedback.user_id = %s
+                  AND feedback.workspace_id = %s
+                ORDER BY feedback.created_at DESC
+                LIMIT 30
+                """,
+                (principal.tenant_id, principal.user_id, workspace_id),
+            ).fetchall()
+        feedback_total = int(self._value(summary, 2, "feedback_count_30d") or 0)
+        positive_total = int(self._value(summary, 3, "positive_feedback_30d") or 0)
+        return {
+            "workspace_id": workspace_id,
+            "summary": {
+                "recall_count_24h": int(self._value(summary, 0, "recall_count_24h") or 0),
+                "recalled_items_24h": int(self._value(summary, 1, "recalled_items_24h") or 0),
+                "feedback_count_30d": feedback_total,
+                "positive_rate_30d": round(positive_total / feedback_total, 4) if feedback_total else None,
+            },
+            "agents": [
+                {
+                    "agent_installation_id": str(self._value(row, 0, "agent_installation_id")),
+                    "agent_name": str(self._value(row, 1, "agent_name")),
+                    "device_id": str(self._value(row, 2, "device_id")),
+                    "device_name": str(self._value(row, 3, "device_name")),
+                    "recall_count": int(self._value(row, 4, "recall_count") or 0),
+                    "recalled_items": int(self._value(row, 5, "recalled_items") or 0),
+                    "last_recalled_at": self._timestamp(self._value(row, 6, "last_recalled_at")),
+                }
+                for row in agent_rows
+            ],
+            "recent_feedback": [
+                {
+                    "action": str(self._value(row, 0, "action")),
+                    "memory_id": str(self._value(row, 1, "memory_id")),
+                    "agent_installation_id": str(self._value(row, 2, "agent_installation_id")),
+                    "agent_name": str(self._value(row, 3, "agent_name")),
+                    "device_id": str(self._value(row, 4, "device_id")),
+                    "device_name": str(self._value(row, 5, "device_name")),
+                    "created_at": self._timestamp(self._value(row, 6, "created_at")),
+                }
+                for row in feedback_rows
+            ],
+        }
+
+    def list_memory_sources(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
+        """展示端侧 Provider 的汇总与最近接入，不返回端侧路径或正文。"""
+
+        workspace_id = self._workspace_id(payload, principal)
+        with self._connect() as connection:
+            source_rows = connection.execute(
+                """
+                SELECT binding.provider_type, binding.provider_instance_id,
+                       binding.capture_mode, COUNT(*) AS version_count,
+                       COUNT(binding.backend_ref) AS confirmed_count,
+                       COUNT(DISTINCT binding.device_id) AS device_count,
+                       COUNT(DISTINCT binding.agent_installation_id) AS agent_count,
+                       MAX(binding.updated_at) AS last_seen_at
+                FROM external_memory_bindings AS binding
+                WHERE binding.tenant_id = %s AND binding.user_id = %s
+                  AND binding.workspace_id = %s
+                GROUP BY binding.provider_type, binding.provider_instance_id, binding.capture_mode
+                ORDER BY last_seen_at DESC, binding.provider_instance_id
+                """,
+                (principal.tenant_id, principal.user_id, workspace_id),
+            ).fetchall()
+            recent_rows = connection.execute(
+                """
+                SELECT binding.provider_type, binding.provider_instance_id,
+                       binding.source_record_id, binding.capture_mode,
+                       binding.backend_ref, binding.device_id,
+                       COALESCE(device.display_name, binding.device_id),
+                       binding.agent_installation_id,
+                       COALESCE(agent.display_name, binding.agent_installation_id),
+                       binding.updated_at
+                FROM external_memory_bindings AS binding
+                LEFT JOIN devices AS device ON device.device_id = binding.device_id
+                LEFT JOIN agent_installations AS agent
+                  ON agent.agent_installation_id = binding.agent_installation_id
+                WHERE binding.tenant_id = %s AND binding.user_id = %s
+                  AND binding.workspace_id = %s
+                ORDER BY binding.updated_at DESC
+                LIMIT 50
+                """,
+                (principal.tenant_id, principal.user_id, workspace_id),
+            ).fetchall()
+        return {
+            "workspace_id": workspace_id,
+            "sources": [
+                {
+                    "provider_type": str(self._value(row, 0, "provider_type")),
+                    "provider_instance_id": str(self._value(row, 1, "provider_instance_id")),
+                    "capture_mode": str(self._value(row, 2, "capture_mode")),
+                    "version_count": int(self._value(row, 3, "version_count") or 0),
+                    "confirmed_count": int(self._value(row, 4, "confirmed_count") or 0),
+                    "device_count": int(self._value(row, 5, "device_count") or 0),
+                    "agent_count": int(self._value(row, 6, "agent_count") or 0),
+                    "last_seen_at": self._timestamp(self._value(row, 7, "last_seen_at")),
+                }
+                for row in source_rows
+            ],
+            "recent_bindings": [
+                {
+                    "provider_type": str(self._value(row, 0, "provider_type")),
+                    "provider_instance_id": str(self._value(row, 1, "provider_instance_id")),
+                    "source_record_id": str(self._value(row, 2, "source_record_id")),
+                    "capture_mode": str(self._value(row, 3, "capture_mode")),
+                    "status": "confirmed" if self._value(row, 4, "backend_ref") else "pending_review",
+                    "memory_id": self._optional_text(self._value(row, 4, "backend_ref")),
+                    "device_id": str(self._value(row, 5, "device_id")),
+                    "device_name": str(self._value(row, 6, "device_name")),
+                    "agent_installation_id": str(self._value(row, 7, "agent_installation_id")),
+                    "agent_name": str(self._value(row, 8, "agent_name")),
+                    "updated_at": self._timestamp(self._value(row, 9, "updated_at")),
+                }
+                for row in recent_rows
+            ],
+        }
+
     def list_devices(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
         workspace_id = self._workspace_id(payload, principal)
         with self._connect() as connection:

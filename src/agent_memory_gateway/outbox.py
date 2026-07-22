@@ -158,6 +158,16 @@ class Outbox:
             );
             CREATE INDEX IF NOT EXISTS idx_sidecar_cache_v2_workspace_revision
               ON sidecar_cache_v2 (workspace_id, server_revision DESC);
+
+            CREATE TABLE IF NOT EXISTS local_provider_shares (
+              provider_id TEXT NOT NULL,
+              record_id TEXT NOT NULL,
+              source_revision TEXT NOT NULL,
+              event_id TEXT NOT NULL,
+              capture_mode TEXT NOT NULL,
+              shared_at TEXT NOT NULL,
+              PRIMARY KEY (provider_id, record_id, source_revision)
+            );
             """
         )
         migrated = self.conn.execute(
@@ -311,6 +321,43 @@ class Outbox:
                 if changed != 1:
                     raise OutboxError("event_id 或 device_seq 已在 outbox 中使用")
         return event_id
+
+    def provider_share_event(
+        self, provider_id: str, record_id: str, source_revision: str
+    ) -> str | None:
+        """返回同一端侧来源版本已经使用的事件 ID。"""
+
+        with self._thread_lock:
+            row = self.conn.execute(
+                """
+                SELECT event_id
+                FROM local_provider_shares
+                WHERE provider_id = ? AND record_id = ? AND source_revision = ?
+                """,
+                (provider_id, record_id, source_revision),
+            ).fetchone()
+        return str(row[0]) if row else None
+
+    def record_provider_share(
+        self,
+        provider_id: str,
+        record_id: str,
+        source_revision: str,
+        event_id: str,
+        capture_mode: str,
+    ) -> None:
+        """记录端侧来源版本已经进入不可变事件队列，不保存正文。"""
+
+        with self._thread_lock:
+            with self.conn:
+                self.conn.execute(
+                    """
+                    INSERT OR IGNORE INTO local_provider_shares (
+                      provider_id, record_id, source_revision, event_id, capture_mode, shared_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (provider_id, record_id, source_revision, event_id, capture_mode, utc_now()),
+                )
 
     def list_events(self) -> list[dict[str, Any]]:
         with self._thread_lock:

@@ -56,9 +56,9 @@ memory-import scan --source ./memory-folder --batch import_2026_07_03
 - **私钥**：PEM 格式（RSA/OpenSSH/EC/DSA/PGP）
 - **API 令牌**：`sk-*`、`ghp_*`、`github_pat_*`、Slack `xox*`、Stripe `sk_live_*`、Firebase `AIza*`
 - **云凭证**：AWS Access Key（`AKIA`/`ASIA`）
-|- **Bearer Token**：Authorization 头中的 bearer 值
-|- **会话令牌**：JWT（`eyJ*.*.*`）、Cookie 头
-|- **凭据赋值**：`api_key = xxx`、`password = xxx` 等模式，排除占位符和代码表达式
+- **Bearer Token**：Authorization 头中的 bearer 值
+- **会话令牌**：JWT（`eyJ*.*.*`）、Cookie 头
+- **凭据赋值**：`api_key = xxx`、`password = xxx` 等模式，排除占位符和代码表达式
 - **助记词**：seed phrase / mnemonic / recovery code
 - **支付卡号**：Luhn 校验通过的 13-19 位数字
 - **中国身份证号**：18 位带校验码
@@ -84,3 +84,7 @@ memory-import scan --source ./memory-folder --batch import_2026_07_03
 - 是否需要设置有效期、归档状态或后续复核时间
 
 批量导入的写入、回滚和结晶重建会围绕预览和审核流程提供工具，避免旧资料未经检查就影响协作。
+
+## 持续共享端侧记忆
+
+`memory-import` 适合一次性迁移历史资料。来源会持续变化时，给 Sidecar 配置端侧 Provider：先用 `memory_local_preview` 预览，再通过 `memory_share_selected` 人工选择，或用 `memory_propose_local_candidates` 提议四类白名单内容。Provider 不上传本机路径，也不会把中枢结果写回原系统。

@@ -25,6 +25,7 @@ memory-sidecar-daemon = "agent_memory_gateway.sidecar_daemon:main"
 memory-import = "agent_memory_gateway.importer:main"
 memory-admin-check = "agent_memory_gateway.admin_check:main"
 memory-admin-console = "agent_memory_gateway.admin_console:main"
+memory-app = "agent_memory_gateway.memory_app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

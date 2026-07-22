@@ -37,8 +37,88 @@ def main() -> None:
         port=args.port,
         stateless_http=network_transport,
         json_response=network_transport,
+        instructions=(
+            "处理涉及项目、设备、用户偏好或既有决定的任务前，先调用 memory_context。"
+            "任务完成后，只把有长期价值的内容写入共享记忆；端侧自动提议仅使用白名单类别。"
+            "完整会话、临时过程、凭据和命令式内容不得进入共享记忆。"
+        ),
     )
     client = get_shared_sidecar()
+
+    @mcp.tool()
+    def memory_local_sources() -> str:
+        """列出本机已配置的个性化记忆来源；不读取或上传记忆正文。"""
+
+        return json.dumps(client.local_sources({}), ensure_ascii=False, indent=2)
+
+    @mcp.tool()
+    def memory_local_preview(
+        provider_id: str,
+        cursor: str = "",
+        limit: int = 50,
+        only_auto_share_eligible: bool = False,
+    ) -> str:
+        """在本机预览可选择的个性化记忆；未选择内容不会发送到 Gateway。"""
+
+        return json.dumps(
+            client.local_preview(
+                {
+                    "provider_id": provider_id,
+                    "cursor": cursor,
+                    "limit": limit,
+                    "only_auto_share_eligible": only_auto_share_eligible,
+                }
+            ),
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.tool()
+    def memory_share_selected(
+        provider_id: str,
+        record_ids: list[str],
+        workspace_id: str | None = None,
+        confirmed_by_user: bool = False,
+    ) -> str:
+        """共享用户已在端侧明确选择的记忆；未确认时不执行。"""
+
+        if not confirmed_by_user:
+            return json.dumps(
+                {"status": "confirmation_required", "shared": 0}, ensure_ascii=False
+            )
+        return json.dumps(
+            client.local_share_selected(
+                {
+                    "provider_id": provider_id,
+                    "record_ids": record_ids,
+                    "workspace_id": _active_workspace_id(workspace_id),
+                }
+            ),
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.tool()
+    def memory_propose_local_candidates(
+        provider_id: str,
+        workspace_id: str | None = None,
+        cursor: str = "",
+        limit: int = 20,
+    ) -> str:
+        """把白名单类别的端侧记忆自动提议为待审核候选；不自动确认。"""
+
+        return json.dumps(
+            client.local_propose_eligible(
+                {
+                    "provider_id": provider_id,
+                    "workspace_id": _active_workspace_id(workspace_id),
+                    "cursor": cursor,
+                    "limit": limit,
+                }
+            ),
+            ensure_ascii=False,
+            indent=2,
+        )
 
     @mcp.tool()
     def memory_context(
@@ -97,10 +177,27 @@ def main() -> None:
         return json.dumps(result, ensure_ascii=False, indent=2)
 
     @mcp.tool()
-    def memory_feedback(memory_id: str, action: str) -> str:
+    def memory_feedback(
+        memory_id: str,
+        action: str,
+        workspace_id: str | None = None,
+        recall_id: str = "",
+        idempotency_key: str = "",
+    ) -> str:
         """反馈一条记忆是否有用、过期、错误或需要置顶。"""
 
-        return json.dumps(client.feedback({"memory_id": memory_id, "action": action}), ensure_ascii=False)
+        return json.dumps(
+            client.feedback(
+                {
+                    "memory_id": memory_id,
+                    "action": action,
+                    "workspace_id": _active_workspace_id(workspace_id),
+                    "recall_id": recall_id,
+                    "idempotency_key": idempotency_key or f"mcp_feedback_{uuid.uuid4().hex}",
+                }
+            ),
+            ensure_ascii=False,
+        )
 
     @mcp.tool()
     def memory_forget(memory_id: str, hard_delete: bool = False) -> str:

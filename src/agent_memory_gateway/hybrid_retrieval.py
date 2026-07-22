@@ -89,12 +89,18 @@ def normalize_context_token_budget(value: Any | None) -> int:
     return budget
 
 
-def build_context_pack(items: Sequence[Mapping[str, Any]], *, policy: str) -> str:
+def build_context_pack(
+    items: Sequence[Mapping[str, Any]],
+    *,
+    policy: str,
+    recall: Mapping[str, Any] | None = None,
+) -> str:
     """只把经过选择的引用和固定安全说明序列化为可注入上下文。"""
 
     return json.dumps(
         {
             "policy": policy,
+            **({"recall": dict(recall)} if recall else {}),
             "memory_references": [dict(item) for item in items],
         },
         ensure_ascii=False,
