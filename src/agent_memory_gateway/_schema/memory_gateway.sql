@@ -238,17 +238,11 @@ CREATE TABLE IF NOT EXISTS memory_tombstones (
   deleted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_by_device_id TEXT REFERENCES devices(device_id),
   reason_code TEXT NOT NULL,
-  revoked_revision BIGINT,
-    CONSTRAINT memory_tombstones_revoked_revision_check
-      CHECK (revoked_revision IS NULL OR revoked_revision > deleted_revision),
   UNIQUE (backend_ref)
 );
 
 CREATE INDEX IF NOT EXISTS idx_memory_tombstones_owner_revision
   ON memory_tombstones (tenant_id, user_id, deleted_revision DESC);
-CREATE INDEX IF NOT EXISTS idx_memory_tombstones_active_owner_revision
-  ON memory_tombstones (tenant_id, user_id, deleted_revision DESC)
-  WHERE revoked_revision IS NULL;
 
 CREATE TABLE IF NOT EXISTS sync_checkpoints (
   device_id TEXT NOT NULL REFERENCES devices(device_id),
