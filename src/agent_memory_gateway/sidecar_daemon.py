@@ -376,6 +376,7 @@ def main() -> None:
         token_provider=provider,
         allowed_agent_ids=_allowed_agent_ids_from_environment(),
     )
+    heartbeat_agent = os.environ.get("MEMORY_HEARTBEAT_AGENT", "hermes-desktop")
     print(f"Memory Sidecar listening on http://{args.host}:{args.port}", flush=True)
     def _heartbeat() -> None:
         import time as _time
@@ -383,9 +384,9 @@ def main() -> None:
             _time.sleep(300)
             try:
                 if provider is not None:
-                    token = provider.access_token("hermes-desktop")
+                    token = provider.access_token(heartbeat_agent)
                     client.token = token
-                    client.agent_id = "hermes-desktop"
+                    client.agent_id = heartbeat_agent
                     client.sync()
             except Exception as exc:  # noqa: BLE001
                 print(f"Memory Sidecar heartbeat failed: {type(exc).__name__}", flush=True)
