@@ -45,6 +45,10 @@ class FakeConnection:
         self.tombstone_rows = list(tombstone_rows)
         self.sequences = list(sequences)
         self.checkpoint_params = None
+        self.event_query = None
+        self.tombstone_query = None
+        self.event_params = None
+        self.tombstone_params = None
 
     def __enter__(self):
         return self
@@ -64,9 +68,13 @@ class FakeConnection:
         if "INSERT INTO sync_checkpoints" in normalized:
             self.checkpoint_params = params
             return Cursor()
-        if "FROM gateway_events" in normalized and "payload_ciphertext" in normalized:
+        if "FROM memory_lifecycle AS lifecycle" in normalized and "payload_ciphertext" in normalized:
+            self.event_query = normalized
+            self.event_params = params
             return Cursor(self.event_rows)
         if "FROM memory_tombstones" in normalized:
+            self.tombstone_query = normalized
+            self.tombstone_params = params
             return Cursor(self.tombstone_rows)
         if "SELECT last_contiguous_event_seq" in normalized:
             return Cursor([(0,)])
@@ -234,6 +242,10 @@ class PullProtocolTests(unittest.TestCase):
         self.assertEqual(result["next_revision"], 6)
         self.assertEqual(result["auth_epoch"], {"device": 3, "agent": 5})
         self.assertEqual(connection.checkpoint_params[5:8], (5, 3, 5))
+        self.assertIn("lifecycle.updated_server_revision > %s", connection.event_query)
+        self.assertIn("lifecycle.scope = 'workspace' AND lifecycle.workspace_id = %s", connection.event_query)
+        self.assertIn("tombstone.revoked_revision IS NULL", connection.tombstone_query)
+        self.assertIn("lifecycle.scope = 'workspace' AND lifecycle.workspace_id = %s", connection.tombstone_query)
 
     def test_cursor_is_opaque_and_bound_to_epoch_and_workspace(self):
         cursor = PostgresSyncService._encode_cursor("sync_current", "workspace-a", 12)

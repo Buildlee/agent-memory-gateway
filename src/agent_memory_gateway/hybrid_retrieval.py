@@ -175,6 +175,10 @@ def select_hybrid_memories(
     scored: list[_ScoredCandidate] = []
     for source in records:
         item = dict(source)
+        # 检索层是最后一道防线：任何被标记为命令式的内容都不能作为
+        # Agent 上下文候选，即使上游缓存或离线队列出现了错误数据。
+        if bool(item.get("instruction_like")):
+            continue
         content = str(item.get("content") or "").strip()
         if not content:
             continue

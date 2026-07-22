@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from agent_memory_gateway.sidecar_daemon import (
     LocalSidecarProxy,
     SidecarDaemonError,
+    _sync_heartbeat,
     create_sidecar_server,
     daemon_auth_token,
 )
@@ -163,6 +164,54 @@ class SidecarDaemonTests(unittest.TestCase):
             server.shutdown()
             thread.join(timeout=5)
             server.server_close()
+
+    def test_heartbeat_and_rpc_share_the_same_identity_lock(self):
+        provider = FakeTokenProvider()
+        self.client.token = "base-token"
+        self.client.agent_id = "base-agent"
+
+        def sync_with_observation(workspace_id=None):
+            self.client.calls.append((self.client.agent_id, self.client.token))
+            with self.client.lock:
+                self.client.active += 1
+                self.client.max_active = max(self.client.max_active, self.client.active)
+            time.sleep(0.01)
+            with self.client.lock:
+                self.client.active -= 1
+            return {"workspace_id": workspace_id}
+
+        self.client.sync = sync_with_observation
+
+        def rpc_sync():
+            with self.server.operation_lock:
+                previous_token = self.client.token
+                previous_agent_id = self.client.agent_id
+                try:
+                    self.client.token = "token-for-rpc-agent"
+                    self.client.agent_id = "rpc-agent"
+                    self.client.sync()
+                finally:
+                    self.client.token = previous_token
+                    self.client.agent_id = previous_agent_id
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_rpc = executor.submit(rpc_sync)
+            future_heartbeat = executor.submit(
+                _sync_heartbeat,
+                self.client,
+                provider,
+                "heartbeat-agent",
+                self.server.operation_lock,
+            )
+            future_rpc.result()
+            future_heartbeat.result()
+
+        self.assertEqual(self.client.max_active, 1)
+        self.assertEqual(
+            set(self.client.calls),
+            {("rpc-agent", "token-for-rpc-agent"), ("heartbeat-agent", "token-for-heartbeat-agent")},
+        )
+        self.assertEqual((self.client.agent_id, self.client.token), ("base-agent", "base-token"))
 
 
 if __name__ == "__main__":
