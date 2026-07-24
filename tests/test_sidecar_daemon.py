@@ -3,10 +3,12 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 
 from agent_memory_gateway.sidecar_daemon import (
     LocalSidecarProxy,
     SidecarDaemonError,
+    _heartbeat_agent_from_environment,
     _sync_heartbeat,
     create_sidecar_server,
     daemon_auth_token,
@@ -89,6 +91,28 @@ class SidecarDaemonTests(unittest.TestCase):
         self.server.shutdown()
         self.thread.join(timeout=5)
         self.server.server_close()
+
+    def test_heartbeat_agent_uses_current_sidecar_identity(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "MEMORY_AGENT_INSTALLATION_ID": "admin-sidecar",
+                "MEMORY_AGENT_ID": "legacy-agent",
+            },
+            clear=True,
+        ):
+            self.assertEqual(_heartbeat_agent_from_environment(), "admin-sidecar")
+
+    def test_explicit_heartbeat_agent_has_priority(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "MEMORY_HEARTBEAT_AGENT": "heartbeat-agent",
+                "MEMORY_AGENT_INSTALLATION_ID": "admin-sidecar",
+            },
+            clear=True,
+        ):
+            self.assertEqual(_heartbeat_agent_from_environment(), "heartbeat-agent")
 
     def test_proxy_calls_existing_single_sidecar(self):
         self.assertTrue(self.proxy.health())
