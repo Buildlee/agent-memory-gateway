@@ -44,12 +44,22 @@ class MemoryAppTests(unittest.TestCase):
             public_base_url="https://memory.example.internal:8443/admin/",
             launch_token_file="/admin-state/launch-url",
         )
-        modules = {command[2] for command in commands}
         self.assertEqual(
-            modules,
+            commands[1],
+            (
+                "python",
+                "-m",
+                "agent_memory_gateway.gateway",
+                "reconcile",
+                "--forever",
+                "--poll-interval-seconds",
+                "5",
+            ),
+        )
+        self.assertEqual(
+            {command[2] for command in commands},
             {
                 "agent_memory_gateway.gateway",
-                "agent_memory_gateway.reconcile",
                 "agent_memory_gateway.sidecar_daemon",
                 "agent_memory_gateway.admin_console",
             },
