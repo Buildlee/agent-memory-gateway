@@ -66,7 +66,8 @@ def build_child_commands(
         (
             python_executable,
             "-m",
-            "agent_memory_gateway.reconcile",
+            "agent_memory_gateway.gateway",
+            "reconcile",
             "--forever",
             "--poll-interval-seconds",
             "5",
