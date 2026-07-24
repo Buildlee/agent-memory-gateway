@@ -409,6 +409,16 @@ def _allowed_agent_ids_from_environment() -> frozenset[str] | None:
     return values or None
 
 
+def _heartbeat_agent_from_environment() -> str:
+    """优先沿用当前 Sidecar 的 Agent 身份，并保留旧版默认值。"""
+
+    for name in ("MEMORY_HEARTBEAT_AGENT", "MEMORY_AGENT_INSTALLATION_ID", "MEMORY_AGENT_ID"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return "hermes-desktop"
+
+
 def main() -> None:
     """启动独立、仅回环可访问的本机 Sidecar。"""
 
@@ -428,7 +438,7 @@ def main() -> None:
         token_provider=provider,
         allowed_agent_ids=_allowed_agent_ids_from_environment(),
     )
-    heartbeat_agent = os.environ.get("MEMORY_HEARTBEAT_AGENT", "hermes-desktop")
+    heartbeat_agent = _heartbeat_agent_from_environment()
     print(f"Memory Sidecar listening on http://{args.host}:{args.port}", flush=True)
     def _heartbeat() -> None:
         import time as _time
