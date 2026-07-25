@@ -129,6 +129,18 @@ Docker 内的 Agent（如 NAS Hermes）使用通用 Bridge 模板，与目标容
 
 每台设备只启动一个 Sidecar。推荐用安装向导完成一次性配对、独立运行环境、计划任务和 MCP 配置生成：
 
+### 推荐：一条命令安装
+
+管理员先用 `new-device-install-profile.ps1` 生成只含 Gateway、工作区、设备 ID 前缀和 Agent 模板的 JSON 配置。该工具拒绝写入配对码、刷新凭据、私钥、令牌、密码或数据库连接串。将配置通过受控文件共享或内部 HTTPS 地址交付后，客户端运行：
+
+```powershell
+.\scripts\memory-device-install.ps1 -ProfileUrl "https://memory-gateway.example.internal/device-install.json"
+```
+
+安装器自动生成稳定设备 ID，默认创建独立运行环境、计划任务和 MCP JSON；它只提示一次隐藏的配对码。把同一配置放到 `%LOCALAPPDATA%\memory-gateway\device-install.json` 后，客户端不再需要参数，直接运行 `.\scripts\memory-device-install.ps1` 即可。配置中的 Agent 模板可以覆盖 Codex、Hermes 和 `other` 类型；未使用配置时，安装器只自动识别已安装的 Codex 或 Hermes，其他 Agent 通过通用 `-Agent '实例ID|类型|显示名'` 接入。
+
+### 高级：完整向导参数
+
 ```powershell
 .\\scripts\\setup-shared-memory.ps1 `
   -Mode device `

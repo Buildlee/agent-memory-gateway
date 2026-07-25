@@ -60,7 +60,32 @@ Stop-Process -Id <process_id>
 
 ## 接入已部署的共享服务
 
-管理员生成一次性配对码后，客户端运行一次安装向导。`-Agent` 格式：`安装实例 ID|类型|显示名`，可以重复填写多个：
+管理员先生成不含凭据的安装配置，客户端使用一条命令接入。安装配置包含 Gateway 地址、工作区、稳定设备 ID 前缀和 Agent 模板；它不允许包含配对码、刷新凭据、私钥、令牌、密码或数据库连接串。
+
+管理员只需准备一次配置：
+
+```powershell
+.\scripts\new-device-install-profile.ps1 `
+  -GatewayUrl "https://memory-gateway.example.internal" `
+  -DefaultWorkspace "shared-workspace" `
+  -OutputPath "C:\secure-share\device-install.json"
+```
+
+客户端运行：
+
+```powershell
+.\scripts\memory-device-install.ps1 -ProfilePath "C:\secure-share\device-install.json"
+```
+
+也可以用受控 HTTPS 地址交付同一份 JSON：
+
+```powershell
+.\scripts\memory-device-install.ps1 -ProfileUrl "https://memory-gateway.example.internal/device-install.json"
+```
+
+安装器自动生成设备 ID、创建独立运行环境、完成配对、创建计划任务并输出每个 Agent 的 MCP JSON。它只在最后提示输入一次性配对码，输入不会显示、写入配置或落到命令行历史。将配置预先放到 `%LOCALAPPDATA%\memory-gateway\device-install.json` 后，只需运行 `.\scripts\memory-device-install.ps1`。
+
+没有安装配置或需要处理特殊 Agent 时，仍可使用完整向导。`-Agent` 格式：`安装实例 ID|类型|显示名`，可以重复填写多个：
 
 ```powershell
 .\scripts\setup-shared-memory.ps1 `

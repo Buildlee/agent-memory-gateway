@@ -43,6 +43,16 @@ Stop-Process -Id <脚本输出的 process_id>
 
 ### 一条命令接入正式服务
 
+管理员先生成一份不含凭据的安装配置，再把它放到受控文件共享、设备管理工具或内部 HTTPS 地址。客户端只需运行一条命令，然后输入一次隐藏的配对码：
+
+```powershell
+.\scripts\memory-device-install.ps1 -ProfileUrl "https://memory-gateway.example.internal/device-install.json"
+```
+
+安装器会生成稳定设备 ID、按配置登记 Codex、Hermes 或其他 Agent、创建独立运行环境和登录后自启的 Sidecar，并生成 MCP 配置。配对码、刷新凭据、私钥和数据库地址不在安装配置、命令行或 MCP JSON 中出现。将配置交付到 `%LOCALAPPDATA%\memory-gateway\device-install.json` 后，客户端可直接运行 `.\scripts\memory-device-install.ps1`。
+
+需要手动指定 Agent、设备 ID 或恢复中断安装时，仍可使用底层完整向导：
+
 管理员生成一次性配对码后，在客户端运行：
 
 ```powershell

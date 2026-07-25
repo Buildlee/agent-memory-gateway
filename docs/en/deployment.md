@@ -129,6 +129,18 @@ Docker-based Agents (e.g., NAS Hermes) use the generic Bridge template, sharing 
 
 Start **exactly one** Sidecar per device. We recommend using the setup wizard for one-time pairing, isolated runtime, scheduled task, and MCP configuration generation:
 
+### Recommended: one-command installation
+
+An administrator first creates a JSON profile with `new-device-install-profile.ps1`. The profile contains only the Gateway address, workspace, device-ID prefix, and Agent templates; it rejects pairing codes, refresh credentials, private keys, tokens, passwords, and database connection strings. Deliver it through a controlled file share or internal HTTPS endpoint, then run:
+
+```powershell
+.\scripts\memory-device-install.ps1 -ProfileUrl "https://memory-gateway.example.internal/device-install.json"
+```
+
+The installer derives a stable device ID, creates the isolated runtime, scheduled task, and MCP JSON, and prompts once for a hidden pairing code. If the same profile is pre-positioned at `%LOCALAPPDATA%\memory-gateway\device-install.json`, the client can simply run `.\scripts\memory-device-install.ps1`. Profile templates support Codex, Hermes, and `other`; without a profile, only locally detected Codex or Hermes clients are selected automatically, while other Agents use the generic `-Agent 'installation-id|type|display-name'` parameter.
+
+### Advanced: full wizard parameters
+
 ```powershell
 .\scripts\setup-shared-memory.ps1 `
   -Mode device `
