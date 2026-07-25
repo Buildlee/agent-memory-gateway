@@ -147,6 +147,8 @@ When upgrading the Gateway, ensure the Gateway, Worker, and every Sidecar use co
 
 When a Windows scheduled task launches the Sidecar from a release copy, it should prefer that copy's `src` directory. First place the validated release copy in the task's working directory, then restart the Sidecar during a maintenance window; do not forcibly replace `.exe` startup files while the MCP client is running. If the release copy has no source directory, the startup script falls back to the installed package.
 
+When one device serves multiple Agents, the scheduled task also needs an explicit heartbeat identity. The setup wizard uses the first `-Agent` entry; manual calls to `start-sidecar.ps1` or `install-sidecar-autostart.ps1` must pass a `-HeartbeatAgent` that belongs to `AllowedAgents`, so the process does not fall back to a legacy default identity.
+
 ### deploy-fn-release.ps1 Notes
 
 `scripts/deploy-fn-release.ps1` defaults to the `slim` profile and requires `-AdminEnvironmentFile` for the protected remote admin environment. Pass `-DeploymentProfile split` for the hardened layout. SSH port 22 remains the default; pass `-SshPort <port>` explicitly when needed.

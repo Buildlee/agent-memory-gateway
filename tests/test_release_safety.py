@@ -38,6 +38,18 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assertIn('McpExecutable -eq "memory-sidecar-mcp"', mcp_script)
         self.assertIn("PythonExecutable", mcp_script)
 
+    def test_sidecar_autostart_sets_an_explicit_heartbeat_agent(self) -> None:
+        start_script = (ROOT / "scripts" / "start-sidecar.ps1").read_text(encoding="utf-8")
+        install_script = (ROOT / "scripts" / "install-sidecar-autostart.ps1").read_text(encoding="utf-8")
+        setup_script = (ROOT / "scripts" / "setup-shared-memory.ps1").read_text(encoding="utf-8")
+
+        for script in (start_script, install_script):
+            self.assertIn('[string]$HeartbeatAgent = ""', script)
+            self.assertIn("HeartbeatAgent 必须包含在 AllowedAgents 中", script)
+        self.assertIn("$env:MEMORY_HEARTBEAT_AGENT = $HeartbeatAgent", start_script)
+        self.assertIn('"-HeartbeatAgent", (Quote-TaskArgument $HeartbeatAgent)', install_script)
+        self.assertIn("HeartbeatAgent = $agentSpecs[0].Id", setup_script)
+
     def test_fn_release_script_uses_the_requested_ssh_port_for_upload_and_remote_commands(self) -> None:
         script = (ROOT / "scripts" / "deploy-fn-release.ps1").read_text(encoding="utf-8")
         self.assertIn("[int]$SshPort = 22", script)

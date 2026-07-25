@@ -12,6 +12,8 @@ param(
     [Parameter(Mandatory)]
     [string]$DefaultWorkspace,
 
+    [string]$HeartbeatAgent = "",
+
     [string]$CredentialTarget = "AgentMemoryGateway/local-device",
 
     [string]$SidecarKeyFile = "$env:LOCALAPPDATA\memory-gateway\secrets\pc-sidecar.env",
@@ -37,6 +39,19 @@ if ($CredentialTarget.Length -gt 256 -or [string]::IsNullOrWhiteSpace($Credentia
 }
 if ($AllowedAgents -notmatch "^[A-Za-z0-9_.@,:-]+$") {
     throw "AllowedAgents 只能使用 Agent 安装实例 ID，以逗号分隔"
+}
+$allowedAgentIds = @($AllowedAgents.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if ([string]::IsNullOrWhiteSpace($HeartbeatAgent)) {
+    if ($allowedAgentIds.Count -ne 1) {
+        throw "AllowedAgents 包含多个 Agent 时，必须显式指定 HeartbeatAgent"
+    }
+    $HeartbeatAgent = $allowedAgentIds[0]
+}
+if ($HeartbeatAgent -notmatch "^[A-Za-z0-9_.@:-]+$") {
+    throw "HeartbeatAgent 必须是已登记的 Agent 安装实例 ID"
+}
+if ($allowedAgentIds -notcontains $HeartbeatAgent) {
+    throw "HeartbeatAgent 必须包含在 AllowedAgents 中"
 }
 if ($DeviceId -notmatch "^[A-Za-z0-9_.@:-]+$") {
     throw "DeviceId 必须是已登记的设备 ID"
@@ -71,6 +86,7 @@ if ($gatewayUri.Scheme -eq "https" -and -not [string]::IsNullOrWhiteSpace($Gatew
 }
 $env:MEMORY_REFRESH_CREDENTIAL_TARGET = $CredentialTarget
 $env:MEMORY_SIDECAR_ALLOWED_AGENTS = $AllowedAgents
+$env:MEMORY_HEARTBEAT_AGENT = $HeartbeatAgent
 $env:MEMORY_DEVICE_ID = $DeviceId
 $env:MEMORY_DEFAULT_WORKSPACE = $DefaultWorkspace
 $env:MEMORY_OUTBOX_KEY = $keyValues["MEMORY_OUTBOX_KEY"]

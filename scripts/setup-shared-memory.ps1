@@ -497,6 +497,7 @@ if ($InstallAutostart) {
         AllowedAgents = $allowedAgents
         DeviceId = $DeviceId
         DefaultWorkspace = $DefaultWorkspace
+        HeartbeatAgent = $agentSpecs[0].Id
         CredentialTarget = $CredentialTarget
         SidecarKeyFile = $SidecarKeyFile
         Port = $SidecarPort

@@ -26,6 +26,8 @@ class ContainerSetupTests(unittest.TestCase):
         self.assertIn('gid="${container_user##*:}"', script)
         self.assertNotIn(r'\${container_user', script)
         self.assertIn('gateway_entrypoint="$(docker inspect "$gateway_container"', script)
+        self.assertIn('label=com.docker.compose.service=app', script)
+        self.assertIn('label=com.docker.compose.service=gateway', script)
         self.assertIn('gateway_host="${gateway_authority%%:*}"', script)
         self.assertIn('gateway_url="$gateway_scheme://$gateway_ip$gateway_port_suffix"', script)
         self.assertIn('Gateway 与目标 Agent 容器没有共同的 Docker 网络', script)

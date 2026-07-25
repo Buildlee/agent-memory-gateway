@@ -147,6 +147,8 @@ Sidecar 只监听本机回环地址。局域网内直连内部 HTTPS 地址；�
 
 Windows 计划任务从发布副本启动 Sidecar 时，优先使用该副本的 `src` 目录。先把已验证的发布副本放到任务工作目录，再在维护窗口重启 Sidecar；不要在 MCP 客户端运行时强制替换 `.exe` 启动文件。发布副本没有源码目录时，启动脚本回退到已安装包。
 
+一台设备接入多个 Agent 时，计划任务还需要一个明确的心跳身份。安装向导会默认使用第一条 `-Agent`；手动调用 `start-sidecar.ps1` 或 `install-sidecar-autostart.ps1` 时，必须传入属于 `AllowedAgents` 的 `-HeartbeatAgent`，避免回退到历史默认身份。
+
 ### deploy-fn-release.ps1 说明
 
 `scripts/deploy-fn-release.ps1` 默认使用 `slim` 布局，并要求 `-AdminEnvironmentFile` 指向远端受保护的管理环境文件。传入 `-DeploymentProfile split` 可使用高隔离布局。脚本默认使用 SSH 22 端口；服务器改用其他端口时，显式传入 `-SshPort <端口>`（范围 1–65535）。
