@@ -14,6 +14,8 @@ param(
     [Parameter(Mandatory)]
     [string]$DefaultWorkspace,
 
+    [string]$HeartbeatAgent = "",
+
     [string]$CredentialTarget = "AgentMemoryGateway/local-device",
 
     [string]$SidecarKeyFile = "$env:LOCALAPPDATA\memory-gateway\secrets\pc-sidecar.env",
@@ -38,6 +40,19 @@ if ($GatewayUrl -notmatch "^https?://[^\s/]+") {
 }
 if ($AllowedAgents -notmatch "^[A-Za-z0-9_.@,:-]+$") {
     throw "AllowedAgents 只能使用 Agent 安装实例 ID，以逗号分隔"
+}
+$allowedAgentIds = @($AllowedAgents.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if ([string]::IsNullOrWhiteSpace($HeartbeatAgent)) {
+    if ($allowedAgentIds.Count -ne 1) {
+        throw "AllowedAgents 包含多个 Agent 时，必须显式指定 HeartbeatAgent"
+    }
+    $HeartbeatAgent = $allowedAgentIds[0]
+}
+if ($HeartbeatAgent -notmatch "^[A-Za-z0-9_.@:-]+$") {
+    throw "HeartbeatAgent 必须是已登记的 Agent 安装实例 ID"
+}
+if ($allowedAgentIds -notcontains $HeartbeatAgent) {
+    throw "HeartbeatAgent 必须包含在 AllowedAgents 中"
 }
 if ($DeviceId -notmatch "^[A-Za-z0-9_.@:-]+$") {
     throw "DeviceId 必须是已登记的设备 ID"
@@ -82,6 +97,7 @@ $arguments = @(
     "-AllowedAgents", (Quote-TaskArgument $AllowedAgents),
     "-DeviceId", (Quote-TaskArgument $DeviceId),
     "-DefaultWorkspace", (Quote-TaskArgument $DefaultWorkspace),
+    "-HeartbeatAgent", (Quote-TaskArgument $HeartbeatAgent),
     "-CredentialTarget", (Quote-TaskArgument $CredentialTarget),
     "-SidecarKeyFile", (Quote-TaskArgument $SidecarKeyFile),
     "-MemoryHome", (Quote-TaskArgument $MemoryHome),

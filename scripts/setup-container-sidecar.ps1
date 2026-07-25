@@ -175,7 +175,11 @@ test -n "$client_compose" && test "$client_compose" != '<no value>'
 test -n "$client_status"
 test -f "$client_compose"
 
-set -- $(docker ps -q --filter 'label=com.docker.compose.project=memory-gateway' --filter 'label=com.docker.compose.service=gateway')
+  gateway_container="$(docker ps -q --filter 'label=com.docker.compose.project=memory-gateway' --filter 'label=com.docker.compose.service=app')"
+  if [ -z "$gateway_container" ]; then
+    gateway_container="$(docker ps -q --filter 'label=com.docker.compose.project=memory-gateway' --filter 'label=com.docker.compose.service=gateway')"
+  fi
+  set -- $gateway_container
 test "$#" -eq 1
 gateway_container="$1"
 gateway_compose="$(docker inspect "$gateway_container" --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}')"
