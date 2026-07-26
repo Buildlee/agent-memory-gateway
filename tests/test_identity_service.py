@@ -1,5 +1,6 @@
 import base64
 import unittest
+from contextlib import nullcontext
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -7,6 +8,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from agent_memory_gateway.auth import AuthError
 from agent_memory_gateway.identity_service import (
     PairingAgent,
+    PostgresIdentityService,
     _parse_refresh_credential,
     pairing_proof_message,
     verify_pairing_proof,
@@ -74,6 +76,71 @@ class PairingProofTests(unittest.TestCase):
             _capabilities("memory.search,memory.sync,memory.search"),
             ("memory.search", "memory.sync"),
         )
+
+    def test_pairing_rejects_an_existing_display_name_before_insert(self):
+        private_key = Ed25519PrivateKey.generate()
+        public_key = encode(
+            private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+        )
+        payload = {
+            "pairing_code": "pair-code",
+            "device_id": "windows-pc-v2",
+            "device_name": "WINDOWS-PC",
+            "device_type": "windows",
+            "public_key": public_key,
+            "nonce": "nonce-1",
+            "proof_signature": encode(private_key.sign(pairing_proof_message("pair-code", "windows-pc-v2", "nonce-1"))),
+            "agents": [
+                {
+                    "agent_installation_id": "codex-windows-pc-v2",
+                    "agent_type": "codex",
+                    "display_name": "Codex",
+                }
+            ],
+        }
+
+        class Cursor:
+            def __init__(self, row):
+                self._row = row
+
+            def fetchone(self):
+                return self._row
+
+        class Connection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+            def transaction(self):
+                return nullcontext()
+
+            def execute(self, query, params):
+                if "FROM pairing_codes" in query:
+                    return Cursor(("pairing-1", "personal", "chlee", "windows", ["codex"], True, None))
+                if "WHERE device_id = %s" in query:
+                    return Cursor(None)
+                if "WHERE tenant_id = %s AND user_id = %s AND display_name = %s" in query:
+                    return Cursor((1,))
+                self.fail(f"unexpected query: {query}")
+
+            def fail(self, message):
+                raise AssertionError(message)
+
+        service = PostgresIdentityService(
+            "postgres://test",
+            object(),
+            object(),
+            connection_factory=Connection,
+        )
+        with self.assertRaises(AuthError) as raised:
+            service.pair(payload)
+        self.assertEqual(raised.exception.code, "DEVICE_DISPLAY_NAME_CONFLICT")
+        self.assertEqual(raised.exception.status, 409)
 
 
 if __name__ == "__main__":

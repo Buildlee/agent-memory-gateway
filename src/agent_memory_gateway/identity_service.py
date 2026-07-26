@@ -535,6 +535,15 @@ class PostgresIdentityService:
                 ).fetchone()
                 if existing is not None:
                     raise AuthError("DEVICE_ID_CONFLICT", status=409)
+                existing_display_name = connection.execute(
+                    """
+                    SELECT 1 FROM devices
+                    WHERE tenant_id = %s AND user_id = %s AND display_name = %s
+                    """,
+                    (code[1], code[2], device_name),
+                ).fetchone()
+                if existing_display_name is not None:
+                    raise AuthError("DEVICE_DISPLAY_NAME_CONFLICT", status=409)
                 connection.execute(
                     """
                     INSERT INTO devices (

@@ -121,18 +121,18 @@ function Get-DevicePython([string]$RequestedExecutable, [bool]$CreateRuntime) {
         if (Test-Path -LiteralPath $runtimeRoot) {
             throw "共享记忆运行环境不完整：$runtimeRoot。为避免覆盖已有文件，脚本不会自动清理。"
         }
-        Write-Output "正在创建独立的共享记忆运行环境…"
-        & $bootstrapPython -m venv $runtimeRoot
+        Write-Host "正在创建独立的共享记忆运行环境…"
+        & $bootstrapPython -m venv $runtimeRoot | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "无法创建共享记忆运行环境：$runtimeRoot"
         }
-        Write-Output "正在安装 Sidecar 和 MCP 所需依赖…"
-        & $runtimePython -m pip install --disable-pip-version-check -e "$projectRoot[mcp]"
+        Write-Host "正在安装 Sidecar 和 MCP 所需依赖…"
+        & $runtimePython -m pip install --disable-pip-version-check -e "$projectRoot[mcp]" | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "无法安装共享记忆运行环境依赖。请检查网络和 pip 配置后重试。"
         }
     }
-    & $runtimePython -c "import cryptography; import mcp; import agent_memory_gateway"
+    & $runtimePython -c "import cryptography; import mcp; import agent_memory_gateway" | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "共享记忆运行环境缺少依赖：$runtimeRoot。脚本不会自动覆盖它，请先检查后再重新安装。"
     }
