@@ -21,6 +21,9 @@ param(
 
     [switch]$NoAutostart,
 
+    [ValidateRange(16, 1024)]
+    [int]$MaximumReleaseMegabytes = 256,
+
     [switch]$Plan
 )
 
@@ -56,6 +59,15 @@ function Normalize-HttpsUrl([string]$Value, [string]$Name) {
         throw "$Name 必须是不带账号、查询参数或片段的 HTTPS 地址。"
     }
     return $uri.AbsoluteUri.TrimEnd("/")
+}
+
+function Test-ProjectRoot([string]$Path) {
+    return (
+        (Test-Path -LiteralPath (Join-Path $Path "pyproject.toml") -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $Path "src\agent_memory_gateway") -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $Path "scripts\setup-shared-memory.ps1") -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $Path "scripts\start-sidecar.ps1") -PathType Leaf)
+    )
 }
 
 function ConvertFrom-InstallProfile([string]$Json, [string]$Source) {
@@ -95,7 +107,7 @@ function Assert-NonSensitiveProfileValue([object]$Value, [string]$Path) {
 }
 
 function Assert-InstallProfile([System.Collections.IDictionary]$Profile, [string]$Source) {
-    $allowedKeys = @("version", "gateway_url", "default_workspace", "device_id_prefix", "agents")
+    $allowedKeys = @("version", "gateway_url", "default_workspace", "device_id_prefix", "agents", "release")
     foreach ($entry in $Profile.GetEnumerator()) {
         $name = [string]$entry.Key
         if ($allowedKeys -notcontains $name) {
@@ -135,6 +147,31 @@ function Assert-InstallProfile([System.Collections.IDictionary]$Profile, [string
             if ([string]::IsNullOrWhiteSpace([string]$agent["display_name"])) {
                 throw "安装配置中的 Agent 显示名不能为空：$Source"
             }
+        }
+    }
+    if ($Profile.Contains("release")) {
+        $release = $Profile["release"]
+        if ($release -isnot [System.Collections.IDictionary]) {
+            throw "安装配置中的 release 必须是对象：$Source"
+        }
+        $allowedReleaseKeys = @("release_id", "archive_url", "sha256")
+        foreach ($entry in $release.GetEnumerator()) {
+            if ($allowedReleaseKeys -notcontains [string]$entry.Key) {
+                throw "安装配置中的发布包字段不受支持：$Source.$($entry.Key)"
+            }
+        }
+        foreach ($required in $allowedReleaseKeys) {
+            if (-not $release.Contains($required) -or [string]::IsNullOrWhiteSpace([string]$release[$required])) {
+                throw "安装配置中的发布包缺少 $required：$Source"
+            }
+        }
+        if ([string]$release["release_id"] -notmatch '^[A-Za-z0-9._-]{1,96}$') {
+            throw "安装配置中的 release_id 无效：$Source"
+        }
+        $release["archive_url"] = Normalize-HttpsUrl -Value ([string]$release["archive_url"]) -Name "安装配置中的 release.archive_url"
+        $release["sha256"] = ([string]$release["sha256"]).ToLowerInvariant()
+        if ($release["sha256"] -notmatch '^[a-f0-9]{64}$') {
+            throw "安装配置中的 release.sha256 必须是 64 位十六进制摘要：$Source"
         }
     }
 }
@@ -230,6 +267,109 @@ function Get-ProfileAgentSpecs([System.Collections.IDictionary]$Profile, [string
     return @($specs)
 }
 
+function Get-ReleaseSpec([System.Collections.IDictionary]$Profile) {
+    if (-not $Profile.Contains("release")) {
+        return $null
+    }
+    return $Profile["release"]
+}
+
+function Get-FileSha256([string]$Path) {
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+}
+
+function Save-VerifiedReleaseArchive([System.Collections.IDictionary]$Release) {
+    $cacheRoot = Join-Path $env:LOCALAPPDATA "memory-gateway\downloads"
+    New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+    $expectedHash = [string]$Release["sha256"]
+    $archivePath = Join-Path $cacheRoot "$expectedHash.zip"
+    if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
+        if ((Get-FileSha256 -Path $archivePath) -ne $expectedHash) {
+            throw "已有发布包摘要不匹配，拒绝使用或覆盖：$archivePath"
+        }
+        return $archivePath
+    }
+
+    $partialPath = "$archivePath.partial"
+    if (Test-Path -LiteralPath $partialPath) {
+        throw "发现未完成的发布包下载，拒绝覆盖：$partialPath"
+    }
+    $maximumBytes = [Int64]$MaximumReleaseMegabytes * 1MB
+    $client = [System.Net.Http.HttpClient]::new()
+    $response = $null
+    $input = $null
+    $output = $null
+    try {
+        $response = $client.GetAsync([Uri]$Release["archive_url"], [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+        if (-not $response.IsSuccessStatusCode) {
+            throw "发布包下载返回 HTTP $([int]$response.StatusCode)。"
+        }
+        if ($response.Content.Headers.ContentLength -and $response.Content.Headers.ContentLength -gt $maximumBytes) {
+            throw "发布包超过允许大小：$MaximumReleaseMegabytes MiB"
+        }
+        $input = $response.Content.ReadAsStream()
+        $output = [System.IO.File]::Open($partialPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $buffer = New-Object byte[] 81920
+        $total = [Int64]0
+        while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $total += $read
+            if ($total -gt $maximumBytes) {
+                throw "发布包超过允许大小：$MaximumReleaseMegabytes MiB"
+            }
+            $output.Write($buffer, 0, $read)
+        }
+    }
+    finally {
+        if ($output) { $output.Dispose() }
+        if ($input) { $input.Dispose() }
+        if ($response) { $response.Dispose() }
+        $client.Dispose()
+    }
+    if ((Get-FileSha256 -Path $partialPath) -ne $expectedHash) {
+        throw "发布包 SHA-256 不匹配，已保留下载文件以便排查：$partialPath"
+    }
+    Move-Item -LiteralPath $partialPath -Destination $archivePath -ErrorAction Stop
+    return $archivePath
+}
+
+function Resolve-ExtractedProjectRoot([string]$ReleaseDirectory) {
+    if (Test-ProjectRoot -Path $ReleaseDirectory) {
+        return $ReleaseDirectory
+    }
+    $candidates = @(
+        Get-ChildItem -LiteralPath $ReleaseDirectory -Directory -ErrorAction Stop |
+            Where-Object { Test-ProjectRoot -Path $_.FullName }
+    )
+    if ($candidates.Count -ne 1) {
+        throw "发布包没有唯一、完整的项目根目录：$ReleaseDirectory"
+    }
+    return $candidates[0].FullName
+}
+
+function Resolve-ProjectRoot([System.Collections.IDictionary]$Profile) {
+    $localRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+    if (Test-ProjectRoot -Path $localRoot) {
+        return [pscustomobject]@{ Source = "local"; Root = $localRoot }
+    }
+    $release = Get-ReleaseSpec -Profile $Profile
+    if ($null -eq $release) {
+        throw "当前安装脚本旁没有完整项目代码。请在安装配置中提供经 SHA-256 校验的 release，或从完整发布副本运行脚本。"
+    }
+    $releaseRoot = Join-Path $env:LOCALAPPDATA "memory-gateway\releases\$($release["release_id"])-$($release["sha256"].Substring(0, 16))"
+    if (Test-Path -LiteralPath $releaseRoot) {
+        return [pscustomobject]@{ Source = "verified_release_cache"; Root = (Resolve-ExtractedProjectRoot -ReleaseDirectory $releaseRoot) }
+    }
+    $archivePath = Save-VerifiedReleaseArchive -Release $release
+    New-Item -ItemType Directory -Path $releaseRoot -ErrorAction Stop | Out-Null
+    try {
+        Expand-Archive -LiteralPath $archivePath -DestinationPath $releaseRoot -ErrorAction Stop
+    }
+    catch {
+        throw "发布包已校验，但解压失败。为避免覆盖诊断现场，目录已保留：$releaseRoot"
+    }
+    return [pscustomobject]@{ Source = "verified_release_download"; Root = (Resolve-ExtractedProjectRoot -ReleaseDirectory $releaseRoot) }
+}
+
 $profileInfo = Get-InstallProfile
 $profile = $profileInfo.Value
 $resolvedDeviceName = Read-RequiredValue -Name "DeviceName" -Value $DeviceName -Prompt "设备显示名"
@@ -267,6 +407,7 @@ $installPlan = [pscustomobject]@{
     default_workspace = $resolvedWorkspace
     agent_installation_ids = @($resolvedAgents | ForEach-Object { ($_ -split '\|', 3)[0] })
     autostart = -not $NoAutostart
+    project_source = if (Test-ProjectRoot -Path ([System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))) ) { "local" } elseif ($profile.Contains("release")) { "verified_release_download" } else { "missing" }
     next_step = "确认后输入一次性配对码；配对码只在隐藏输入中使用，不写入配置或命令行。"
 }
 if ($Plan) {
@@ -274,10 +415,8 @@ if ($Plan) {
     exit 0
 }
 
-$setupScript = Join-Path $PSScriptRoot "setup-shared-memory.ps1"
-if (-not (Test-Path -LiteralPath $setupScript -PathType Leaf)) {
-    throw "找不到受控安装向导：$setupScript"
-}
+$projectResolution = Resolve-ProjectRoot -Profile $profile
+$setupScript = Join-Path $projectResolution.Root "scripts\setup-shared-memory.ps1"
 
 Write-Output "正在准备共享记忆端侧：$($resolvedAgents.Count) 个 Agent，计划任务=$(-not $NoAutostart)。"
 $setupArguments = @{

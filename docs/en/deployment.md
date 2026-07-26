@@ -139,6 +139,10 @@ An administrator first creates a JSON profile with `new-device-install-profile.p
 
 The installer derives a stable device ID, creates the isolated runtime, scheduled task, and MCP JSON, and prompts once for a hidden pairing code. If the same profile is pre-positioned at `%LOCALAPPDATA%\memory-gateway\device-install.json`, the client can simply run `.\scripts\memory-device-install.ps1`. Profile templates support Codex, Hermes, and `other`; without a profile, only locally detected Codex or Hermes clients are selected automatically, while other Agents use the generic `-Agent 'installation-id|type|display-name'` parameter.
 
+A brand-new computer may keep only `memory-device-install.ps1`. In that case the profile must also contain `release.release_id`, `release.archive_url`, and `release.sha256`. The installer accepts only HTTPS archive URLs without credentials, query strings, or fragments; it limits the download size, verifies SHA-256, then extracts the verified release below `%LOCALAPPDATA%\memory-gateway\releases` before invoking the controlled setup wizard. Existing caches, partial downloads, and incomplete release directories are never overwritten.
+
+On the administration machine, `new-device-install-profile.ps1 -ReleaseArchiveUrl <HTTPS URL> -ReleaseArchivePath <local ZIP>` computes the ZIP's SHA-256 and writes it into the profile. The archive URL must identify an immutable release. Do not use mutable branches, unverified images, or remote-script execution URLs.
+
 ### Advanced: full wizard parameters
 
 ```powershell

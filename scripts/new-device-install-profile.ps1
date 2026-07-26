@@ -10,6 +10,14 @@ param(
 
     [string]$DeviceIdPrefix = "windows",
 
+    [string]$ReleaseArchiveUrl = "",
+
+    [string]$ReleaseSha256 = "",
+
+    [string]$ReleaseArchivePath = "",
+
+    [string]$ReleaseId = "agent-memory-gateway",
+
     [Parameter(Mandatory)]
     [string]$OutputPath
 )
@@ -41,6 +49,50 @@ if ($DeviceIdPrefix -notmatch '^[A-Za-z0-9_.@:-]+$') {
 }
 if (-not $AgentType -or @($AgentType | Select-Object -Unique).Count -ne $AgentType.Count) {
     throw "AgentType 至少包含一个不重复的 Agent 类型。"
+}
+if (-not [string]::IsNullOrWhiteSpace($ReleaseArchivePath)) {
+    if (-not (Test-Path -LiteralPath $ReleaseArchivePath -PathType Leaf)) {
+        throw "找不到 ReleaseArchivePath：$ReleaseArchivePath"
+    }
+    $computedReleaseHash = (Get-FileHash -LiteralPath $ReleaseArchivePath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+    if (-not [string]::IsNullOrWhiteSpace($ReleaseSha256) -and $ReleaseSha256.ToLowerInvariant() -ne $computedReleaseHash) {
+        throw "ReleaseSha256 与 ReleaseArchivePath 的实际摘要不一致。"
+    }
+    $ReleaseSha256 = $computedReleaseHash
+}
+if ([string]::IsNullOrWhiteSpace($ReleaseArchiveUrl)) {
+    if (-not [string]::IsNullOrWhiteSpace($ReleaseSha256)) {
+        throw "提供 ReleaseSha256 时必须同时提供 ReleaseArchiveUrl。"
+    }
+}
+elseif ([string]::IsNullOrWhiteSpace($ReleaseSha256)) {
+    throw "ReleaseArchiveUrl 需要 ReleaseSha256，或提供 ReleaseArchivePath 自动计算摘要。"
+}
+if (-not [string]::IsNullOrWhiteSpace($ReleaseArchiveUrl)) {
+    try {
+        $releaseUri = [Uri]$ReleaseArchiveUrl
+    }
+    catch {
+        throw "ReleaseArchiveUrl 必须是 HTTPS 地址。"
+    }
+    if (
+        -not $releaseUri.IsAbsoluteUri -or
+        $releaseUri.Scheme -ne "https" -or
+        [string]::IsNullOrWhiteSpace($releaseUri.Host) -or
+        -not [string]::IsNullOrWhiteSpace($releaseUri.UserInfo) -or
+        -not [string]::IsNullOrWhiteSpace($releaseUri.Query) -or
+        -not [string]::IsNullOrWhiteSpace($releaseUri.Fragment)
+    ) {
+        throw "ReleaseArchiveUrl 必须是不带账号、查询参数或片段的 HTTPS 地址。"
+    }
+    $ReleaseArchiveUrl = $releaseUri.AbsoluteUri.TrimEnd("/")
+    $ReleaseSha256 = $ReleaseSha256.ToLowerInvariant()
+    if ($ReleaseSha256 -notmatch '^[a-f0-9]{64}$') {
+        throw "ReleaseSha256 必须是 64 位十六进制摘要。"
+    }
+    if ($ReleaseId -notmatch '^[A-Za-z0-9._-]{1,96}$') {
+        throw "ReleaseId 无效。"
+    }
 }
 
 $displayNames = @{
@@ -75,6 +127,13 @@ $profile = [ordered]@{
     default_workspace = $DefaultWorkspace
     device_id_prefix = $DeviceIdPrefix
     agents = $agents
+}
+if (-not [string]::IsNullOrWhiteSpace($ReleaseArchiveUrl)) {
+    $profile.release = [ordered]@{
+        release_id = $ReleaseId
+        archive_url = $ReleaseArchiveUrl
+        sha256 = $ReleaseSha256
+    }
 }
 $profile | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $target -Encoding utf8NoBOM
 [pscustomobject]@{
