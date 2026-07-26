@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "gateway_url": "https://memory-gateway.example.internal",
+  "default_workspace": "shared-workspace",
+  "device_id_prefix": "windows",
+  "agents": [
+    {
+      "type": "codex",
+      "display_name": "Codex",
+      "installation_id_template": "codex-{device_id}"
+    },
+    {
+      "type": "hermes",
+      "display_name": "Hermes",
+      "installation_id_template": "hermes-{device_id}"
+    }
+  ]
+}

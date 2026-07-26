@@ -129,6 +129,22 @@ Docker-based Agents (e.g., NAS Hermes) use the generic Bridge template, sharing 
 
 Start **exactly one** Sidecar per device. We recommend using the setup wizard for one-time pairing, isolated runtime, scheduled task, and MCP configuration generation:
 
+### Recommended: one-command installation
+
+An administrator first creates a JSON profile with `new-device-install-profile.ps1`. The profile contains only the Gateway address, workspace, device-ID prefix, and Agent templates; it rejects pairing codes, refresh credentials, private keys, tokens, passwords, and database connection strings. Deliver it through a controlled file share or internal HTTPS endpoint, then run:
+
+```powershell
+.\scripts\memory-device-install.ps1 -ProfileUrl "https://memory-gateway.example.internal/device-install.json"
+```
+
+The installer derives a stable device ID, creates the isolated runtime, scheduled task, and MCP JSON, and prompts once for a hidden pairing code. If the same profile is pre-positioned at `%LOCALAPPDATA%\memory-gateway\device-install.json`, the client can simply run `.\scripts\memory-device-install.ps1`. Profile templates support Codex, Hermes, and `other`; without a profile, only locally detected Codex or Hermes clients are selected automatically, while other Agents use the generic `-Agent 'installation-id|type|display-name'` parameter.
+
+A brand-new computer may keep only `memory-device-install.ps1`. Without `release`, the installer downloads the current GitHub `main` source archive, then extracts it below `%LOCALAPPDATA%\memory-gateway\releases` before invoking the controlled setup wizard. The download is size-limited and its SHA-256 is printed locally. For reproducible, auditable production installs, include `release.release_id`, `release.archive_url`, and `release.sha256`; this verified release always takes precedence over `main`. Archive URLs must be HTTPS without credentials, query strings, or fragments. Existing caches, partial downloads, and incomplete release directories are never overwritten.
+
+On the administration machine, `new-device-install-profile.ps1 -ReleaseArchiveUrl <HTTPS URL> -ReleaseArchivePath <local ZIP>` computes the ZIP's SHA-256 and writes it into the profile. The archive URL must identify an immutable release. The default `main` path is useful for routine onboarding; production environments should use a verified release instead of a mutable branch.
+
+### Advanced: full wizard parameters
+
 ```powershell
 .\scripts\setup-shared-memory.ps1 `
   -Mode device `

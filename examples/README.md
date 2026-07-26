@@ -4,6 +4,20 @@
 
 这里的示例只做两件事：研究本地原型的 HTTP 请求，或把真实 Codex、Hermes、OpenClaw 接到已部署好的共享服务。真实服务的设备登记、凭据和工作区授权始终由管理端完成，示例文件只描述客户端如何连接本机 Sidecar。
 
+## 一条命令安装配置
+
+[device-install-profile.example.json](device-install-profile.example.json) 是管理员交付给 Windows 客户端的非敏感配置示例。它只有 Gateway 示例地址、工作区、设备 ID 前缀和 Agent 模板；不允许放入配对码、刷新凭据、私钥、令牌、密码或数据库连接串。
+
+管理员生成自己的配置后，客户端只需运行：
+
+```powershell
+.\scripts\memory-device-install.ps1 -ProfilePath "C:\path\to\device-install.json"
+```
+
+客户端只会再要求输入一次隐藏的配对码。设备私钥、刷新凭据、Sidecar key 和 MCP 连接凭据仍按原有安全边界分别保存在本机受保护位置。
+
+如果客户端只有安装脚本，未配置 `release` 时会默认下载 GitHub 当前 `main` 源码包。日常接入可以直接使用这个默认值；需要稳定、可审核的环境，管理员应额外提供不可变 ZIP 的 HTTPS 地址和本地 ZIP 路径。生成器会计算 SHA-256 并把 `release` 写入配置；客户端会优先使用该固定版本，并在摘要一致后才解压和运行。
+
 ---
 
 ## 先分清三个名字
