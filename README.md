@@ -51,7 +51,7 @@ Stop-Process -Id <脚本输出的 process_id>
 
 安装器会生成稳定设备 ID、按配置登记 Codex、Hermes 或其他 Agent、创建独立运行环境和登录后自启的 Sidecar，并生成 MCP 配置。配对码、刷新凭据、私钥和数据库地址不在安装配置、命令行或 MCP JSON 中出现。将配置交付到 `%LOCALAPPDATA%\memory-gateway\device-install.json` 后，客户端可直接运行 `.\scripts\memory-device-install.ps1`。
 
-如果新电脑只拿到 `memory-device-install.ps1`，管理员可在同一安装配置中加入不可变发布包的 HTTPS 地址和 SHA-256。安装器会把发布包下载到本机缓存，校验 SHA-256 后才解压并运行；不会执行未校验的远程脚本，也不会直接拉取可变的 `main` 分支。
+如果新电脑只拿到 `memory-device-install.ps1`，安装器默认从 GitHub 下载当时的 `main` 源码包，再继续同一套受控安装。下载仍限制体积、拒绝覆盖已有文件，并在本机记录实际 SHA-256。需要可复现、可审核的安装时，管理员应在同一配置中加入不可变发布包的 HTTPS 地址和 SHA-256；配置中的固定发布包优先于 `main`。
 
 需要手动指定 Agent、设备 ID 或恢复中断安装时，仍可使用底层完整向导：
 

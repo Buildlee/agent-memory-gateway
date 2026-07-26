@@ -29,6 +29,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# 只有安装器、没有完整项目副本且未指定固定发布包时，按用户选择跟随 main。
+# 需要可复现部署时，安装配置中的 release（含 SHA-256）始终优先。
+$DefaultMainArchiveUrl = "https://github.com/Buildlee/agent-memory-gateway/archive/refs/heads/main.zip"
+
 function Read-RequiredValue([string]$Name, [string]$Value, [string]$Prompt) {
     $resolved = [string]$Value
     if ([string]::IsNullOrWhiteSpace($resolved)) {
@@ -278,6 +282,40 @@ function Get-FileSha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
 }
 
+function Save-ReleaseArchiveDownload([string]$ArchiveUrl, [string]$PartialPath, [string]$Label) {
+    $maximumBytes = [Int64]$MaximumReleaseMegabytes * 1MB
+    $client = [System.Net.Http.HttpClient]::new()
+    $response = $null
+    $input = $null
+    $output = $null
+    try {
+        $response = $client.GetAsync([Uri]$ArchiveUrl, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+        if (-not $response.IsSuccessStatusCode) {
+            throw "$Label 下载返回 HTTP $([int]$response.StatusCode)。"
+        }
+        if ($response.Content.Headers.ContentLength -and $response.Content.Headers.ContentLength -gt $maximumBytes) {
+            throw "$Label 超过允许大小：$MaximumReleaseMegabytes MiB"
+        }
+        $input = $response.Content.ReadAsStream()
+        $output = [System.IO.File]::Open($PartialPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $buffer = New-Object byte[] 81920
+        $total = [Int64]0
+        while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $total += $read
+            if ($total -gt $maximumBytes) {
+                throw "$Label 超过允许大小：$MaximumReleaseMegabytes MiB"
+            }
+            $output.Write($buffer, 0, $read)
+        }
+    }
+    finally {
+        if ($output) { $output.Dispose() }
+        if ($input) { $input.Dispose() }
+        if ($response) { $response.Dispose() }
+        $client.Dispose()
+    }
+}
+
 function Save-VerifiedReleaseArchive([System.Collections.IDictionary]$Release) {
     $cacheRoot = Join-Path $env:LOCALAPPDATA "memory-gateway\downloads"
     New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
@@ -294,42 +332,36 @@ function Save-VerifiedReleaseArchive([System.Collections.IDictionary]$Release) {
     if (Test-Path -LiteralPath $partialPath) {
         throw "发现未完成的发布包下载，拒绝覆盖：$partialPath"
     }
-    $maximumBytes = [Int64]$MaximumReleaseMegabytes * 1MB
-    $client = [System.Net.Http.HttpClient]::new()
-    $response = $null
-    $input = $null
-    $output = $null
-    try {
-        $response = $client.GetAsync([Uri]$Release["archive_url"], [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
-        if (-not $response.IsSuccessStatusCode) {
-            throw "发布包下载返回 HTTP $([int]$response.StatusCode)。"
-        }
-        if ($response.Content.Headers.ContentLength -and $response.Content.Headers.ContentLength -gt $maximumBytes) {
-            throw "发布包超过允许大小：$MaximumReleaseMegabytes MiB"
-        }
-        $input = $response.Content.ReadAsStream()
-        $output = [System.IO.File]::Open($partialPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-        $buffer = New-Object byte[] 81920
-        $total = [Int64]0
-        while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
-            $total += $read
-            if ($total -gt $maximumBytes) {
-                throw "发布包超过允许大小：$MaximumReleaseMegabytes MiB"
-            }
-            $output.Write($buffer, 0, $read)
-        }
-    }
-    finally {
-        if ($output) { $output.Dispose() }
-        if ($input) { $input.Dispose() }
-        if ($response) { $response.Dispose() }
-        $client.Dispose()
-    }
+    Save-ReleaseArchiveDownload -ArchiveUrl ([string]$Release["archive_url"]) -PartialPath $partialPath -Label "发布包"
     if ((Get-FileSha256 -Path $partialPath) -ne $expectedHash) {
         throw "发布包 SHA-256 不匹配，已保留下载文件以便排查：$partialPath"
     }
     Move-Item -LiteralPath $partialPath -Destination $archivePath -ErrorAction Stop
     return $archivePath
+}
+
+function Save-DefaultMainArchive() {
+    $cacheRoot = Join-Path $env:LOCALAPPDATA "memory-gateway\downloads"
+    New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+    $downloadId = "main-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmssfff'))-$PID"
+    $partialPath = Join-Path $cacheRoot "$downloadId.zip.partial"
+    if (Test-Path -LiteralPath $partialPath) {
+        throw "发现未完成的 main 源码包下载，拒绝覆盖：$partialPath"
+    }
+    $archiveUrl = Normalize-HttpsUrl -Value $DefaultMainArchiveUrl -Name "默认 main 源码包"
+    Save-ReleaseArchiveDownload -ArchiveUrl $archiveUrl -PartialPath $partialPath -Label "main 源码包"
+    $archiveHash = Get-FileSha256 -Path $partialPath
+    $archivePath = Join-Path $cacheRoot "$downloadId-$($archiveHash.Substring(0, 16)).zip"
+    if (Test-Path -LiteralPath $archivePath) {
+        throw "发现同名 main 源码包，拒绝覆盖：$archivePath"
+    }
+    Move-Item -LiteralPath $partialPath -Destination $archivePath -ErrorAction Stop
+    return [pscustomobject]@{
+        Id = $downloadId
+        Path = $archivePath
+        Sha256 = $archiveHash
+        Url = $archiveUrl
+    }
 }
 
 function Resolve-ExtractedProjectRoot([string]$ReleaseDirectory) {
@@ -352,22 +384,40 @@ function Resolve-ProjectRoot([System.Collections.IDictionary]$Profile) {
         return [pscustomobject]@{ Source = "local"; Root = $localRoot }
     }
     $release = Get-ReleaseSpec -Profile $Profile
-    if ($null -eq $release) {
-        throw "当前安装脚本旁没有完整项目代码。请在安装配置中提供经 SHA-256 校验的 release，或从完整发布副本运行脚本。"
+    if ($null -ne $release) {
+        $releaseRoot = Join-Path $env:LOCALAPPDATA "memory-gateway\releases\$($release["release_id"])-$($release["sha256"].Substring(0, 16))"
+        if (Test-Path -LiteralPath $releaseRoot) {
+            return [pscustomobject]@{ Source = "verified_release_cache"; Root = (Resolve-ExtractedProjectRoot -ReleaseDirectory $releaseRoot) }
+        }
+        $archivePath = Save-VerifiedReleaseArchive -Release $release
+        New-Item -ItemType Directory -Path $releaseRoot -ErrorAction Stop | Out-Null
+        try {
+            Expand-Archive -LiteralPath $archivePath -DestinationPath $releaseRoot -ErrorAction Stop
+        }
+        catch {
+            throw "发布包已校验，但解压失败。为避免覆盖诊断现场，目录已保留：$releaseRoot"
+        }
+        return [pscustomobject]@{ Source = "verified_release_download"; Root = (Resolve-ExtractedProjectRoot -ReleaseDirectory $releaseRoot) }
     }
-    $releaseRoot = Join-Path $env:LOCALAPPDATA "memory-gateway\releases\$($release["release_id"])-$($release["sha256"].Substring(0, 16))"
+
+    $mainArchive = Save-DefaultMainArchive
+    $releaseRoot = Join-Path $env:LOCALAPPDATA "memory-gateway\releases\$($mainArchive.Id)-$($mainArchive.Sha256.Substring(0, 16))"
     if (Test-Path -LiteralPath $releaseRoot) {
-        return [pscustomobject]@{ Source = "verified_release_cache"; Root = (Resolve-ExtractedProjectRoot -ReleaseDirectory $releaseRoot) }
+        throw "发现同名 main 源码包目录，拒绝覆盖：$releaseRoot"
     }
-    $archivePath = Save-VerifiedReleaseArchive -Release $release
     New-Item -ItemType Directory -Path $releaseRoot -ErrorAction Stop | Out-Null
     try {
-        Expand-Archive -LiteralPath $archivePath -DestinationPath $releaseRoot -ErrorAction Stop
+        Expand-Archive -LiteralPath $mainArchive.Path -DestinationPath $releaseRoot -ErrorAction Stop
     }
     catch {
-        throw "发布包已校验，但解压失败。为避免覆盖诊断现场，目录已保留：$releaseRoot"
+        throw "main 源码包已下载，但解压失败。为避免覆盖诊断现场，目录已保留：$releaseRoot"
     }
-    return [pscustomobject]@{ Source = "verified_release_download"; Root = (Resolve-ExtractedProjectRoot -ReleaseDirectory $releaseRoot) }
+    return [pscustomobject]@{
+        Source = "default_main_archive"
+        Root = (Resolve-ExtractedProjectRoot -ReleaseDirectory $releaseRoot)
+        ArchiveSha256 = $mainArchive.Sha256
+        ArchiveUrl = $mainArchive.Url
+    }
 }
 
 $profileInfo = Get-InstallProfile
@@ -407,7 +457,7 @@ $installPlan = [pscustomobject]@{
     default_workspace = $resolvedWorkspace
     agent_installation_ids = @($resolvedAgents | ForEach-Object { ($_ -split '\|', 3)[0] })
     autostart = -not $NoAutostart
-    project_source = if (Test-ProjectRoot -Path ([System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))) ) { "local" } elseif ($profile.Contains("release")) { "verified_release_download" } else { "missing" }
+    project_source = if (Test-ProjectRoot -Path ([System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))) ) { "local" } elseif ($profile.Contains("release")) { "verified_release_download" } else { "default_main_archive" }
     next_step = "确认后输入一次性配对码；配对码只在隐藏输入中使用，不写入配置或命令行。"
 }
 if ($Plan) {
@@ -418,6 +468,9 @@ if ($Plan) {
 $projectResolution = Resolve-ProjectRoot -Profile $profile
 $setupScript = Join-Path $projectResolution.Root "scripts\setup-shared-memory.ps1"
 
+if ($projectResolution.Source -eq "default_main_archive") {
+    Write-Output "已下载 GitHub main 源码包，SHA-256：$($projectResolution.ArchiveSha256)"
+}
 Write-Output "正在准备共享记忆端侧：$($resolvedAgents.Count) 个 Agent，计划任务=$(-not $NoAutostart)。"
 $setupArguments = @{
     Mode = "device"

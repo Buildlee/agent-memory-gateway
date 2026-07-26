@@ -139,9 +139,9 @@ Docker 内的 Agent（如 NAS Hermes）使用通用 Bridge 模板，与目标容
 
 安装器自动生成稳定设备 ID，默认创建独立运行环境、计划任务和 MCP JSON；它只提示一次隐藏的配对码。把同一配置放到 `%LOCALAPPDATA%\memory-gateway\device-install.json` 后，客户端不再需要参数，直接运行 `.\scripts\memory-device-install.ps1` 即可。配置中的 Agent 模板可以覆盖 Codex、Hermes 和 `other` 类型；未使用配置时，安装器只自动识别已安装的 Codex 或 Hermes，其他 Agent 通过通用 `-Agent '实例ID|类型|显示名'` 接入。
 
-全新电脑可以只保留 `memory-device-install.ps1`。此时安装配置还应包含 `release.release_id`、`release.archive_url` 和 `release.sha256`：安装器只接受无账号、查询参数或片段的 HTTPS 发布包地址，下载时限制体积，校验 SHA-256 后才解压到 `%LOCALAPPDATA%\memory-gateway\releases` 并执行其中的受控向导。缓存、未完成下载或不完整发布目录一律不覆盖；处理失败时保留现场供核对。
+全新电脑可以只保留 `memory-device-install.ps1`。没有 `release` 时，安装器默认下载 GitHub 当前 `main` 源码包，再在 `%LOCALAPPDATA%\memory-gateway\releases` 中展开并执行受控向导；下载受体积限制，实际 SHA-256 会输出到控制台。需要稳定、可复核的生产安装时，配置应包含 `release.release_id`、`release.archive_url` 和 `release.sha256`。此固定发布包优先于 `main`，安装器只接受无账号、查询参数或片段的 HTTPS 地址，并在 SHA-256 一致后才解压。缓存、未完成下载或不完整发布目录一律不覆盖；处理失败时保留现场供核对。
 
-管理端使用 `new-device-install-profile.ps1 -ReleaseArchiveUrl <HTTPS 地址> -ReleaseArchivePath <本地 ZIP>` 生成配置时，`ReleaseArchivePath` 的实际 SHA-256 会自动写入配置，避免人工复制摘要。发布包必须指向不可变版本；不要配置可变分支、未校验镜像或远程脚本直执行地址。
+管理端使用 `new-device-install-profile.ps1 -ReleaseArchiveUrl <HTTPS 地址> -ReleaseArchivePath <本地 ZIP>` 生成配置时，`ReleaseArchivePath` 的实际 SHA-256 会自动写入配置，避免人工复制摘要。发布包必须指向不可变版本。默认 `main` 适合日常快速接入；生产环境不要依赖可变分支，应配置固定发布包。
 
 ### 高级：完整向导参数
 

@@ -71,7 +71,7 @@ Stop-Process -Id <process_id>
   -OutputPath "C:\secure-share\device-install.json"
 ```
 
-若客户端不预装项目发布副本，先在管理端制作不可变 ZIP 发布包并放到受控 HTTPS 地址。生成配置时提供发布包本地文件，脚本会自动计算并写入 SHA-256：
+客户端只拿到安装脚本时，默认会从 GitHub 下载当时的 `main` 源码包。若希望每台电脑使用同一份可审核版本，管理端应制作不可变 ZIP 发布包并放到受控 HTTPS 地址。生成配置时提供发布包本地文件，脚本会自动计算并写入 SHA-256：
 
 ```powershell
 .\scripts\new-device-install-profile.ps1 `
@@ -83,7 +83,7 @@ Stop-Process -Id <process_id>
   -OutputPath "C:\secure-share\device-install.json"
 ```
 
-发布包地址必须是 HTTPS 且不可变；客户端仅在下载结果与配置中的 SHA-256 完全一致时解压运行。不要让客户端直接执行远程脚本，也不要把可变分支地址当作发布包。
+发布包地址必须是 HTTPS 且不可变；客户端仅在下载结果与配置中的 SHA-256 完全一致时解压运行。`release` 存在时始终优先于默认 `main` 下载。不要让客户端直接执行远程脚本。
 
 客户端运行：
 
@@ -99,7 +99,7 @@ Stop-Process -Id <process_id>
 
 安装器自动生成设备 ID、创建独立运行环境、完成配对、创建计划任务并输出每个 Agent 的 MCP JSON。它只在最后提示输入一次性配对码，输入不会显示、写入配置或落到命令行历史。将配置预先放到 `%LOCALAPPDATA%\memory-gateway\device-install.json` 后，只需运行 `.\scripts\memory-device-install.ps1`。
 
-在只有安装脚本的新电脑上，安装器会使用配置中的 `release` 字段下载、校验并缓存发布副本，再继续同一套安装流程。下载或解压异常时会保留相关文件供排查，拒绝覆盖已有缓存、发布目录、密钥、凭据或任务。
+在只有安装脚本的新电脑上，安装器没有 `release` 时会下载 GitHub 当前 `main` 源码包；它适合希望随项目更新的日常安装。配置了 `release` 时，安装器会改用 SHA-256 校验后的固定发布副本，适合生产或需要审计的环境。两种方式都会限制下载体积、保留异常现场，并拒绝覆盖已有缓存、发布目录、密钥、凭据或任务。
 
 没有安装配置或需要处理特殊 Agent 时，仍可使用完整向导。`-Agent` 格式：`安装实例 ID|类型|显示名`，可以重复填写多个：
 

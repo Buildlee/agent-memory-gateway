@@ -52,6 +52,8 @@ class DeviceInstallTests(unittest.TestCase):
         self.assertIn("Save-VerifiedReleaseArchive", script)
         self.assertIn("发布包 SHA-256 不匹配", script)
         self.assertIn("verified_release_download", script)
+        self.assertIn("$DefaultMainArchiveUrl", script)
+        self.assertIn("default_main_archive", script)
         self.assertIn("MEMORY_DEVICE_INSTALL_PROFILE", script)
         self.assertIn("memory-gateway\\device-install.json", script)
         self.assertIn("Get-DetectedAgentSpecs", script)
@@ -173,6 +175,41 @@ class DeviceInstallTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("verified_release_download", result.stdout)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "requires PowerShell 7")
+    def test_standalone_bootstrap_plan_defaults_to_main_without_downloading(self) -> None:
+        profile = {
+            "version": 1,
+            "gateway_url": "https://memory-gateway.example.internal",
+            "default_workspace": "shared-workspace",
+            "agents": [{"type": "other", "display_name": "Test Agent"}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bootstrap = root / "memory-device-install.ps1"
+            shutil.copy2(ROOT / "scripts" / "memory-device-install.ps1", bootstrap)
+            profile_path = root / "device-install.json"
+            profile_path.write_text(json.dumps(profile), encoding="utf-8")
+            result = subprocess.run(
+                [
+                    "pwsh",
+                    "-NoProfile",
+                    "-File",
+                    str(bootstrap),
+                    "-ProfilePath",
+                    str(profile_path),
+                    "-Plan",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("default_main_archive", result.stdout)
 
     @unittest.skipUnless(shutil.which("pwsh"), "requires PowerShell 7")
     def test_profile_generator_calculates_the_release_archive_hash(self) -> None:
