@@ -833,7 +833,8 @@ class PostgresAdminService:
 
     @staticmethod
     def _workspace_id(payload: dict[str, Any], principal: Principal) -> str:
-        workspace_id = str(payload.get("workspace_id") or "").strip()
+        value = payload.get("workspace_id")
+        workspace_id = value.strip() if isinstance(value, str) else ""
         if not workspace_id:
             raise AdminServiceError("WORKSPACE_REQUIRED")
         principal.require_workspace(workspace_id)
@@ -843,6 +844,8 @@ class PostgresAdminService:
     def _limit(value: Any, *, default: int, maximum: int) -> int:
         if value is None:
             return default
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            raise AdminServiceError("LIMIT_INVALID")
         try:
             parsed = int(value)
         except (TypeError, ValueError) as exc:
@@ -883,14 +886,17 @@ class PostgresAdminService:
 
     @staticmethod
     def _required_text(payload: dict[str, Any], key: str, code: str, maximum: int = 256) -> str:
-        value = str(payload.get(key) or "").strip()
+        value = payload.get(key)
+        if not isinstance(value, str):
+            raise AdminServiceError(code)
+        value = value.strip()
         if not value or len(value) > maximum:
             raise AdminServiceError(code)
         return value
 
     @staticmethod
     def _positive_int(value: Any, code: str) -> int:
-        if isinstance(value, bool):
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
             raise AdminServiceError(code)
         try:
             converted = int(value)
@@ -930,5 +936,5 @@ class PostgresAdminService:
 
     @staticmethod
     def _require_confirmation(payload: dict[str, Any]) -> None:
-        if not bool(payload.get("confirmed_by_user")):
+        if payload.get("confirmed_by_user") is not True:
             raise AdminServiceError("USER_CONFIRMATION_REQUIRED")

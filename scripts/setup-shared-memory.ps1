@@ -121,18 +121,18 @@ function Get-DevicePython([string]$RequestedExecutable, [bool]$CreateRuntime) {
         if (Test-Path -LiteralPath $runtimeRoot) {
             throw "共享记忆运行环境不完整：$runtimeRoot。为避免覆盖已有文件，脚本不会自动清理。"
         }
-        Write-Output "正在创建独立的共享记忆运行环境…"
-        & $bootstrapPython -m venv $runtimeRoot
+        Write-Host "正在创建独立的共享记忆运行环境…"
+        & $bootstrapPython -m venv $runtimeRoot | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "无法创建共享记忆运行环境：$runtimeRoot"
         }
-        Write-Output "正在安装 Sidecar 和 MCP 所需依赖…"
-        & $runtimePython -m pip install --disable-pip-version-check -e "$projectRoot[mcp]"
+        Write-Host "正在安装 Sidecar 和 MCP 所需依赖…"
+        & $runtimePython -m pip install --disable-pip-version-check -e "$projectRoot[mcp]" | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "无法安装共享记忆运行环境依赖。请检查网络和 pip 配置后重试。"
         }
     }
-    & $runtimePython -c "import cryptography; import mcp; import agent_memory_gateway"
+    & $runtimePython -c "import cryptography; import mcp; import agent_memory_gateway" | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "共享记忆运行环境缺少依赖：$runtimeRoot。脚本不会自动覆盖它，请先检查后再重新安装。"
     }
@@ -206,6 +206,58 @@ function Test-SidecarHealth([string]$KeyFile, [int]$Port) {
         return $false
     }
     return $response.ok -eq $true -and $response.service -eq "memory-sidecar"
+}
+
+function Invoke-SidecarGatewaySync(
+    [string]$KeyFile,
+    [int]$Port,
+    [string]$AgentInstallationId,
+    [string]$WorkspaceId
+) {
+    $token = Get-SidecarAuthToken -KeyFile $KeyFile
+    $body = @{
+        method = "sync"
+        payload = @{ workspace_id = $WorkspaceId }
+        agent_installation_id = $AgentInstallationId
+    } | ConvertTo-Json -Compress -Depth 3
+    try {
+        $response = Invoke-RestMethod `
+            -Uri "http://127.0.0.1:$Port/rpc" `
+            -Method Post `
+            -ContentType "application/json" `
+            -Headers @{ Authorization = "Sidecar $token" } `
+            -Body $body `
+            -TimeoutSec 15
+    }
+    catch {
+        $code = "LOCAL_SIDECAR_SYNC_FAILED"
+        $details = $_.ErrorDetails.Message
+        if (-not [string]::IsNullOrWhiteSpace($details)) {
+            try {
+                $candidate = [string](($details | ConvertFrom-Json -ErrorAction Stop).error)
+                if ($candidate -match "^[A-Z0-9_]{1,128}$") {
+                    $code = $candidate
+                }
+            }
+            catch {
+                # 不回显服务端原始错误，避免把运行时内容带入安装日志。
+            }
+        }
+        throw "Sidecar 已启动，但 Gateway 同步验证失败：$code"
+    }
+    $result = $response.result
+    if ($null -eq $result) {
+        throw "Sidecar 已启动，但 Gateway 同步验证失败：SYNC_RESULT_MISSING"
+    }
+    $errors = @($result.errors | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    if ($result.offline -eq $true -or $errors.Count -gt 0) {
+        $codes = @($errors | Where-Object { $_ -match "^[A-Z0-9_]{1,128}$" })
+        if ($codes.Count -eq 0) {
+            $codes = @("GATEWAY_UNAVAILABLE")
+        }
+        throw "Sidecar 已启动，但 Gateway 同步验证失败：$($codes -join ',')"
+    }
+    return $result
 }
 
 function New-McpConfigFile(
@@ -489,6 +541,7 @@ foreach ($agentSpec in $agentSpecs) {
 }
 
 $autostartStatus = "not_installed"
+$gatewaySyncStatus = "not_run"
 if ($InstallAutostart) {
     $allowedAgents = $agentSpecs.Id -join ","
     $installArguments = @{
@@ -506,33 +559,47 @@ if ($InstallAutostart) {
     if (-not [string]::IsNullOrWhiteSpace($GatewayCaCertificate)) {
         $installArguments.GatewayCaCertificate = $GatewayCaCertificate
     }
-    if (-not $existingTask) {
-        & (Join-Path $PSScriptRoot "install-sidecar-autostart.ps1") @installArguments
+    if ($existingTask) {
+        $installArguments.ReplaceExistingManagedTask = [bool]$UseExistingCredential
     }
+    & (Join-Path $PSScriptRoot "install-sidecar-autostart.ps1") @installArguments
     Start-ScheduledTask -TaskName $TaskName
     $healthy = $false
     for ($attempt = 0; $attempt -lt 10; $attempt++) {
         Start-Sleep -Milliseconds 500
-        if (Test-SidecarHealth -KeyFile $SidecarKeyFile -Port $SidecarPort) {
+        $taskRunning = (Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop).State -eq "Running"
+        if ($taskRunning -and (Test-SidecarHealth -KeyFile $SidecarKeyFile -Port $SidecarPort)) {
             $healthy = $true
             break
         }
     }
     if (-not $healthy) {
-        throw "已创建计划任务，但 Sidecar 未在 5 秒内通过健康检查。请检查计划任务历史和启动脚本输出。"
+        throw "计划任务未保持运行，或 Sidecar 未在 5 秒内通过健康检查。请检查计划任务历史和启动脚本输出。"
     }
-    $autostartStatus = if ($existingTask) { "existing_and_running" } else { "installed_and_running" }
+    $null = Invoke-SidecarGatewaySync `
+        -KeyFile $SidecarKeyFile `
+        -Port $SidecarPort `
+        -AgentInstallationId $agentSpecs[0].Id `
+        -WorkspaceId $DefaultWorkspace
+    $gatewaySyncStatus = "ready"
+    $autostartStatus = if ($existingTask) { "refreshed_and_running" } else { "installed_and_running" }
 }
 
 [pscustomobject]@{
     mode = "device"
-    status = "ready"
+    status = if ($InstallAutostart) { "ready" } else { "configured" }
     device_id = $pairResult.device_id
     agent_installation_ids = @($pairResult.agent_installation_ids)
     credential_target = $pairResult.credential_target
     reused_existing_credential = [bool]$UseExistingCredential
     sidecar_autostart = $autostartStatus
+    gateway_sync = $gatewaySyncStatus
     runtime_python = $pythonPath
     mcp_config_files = $mcpFiles
-    next_step = "把对应 MCP 配置文件导入 Codex、Hermes 或其他 MCP 客户端后，调用 memory_sync_status。"
+    next_step = if ($InstallAutostart) {
+        "把对应 MCP 配置文件导入 Codex、Hermes 或其他 MCP 客户端后，调用 memory_sync_status。"
+    }
+    else {
+        "先启动 Sidecar 或重新运行并加上 -InstallAutostart，再导入 MCP 配置。"
+    }
 }

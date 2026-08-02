@@ -7,7 +7,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from agent_memory_gateway.auth import Principal, TokenAuthenticator
-from agent_memory_gateway.gateway import GatewayHandler, ThreadingHTTPServer
+from agent_memory_gateway.gateway import ROUTE_CAPABILITIES, GatewayHandler, ThreadingHTTPServer
 
 
 class FakeAdminService:
@@ -42,6 +42,14 @@ class FakeAdminService:
         self.payloads.append((payload, principal.agent_installation_id))
         return {"workspace_id": payload["workspace_id"], "dead_letters": []}
 
+    def list_memories(self, payload, principal):
+        self.payloads.append((payload, principal.agent_installation_id))
+        return {"workspace_id": payload["workspace_id"], "memories": []}
+
+    def memory_graph(self, payload, principal):
+        self.payloads.append((payload, principal.agent_installation_id))
+        return {"workspace_id": payload["workspace_id"], "nodes": [], "edges": []}
+
     def memory_impact(self, payload, principal):
         self.payloads.append((payload, principal.agent_installation_id))
         return {"workspace_id": payload["workspace_id"], "summary": {"recall_count_24h": 0}}
@@ -52,6 +60,14 @@ class FakeAdminService:
 
 
 class GatewayAdminTests(unittest.TestCase):
+    def test_all_admin_routes_require_manage_capability(self):
+        admin_capabilities = {
+            capability
+            for path, capability in ROUTE_CAPABILITIES.items()
+            if path.startswith("/v1/admin/")
+        }
+        self.assertEqual(admin_capabilities, {"memory.manage"})
+
     def setUp(self):
         self._previous = {
             "authenticator": getattr(GatewayHandler, "authenticator", None),
@@ -112,12 +128,17 @@ class GatewayAdminTests(unittest.TestCase):
         _, dead_letters = self.post(
             "/v1/admin/dead-letters/list", {"workspace_id": "workspace-a", "limit": 10}
         )
+        _, memories = self.post("/v1/admin/memories/list", {"workspace_id": "workspace-a"})
+        _, graph = self.post("/v1/admin/graph", {"workspace_id": "workspace-a"})
         _, impact = self.post("/v1/admin/impact", {"workspace_id": "workspace-a"})
         _, sources = self.post("/v1/admin/sources", {"workspace_id": "workspace-a"})
 
         self.assertEqual(devices["devices"], [])
         self.assertEqual(audit["entries"], [])
         self.assertEqual(dead_letters["dead_letters"], [])
+        self.assertEqual(memories["memories"], [])
+        self.assertEqual(graph["nodes"], [])
+        self.assertEqual(graph["edges"], [])
         self.assertEqual(impact["summary"]["recall_count_24h"], 0)
         self.assertEqual(sources["sources"], [])
 
@@ -175,6 +196,28 @@ class GatewayAdminTests(unittest.TestCase):
             self.post("/v1/admin/overview", {"workspace_id": "workspace-a"}, token=token)
         self.assertEqual(context.exception.code, 403)
         self.assertEqual(json.loads(context.exception.read().decode("utf-8"))["error"], "CAPABILITY_FORBIDDEN")
+
+    def test_admin_memory_metadata_routes_reject_search_only_principal(self):
+        reader = Principal(
+            tenant_id="tenant-a",
+            user_id="user-a",
+            device_id="device-b",
+            agent_installation_id="codex-reader",
+            workspace_ids=frozenset({"workspace-a"}),
+            capabilities=frozenset({"memory.search"}),
+        )
+        token = "test-reader-token"
+        GatewayHandler.authenticator = TokenAuthenticator(
+            {hashlib.sha256(token.encode("utf-8")).hexdigest(): reader}
+        )
+
+        for path in ("/v1/admin/memories/list", "/v1/admin/graph"):
+            with self.subTest(path=path), self.assertRaises(HTTPError) as context:
+                self.post(path, {"workspace_id": "workspace-a"}, token=token)
+            self.assertEqual(context.exception.code, 403)
+            self.assertEqual(
+                json.loads(context.exception.read().decode("utf-8"))["error"], "CAPABILITY_FORBIDDEN"
+            )
 
 
 if __name__ == "__main__":

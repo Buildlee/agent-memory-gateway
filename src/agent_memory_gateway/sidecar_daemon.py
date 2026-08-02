@@ -144,7 +144,7 @@ class _SidecarRPCHandler(BaseHTTPRequestHandler):
                         result = self.client.sync(workspace_id=arguments.get("workspace_id"))
                     elif method == "cleanup":
                         result = self.client.cleanup_confirmed(
-                            confirmed_by_user=bool(arguments.get("confirmed_by_user"))
+                            confirmed_by_user=arguments.get("confirmed_by_user") is True
                         )
                     elif method in allowed:
                         result = allowed[method](arguments)
@@ -302,7 +302,7 @@ class LocalSidecarProxy:
         return self._call("sync", {"workspace_id": workspace_id})
 
     def cleanup_confirmed(self, confirmed_by_user: bool = False) -> dict[str, Any]:
-        return self._call("cleanup", {"confirmed_by_user": bool(confirmed_by_user)})
+        return self._call("cleanup", {"confirmed_by_user": confirmed_by_user is True})
 
     def list_memories(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("list_memories", payload)

@@ -139,6 +139,17 @@ Docker 内的 Agent（如 NAS Hermes）使用通用 Bridge 模板，与目标容
 
 安装器自动生成稳定设备 ID，默认创建独立运行环境、计划任务和 MCP JSON；它只提示一次隐藏的配对码。把同一配置放到 `%LOCALAPPDATA%\memory-gateway\device-install.json` 后，客户端不再需要参数，直接运行 `.\scripts\memory-device-install.ps1` 即可。配置中的 Agent 模板可以覆盖 Codex、Hermes 和 `other` 类型；未使用配置时，安装器只自动识别已安装的 Codex 或 Hermes，其他 Agent 通过通用 `-Agent '实例ID|类型|显示名'` 接入。
 
+为避免“配对成功但首次同步被拒绝”，管理员生成每枚一次性配对码时应预先指定工作区和最小能力。授权内容只保存在 Gateway 的配对记录中，并在配对事务内绑定给本次新增的 Agent；客户端和安装配置都不能扩大权限：
+
+```powershell
+memory-gateway pairing-code `
+  --tenant-id personal --user-id chlee --device-type windows --agent-types codex,hermes `
+  --workspace-id agent-memory-gateway `
+  --capabilities memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event
+```
+
+没有附带工作区授权的旧配对码继续兼容，但需在配对完成后按既有流程使用 `bind-workspace`。配对码只通过受控渠道交付给对应设备，不要写入安装配置、脚本或终端历史。
+
 全新电脑可以只保留 `memory-device-install.ps1`。没有 `release` 时，安装器默认下载 GitHub 当前 `main` 源码包，再在 `%LOCALAPPDATA%\memory-gateway\releases` 中展开并执行受控向导；下载受体积限制，实际 SHA-256 会输出到控制台。需要稳定、可复核的生产安装时，配置应包含 `release.release_id`、`release.archive_url` 和 `release.sha256`。此固定发布包优先于 `main`，安装器只接受无账号、查询参数或片段的 HTTPS 地址，并在 SHA-256 一致后才解压。缓存、未完成下载或不完整发布目录一律不覆盖；处理失败时保留现场供核对。
 
 管理端使用 `new-device-install-profile.ps1 -ReleaseArchiveUrl <HTTPS 地址> -ReleaseArchivePath <本地 ZIP>` 生成配置时，`ReleaseArchivePath` 的实际 SHA-256 会自动写入配置，避免人工复制摘要。发布包必须指向不可变版本。默认 `main` 适合日常快速接入；生产环境不要依赖可变分支，应配置固定发布包。
@@ -155,9 +166,11 @@ Docker 内的 Agent（如 NAS Hermes）使用通用 Bridge 模板，与目标容
   -InstallAutostart
 ```
 
-管理员先提供一次性配对码。向导在隐藏输入中读取它，配对成功后把刷新凭据存入 Windows Credential Manager。生成的 MCP JSON 文件位于 `%LOCALAPPDATA%\memory-gateway\mcp`；导入对应客户端后重启 Agent。需要自定义目录、手动运行 Sidecar 或接入非 Windows 环境时，仍可用 `start-sidecar.ps1`、`install-sidecar-autostart.ps1` 和[示例说明](../examples/README.md)。
+管理员先提供一次性配对码。向导在隐藏输入中读取它，配对成功后把刷新凭据存入 Windows Credential Manager。带 `-InstallAutostart` 时，计划任务启动后会由第一条 Agent 身份完成一次 Gateway 同步；只有同步正常才返回 `ready`。生成的 MCP JSON 文件位于 `%LOCALAPPDATA%\memory-gateway\mcp`；导入对应客户端后重启 Agent。需要自定义目录、手动运行 Sidecar 或接入非 Windows 环境时，仍可用 `start-sidecar.ps1`、`install-sidecar-autostart.ps1` 和[示例说明](../examples/README.md)。
 
 Sidecar 只监听本机回环地址。局域网内直连内部 HTTPS 地址；外网通过 VPN、零信任网络或受控隧道回到同一网络边界。无论什么网络路径，都不要关 TLS 证书校验。
+
+随仓库提供的飞牛 Compose 会让 Caddy 覆盖并传递客户端 IP，Gateway 只在该受控反向代理模式下按 `X-Forwarded-For` 限流。直接部署或使用其他代理时不要盲目开启 `MEMORY_TRUST_PROXY_X_FORWARDED_FOR=1`，否则伪造请求头会影响限流结果。
 
 升级 Gateway 时，让 Gateway、Worker 和每台 Sidecar 使用兼容版本。先完成服务端升级和健康检查，再在维护窗口逐台重启 Sidecar；每台重启后立刻做只读健康检查。不要用浏览器、脚本或数据库直连绕过旧 Sidecar。
 

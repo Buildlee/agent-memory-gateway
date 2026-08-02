@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .auth import Principal
+from .hybrid_retrieval import normalize_memory_result_limit
 from .scoring import DEFAULT_HALF_LIFE_DAYS, memory_score
 from .security import SensitiveContentScanner
 
@@ -279,8 +280,9 @@ class MemoryStore:
         query = str(payload.get("query") or "")
         workspace_id = str(payload.get("workspace_id") or "").strip()
         principal.require_workspace(workspace_id)
-        limit = int(payload.get("limit") or payload.get("max_items") or 8)
-        limit = max(1, min(limit, 50))
+        limit = normalize_memory_result_limit(
+            payload.get("limit") if "limit" in payload else payload.get("max_items")
+        )
         rows = self.conn.execute(
             """
             SELECT * FROM memory_items

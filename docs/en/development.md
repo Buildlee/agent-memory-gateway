@@ -69,7 +69,7 @@ The wizard must maintain the following behaviors:
 - Pairing codes are only read from stdin via `Read-Host -AsSecureString`.
 - Refreshed credentials are only written to the Windows Credential Manager (`write_generic_credential`).
 - The MCP JSON contains only the command and arguments, not the Gateway token, refresh credentials, or private keys.
-- Existing local keys, scheduled tasks, runtime environments, and MCP JSON are all refused for overwrite.
+- Existing local keys, runtime environments, and MCP JSON are never overwritten. Scheduled tasks are also refused in normal mode; recovery refreshes only a managed Sidecar task whose marker and start command both match.
 - Recovery after pairing only allows `-UseExistingCredential` and requires the original device private key to exist.
 - Server mode does not connect to the remote endpoint or create a release directory without `-Apply`.
 - Publicly trusted HTTPS addresses should not fail due to a CA that does not exist by default; internal CAs must be explicitly provided by the user and validated.

@@ -69,19 +69,32 @@ class LocalMemoryProvider(Protocol):
 
 
 def _identifier(value: Any, code: str) -> str:
-    text = str(value or "").strip()
+    if not isinstance(value, str):
+        raise LocalProviderError(code)
+    text = value.strip()
     if not re.fullmatch(r"[A-Za-z0-9_.@:-]{1,128}", text):
         raise LocalProviderError(code)
     return text
 
 
 def _bounded_limit(value: Any, *, maximum: int = 100) -> int:
+    if value is None or value == "":
+        return 50
     if isinstance(value, bool):
         raise LocalProviderError("LOCAL_PROVIDER_LIMIT_INVALID")
-    try:
-        return max(1, min(int(value or 50), maximum))
-    except (TypeError, ValueError) as exc:
-        raise LocalProviderError("LOCAL_PROVIDER_LIMIT_INVALID") from exc
+    if isinstance(value, int):
+        return max(1, min(value, maximum))
+    if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value.strip()):
+        return max(1, min(int(value), maximum))
+    raise LocalProviderError("LOCAL_PROVIDER_LIMIT_INVALID")
+
+
+def _optional_cursor(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise LocalProviderError("LOCAL_PROVIDER_CURSOR_INVALID")
+    return value
 
 
 def _kind_from_heading(heading: str) -> str:
@@ -355,12 +368,14 @@ class LocalMemoryShareService:
         return {"sources": self.registry.list_sources()}
 
     def preview(self, payload: dict[str, Any]) -> dict[str, Any]:
-        provider = self.registry.require(str(payload.get("provider_id") or ""))
+        provider = self.registry.require(payload.get("provider_id"))
         page = provider.list_records(
-            cursor=str(payload.get("cursor") or "") or None,
+            cursor=_optional_cursor(payload.get("cursor")),
             limit=_bounded_limit(payload.get("limit")),
         )
-        only_auto = bool(payload.get("only_auto_share_eligible"))
+        only_auto = payload.get("only_auto_share_eligible", False)
+        if not isinstance(only_auto, bool):
+            raise LocalProviderError("LOCAL_AUTO_SHARE_FILTER_INVALID")
         records = tuple(record for record in page.records if not only_auto or record.auto_share_eligible)
         return {
             "provider_id": provider.provider_id,
@@ -369,19 +384,19 @@ class LocalMemoryShareService:
         }
 
     def share_selected(self, payload: dict[str, Any]) -> dict[str, Any]:
-        provider = self.registry.require(str(payload.get("provider_id") or ""))
+        provider = self.registry.require(payload.get("provider_id"))
         raw_ids = payload.get("record_ids")
-        if not isinstance(raw_ids, list):
+        if not isinstance(raw_ids, list) or not all(isinstance(value, str) for value in raw_ids):
             raise LocalProviderError("LOCAL_RECORD_SELECTION_INVALID")
         workspace_id = _identifier(payload.get("workspace_id"), "WORKSPACE_ID_REQUIRED")
-        records = provider.get_records(str(value) for value in raw_ids)
+        records = provider.get_records(raw_ids)
         return self._share_records(provider, records, workspace_id, capture_mode="manual_selection")
 
     def propose_eligible(self, payload: dict[str, Any]) -> dict[str, Any]:
-        provider = self.registry.require(str(payload.get("provider_id") or ""))
+        provider = self.registry.require(payload.get("provider_id"))
         workspace_id = _identifier(payload.get("workspace_id"), "WORKSPACE_ID_REQUIRED")
         page = provider.list_records(
-            cursor=str(payload.get("cursor") or "") or None,
+            cursor=_optional_cursor(payload.get("cursor")),
             limit=_bounded_limit(payload.get("limit"), maximum=25),
         )
         records = tuple(record for record in page.records if record.auto_share_eligible)

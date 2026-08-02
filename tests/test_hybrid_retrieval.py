@@ -10,6 +10,7 @@ from agent_memory_gateway.hybrid_retrieval import (
     build_context_pack,
     estimate_tokens,
     normalize_context_token_budget,
+    normalize_memory_result_limit,
     normalize_text,
     select_hybrid_memories,
 )
@@ -168,6 +169,20 @@ class EstimateTokensTests(unittest.TestCase):
         self.assertGreater(tokens, 8)
 
 
+class MemoryResultLimitTests(unittest.TestCase):
+    def test_default_and_clamped_limits(self):
+        self.assertEqual(normalize_memory_result_limit(None), 8)
+        self.assertEqual(normalize_memory_result_limit("5"), 5)
+        self.assertEqual(normalize_memory_result_limit(0), 1)
+        self.assertEqual(normalize_memory_result_limit(999), 50)
+
+    def test_invalid_limit_type_is_rejected(self):
+        for value in (True, 1.5, [], {}):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "MEMORY_LIMIT_INVALID"):
+                    normalize_memory_result_limit(value)
+
+
 class FakeGBrain:
     def __init__(self, facts):
         self.facts = facts
@@ -211,7 +226,7 @@ class QueryServiceHybridTests(unittest.TestCase):
                 principal=object(),
             )
 
-    def test_authorized_facts_are_batched_without_dropping_older_candidates(self):
+    def test_streamed_candidates_keep_a_relevant_memory_after_the_first_batch(self):
         class BatchingGBrain:
             def __init__(self):
                 self.batches = []
@@ -220,7 +235,14 @@ class QueryServiceHybridTests(unittest.TestCase):
                 batch = list(references)
                 self.batches.append(batch)
                 return [
-                    GBrainFact(reference, index, "memory-gateway:personal", reference, "fact", 0.8)
+                    GBrainFact(
+                        reference,
+                        index,
+                        "memory-gateway:personal",
+                        "只在最后一批的专有检索词" if reference.endswith(":500") else "无关候选",
+                        "fact",
+                        0.8,
+                    )
                     for index, reference in enumerate(batch, start=1)
                 ]
 
@@ -231,11 +253,10 @@ class QueryServiceHybridTests(unittest.TestCase):
             for index in range(BACKEND_REF_BATCH_SIZE + 1)
         ]
 
-        facts = service._fetch_authorized_facts(allowed)
+        selection = service._select(allowed=allowed, query="专有检索词", limit=1)
 
-        self.assertEqual(len(facts), BACKEND_REF_BATCH_SIZE + 1)
+        self.assertEqual([item["memory_id"] for item in selection.items], ["gbrain:fact:500"])
         self.assertEqual([len(batch) for batch in gbrain.batches], [BACKEND_REF_BATCH_SIZE, 1])
-        self.assertEqual(gbrain.batches[1], [f"gbrain:fact:{BACKEND_REF_BATCH_SIZE}"])
 
 
 class FakeOfflineOutbox:

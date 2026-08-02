@@ -136,6 +136,16 @@ class SidecarDaemonTests(unittest.TestCase):
         with self.assertRaisesRegex(SidecarDaemonError, "WORKSPACE_FORBIDDEN"):
             self.proxy.search({"query": "x"})
 
+    def test_cleanup_requires_literal_boolean_true(self):
+        self.assertEqual(
+            self.proxy.cleanup_confirmed("false")["status"], "confirmation_required"
+        )
+        self.assertEqual(
+            self.proxy._call("cleanup", {"confirmed_by_user": "true"})["status"],
+            "confirmation_required",
+        )
+        self.assertEqual(self.proxy.cleanup_confirmed(True)["status"], "cleaned")
+
     def test_proxy_forwards_read_only_admin_methods(self):
         overview = self.proxy.admin_overview({"workspace_id": "workspace-a"})
         devices = self.proxy.list_admin_devices({"workspace_id": "workspace-a"})

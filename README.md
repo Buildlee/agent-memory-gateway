@@ -49,7 +49,16 @@ Stop-Process -Id <脚本输出的 process_id>
 .\scripts\memory-device-install.ps1 -ProfileUrl "https://memory-gateway.example.internal/device-install.json"
 ```
 
-安装器会生成稳定设备 ID、按配置登记 Codex、Hermes 或其他 Agent、创建独立运行环境和登录后自启的 Sidecar，并生成 MCP 配置。配对码、刷新凭据、私钥和数据库地址不在安装配置、命令行或 MCP JSON 中出现。将配置交付到 `%LOCALAPPDATA%\memory-gateway\device-install.json` 后，客户端可直接运行 `.\scripts\memory-device-install.ps1`。
+安装器会生成稳定设备 ID、按配置登记 Codex、Hermes 或其他 Agent、创建独立运行环境和登录后自启的 Sidecar，并生成 MCP 配置。它只在 Sidecar 启动且首个 Agent 完成一次 Gateway 同步后才报告 `ready`，避免“安装完成但实际无法共享”。管理员生成配对码时可同时写入该工作区的最小能力，因此客户端配对完成后即可同步，不需要再逐个绑定 Agent。配对码、刷新凭据、私钥和数据库地址不在安装配置、命令行或 MCP JSON 中出现。将配置交付到 `%LOCALAPPDATA%\memory-gateway\device-install.json` 后，客户端可直接运行 `.\scripts\memory-device-install.ps1`。
+
+```powershell
+memory-gateway pairing-code `
+  --tenant-id personal --user-id chlee --device-type windows --agent-types codex,hermes `
+  --workspace-id agent-memory-gateway `
+  --capabilities memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event
+```
+
+配对码只交给待接入设备并在过期前使用。没有带工作区授权的旧配对码仍可使用，但配对后需要管理员手动绑定。
 
 如果新电脑只拿到 `memory-device-install.ps1`，安装器默认从 GitHub 下载当时的 `main` 源码包，再继续同一套受控安装。下载仍限制体积、拒绝覆盖已有文件，并在本机记录实际 SHA-256。需要可复现、可审核的安装时，管理员应在同一配置中加入不可变发布包的 HTTPS 地址和 SHA-256；配置中的固定发布包优先于 `main`。
 

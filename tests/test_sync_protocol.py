@@ -10,6 +10,8 @@ from agent_memory_gateway.sync_service import (
     SYNC_PROTOCOL_VERSION,
     PostgresSyncService,
     SyncProtocolError,
+    _integer,
+    _required_text,
 )
 
 
@@ -51,6 +53,7 @@ class DecodeCursorTests(unittest.TestCase):
             PostgresSyncService._decode_cursor(cursor, "sync_2", "workspace-a")
         self.assertEqual(cm.exception.code, "CURSOR_INVALID")
 
+
     def test_wrong_workspace_raises_error(self):
         cursor = self._encode_cursor("sync_1", "workspace-a", 42)
         with self.assertRaises(SyncProtocolError) as cm:
@@ -66,6 +69,22 @@ class DecodeCursorTests(unittest.TestCase):
         with self.assertRaises(SyncProtocolError) as cm:
             PostgresSyncService._decode_cursor("", "sync_1", "workspace-a")
         self.assertEqual(cm.exception.code, "CURSOR_INVALID")
+
+
+class SyncInputValidationTests(unittest.TestCase):
+    def test_required_text_rejects_non_string_values(self):
+        for value in (None, True, 1, [], {}):
+            with self.subTest(value=value):
+                with self.assertRaises(SyncProtocolError) as raised:
+                    _required_text({"workspace_id": value}, "workspace_id", 256)
+                self.assertEqual(raised.exception.code, "WORKSPACE_ID_REQUIRED")
+
+    def test_integer_rejects_fractional_json_values(self):
+        for value in (True, 1.5, [], {}):
+            with self.subTest(value=value):
+                with self.assertRaises(SyncProtocolError) as raised:
+                    _integer(value, "LIMIT_INVALID", minimum=1)
+                self.assertEqual(raised.exception.code, "LIMIT_INVALID")
 
 
 if __name__ == "__main__":

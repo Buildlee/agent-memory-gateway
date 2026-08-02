@@ -77,7 +77,7 @@ These tools do not return device public keys, credentials, `details_json`, event
 
 ## ⏳ Recovery Sequence
 
-**After reverting a supersede** — do not manually remove the tombstone. The system marks the old tombstone as revoked and republishes the restored memory at a new lifecycle revision. If `migrate.py --check` reports that `2026-07-22.1` is missing, back up the database and use the normal migration process in a maintenance window. This migration only adds a field, constraint, and index; it does not delete history.
+**After reverting a supersede** — do not manually remove the tombstone. The system marks the old tombstone as revoked and republishes the restored memory at a new lifecycle revision. If `migrate.py --check` reports any missing migration version, back up the database and use the normal migration process in a maintenance window. Migrations only add fields, constraints, indexes, or records; they do not delete historical data.
 
 **When heartbeat expires** — first verify the HTTPS endpoint and Gateway health check, then check the worker logs for database connection, migration version, or backend dependency errors. After the service recovers, re-run the read-only check to confirm the heartbeat timestamp has advanced.
 

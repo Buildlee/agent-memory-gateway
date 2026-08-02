@@ -684,7 +684,9 @@ class PostgresReviewService:
         if assessment.has_sensitive_content:
             raise ReviewError("SENSITIVE_CONTENT")
         instruction_like = bool(assessment.instruction_like)
-        approved = bool(request_payload.get("approve_instruction_like"))
+        # 命令式内容只能由调用方显式传入 JSON 布尔值 true 才能放行，
+        # 不能把字符串、数字等非布尔真值误当作人工确认。
+        approved = request_payload.get("approve_instruction_like") is True
         if instruction_like and not approved:
             raise ReviewError("INSTRUCTION_REVIEW_CONFIRM_REQUIRED")
         try:

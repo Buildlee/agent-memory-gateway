@@ -27,6 +27,7 @@ services:
     command: ["memory-app"]
     environment:
       MEMORY_GATEWAY_SECRETS_FILE: /run/secrets/metadata.env
+      MEMORY_TRUST_PROXY_X_FORWARDED_FOR: "1"
       MEMORY_GATEWAY_URL: http://127.0.0.1:8787
       MEMORY_REFRESH_CREDENTIAL_FILE: /state/refresh-credential.json
       MEMORY_AGENT_INSTALLATION_ID: ${MEMORY_ADMIN_AGENT_INSTALLATION_ID:?must set MEMORY_ADMIN_AGENT_INSTALLATION_ID}

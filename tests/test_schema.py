@@ -37,7 +37,7 @@ class MetadataSchemaContractTests(unittest.TestCase):
             metadata_migrations, "repository_root", return_value=Path(directory)
         ):
             self.assertEqual(schema_directory(), bundled)
-            self.assertEqual(len(expected_checksums()), 9)
+            self.assertEqual(len(expected_checksums()), 10)
 
     def test_schema_declares_every_required_metadata_table(self):
         sql = "\n".join(read_schema(spec.path) for spec in migration_specs())
@@ -142,6 +142,25 @@ class MetadataSchemaContractTests(unittest.TestCase):
         normalized = sql.upper()
         for statement in ("DROP ", "DELETE ", "TRUNCATE "):
             self.assertNotIn(statement, normalized)
+
+    def test_pairing_workspace_binding_migration_is_required_and_non_destructive(self):
+        self.assertIn(("pairing_codes", "workspace_id"), REQUIRED_METADATA_COLUMNS)
+        self.assertIn(("pairing_codes", "workspace_capabilities"), REQUIRED_METADATA_COLUMNS)
+        sql = read_schema(migration_specs()[9].path)
+
+        self.assertIn("ADD COLUMN IF NOT EXISTS workspace_id TEXT", sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS workspace_capabilities TEXT[]", sql)
+        self.assertIn("cardinality(workspace_capabilities) > 0", sql)
+        normalized = sql.upper()
+        for statement in ("DROP ", "DELETE ", "TRUNCATE "):
+            self.assertNotIn(statement, normalized)
+
+    def test_migration_registry_uses_packaged_schema_files(self):
+        schema_root = Path(__file__).resolve().parents[1] / "schema"
+        for spec in migration_specs():
+            with self.subTest(version=spec.version):
+                self.assertTrue(spec.path.is_relative_to(schema_root))
+                self.assertTrue(spec.path.is_file())
 
 
 if __name__ == "__main__":

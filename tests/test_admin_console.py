@@ -275,6 +275,24 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 400)
         self.assertIn("USER_CONFIRMATION_REQUIRED", context.exception.read().decode("utf-8"))
 
+    def test_resolve_rejects_non_boolean_confirmation_values(self):
+        cookie = self._open_session()
+        for value in ("true", "false", 1, [], {}):
+            with self.subTest(value=value), self.assertRaises(HTTPError) as context:
+                self._json(
+                    "/api/reviews/resolve",
+                    cookie,
+                    {
+                        "review_id": "rv_1",
+                        "expected_revision": 2,
+                        "action": "confirm",
+                        "idempotency_key": "idem-non-boolean",
+                        "confirmed_by_user": value,
+                    },
+                )
+            self.assertEqual(context.exception.code, 400)
+        self.assertEqual(self.sidecar.resolve_payloads, [])
+
     def test_resolve_forwards_safe_payload_through_sidecar(self):
         cookie = self._open_session()
         result = self._json(

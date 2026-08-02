@@ -34,6 +34,7 @@ services:
     command: ["memory-gateway", "--host", "0.0.0.0", "--port", "8787"]
     environment:
       MEMORY_GATEWAY_SECRETS_FILE: /run/secrets/metadata.env
+      MEMORY_TRUST_PROXY_X_FORWARDED_FOR: "1"
       MEMORY_METADATA_POOL_MIN_SIZE: "1"
       MEMORY_METADATA_POOL_MAX_SIZE: "4"
       MEMORY_GBRAIN_POOL_MIN_SIZE: "1"

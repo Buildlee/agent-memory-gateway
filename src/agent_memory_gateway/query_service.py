@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from .auth import Principal
 from .gbrain_backend import GBrainBackend
@@ -13,6 +13,7 @@ from .hybrid_retrieval import (
     HybridSelection,
     build_context_pack,
     normalize_context_token_budget,
+    normalize_memory_result_limit,
     select_hybrid_memories,
 )
 from .metadata_store import MetadataStoreError, PostgresEventLedger
@@ -53,7 +54,9 @@ class PostgresQueryService:
     def search(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
         workspace_id = str(payload.get("workspace_id") or "").strip()
         query = str(payload.get("query") or "").strip()
-        limit = max(1, min(int(payload.get("limit") or payload.get("max_items") or 8), 50))
+        limit = normalize_memory_result_limit(
+            payload.get("limit") if "limit" in payload else payload.get("max_items")
+        )
         trace_id = f"tr_{uuid.uuid4().hex}"
         allowed = self._visible_backend_refs(principal, workspace_id, "memory.search")
         selection = self._select(allowed=allowed, query=query, limit=limit)
@@ -67,7 +70,9 @@ class PostgresQueryService:
     def context(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
         workspace_id = str(payload.get("workspace_id") or "").strip()
         query = str(payload.get("query") or "").strip()
-        limit = max(1, min(int(payload.get("max_items") or payload.get("limit") or 8), 50))
+        limit = normalize_memory_result_limit(
+            payload.get("max_items") if "max_items" in payload else payload.get("limit")
+        )
         token_budget = normalize_context_token_budget(payload.get("max_tokens"))
         trace_id = f"tr_{uuid.uuid4().hex}"
         allowed = self._visible_backend_refs(principal, workspace_id, "memory.read_context")
@@ -134,17 +139,8 @@ class PostgresQueryService:
         max_tokens: int | None = None,
     ) -> HybridSelection:
         source_by_ref = {entry["backend_ref"]: entry for entry in allowed}
-        facts = self._fetch_authorized_facts(allowed)
-        candidates = []
-        for fact in facts:
-            source = source_by_ref.get(fact.backend_ref)
-            if source is None:
-                continue
-            candidate = self._fact_to_result(fact, source)
-            candidate["retrieval_source"] = fact.source_id
-            candidates.append(candidate)
         selection = select_hybrid_memories(
-            candidates,
+            self._iter_authorized_candidates(allowed, source_by_ref),
             query=query,
             limit=limit,
             max_tokens=max_tokens,
@@ -163,14 +159,22 @@ class PostgresQueryService:
             token_budget=selection.token_budget,
         )
 
-    def _fetch_authorized_facts(self, allowed: list[dict[str, str]]) -> list[Any]:
-        """分批读取所有已授权候选，批大小不构成召回截断。"""
+    def _iter_authorized_candidates(
+        self,
+        allowed: list[dict[str, Any]],
+        source_by_ref: dict[str, dict[str, Any]],
+    ) -> Iterable[dict[str, Any]]:
+        """流式读取所有已授权候选，批大小不构成召回截断。"""
 
-        facts: list[Any] = []
         for offset in range(0, len(allowed), BACKEND_REF_BATCH_SIZE):
             batch = allowed[offset : offset + BACKEND_REF_BATCH_SIZE]
-            facts.extend(self._gbrain.get_by_refs(entry["backend_ref"] for entry in batch))
-        return facts
+            for fact in self._gbrain.get_by_refs(entry["backend_ref"] for entry in batch):
+                source = source_by_ref.get(fact.backend_ref)
+                if source is None:
+                    continue
+                candidate = self._fact_to_result(fact, source)
+                candidate["retrieval_source"] = fact.source_id
+                yield candidate
 
     def _visible_backend_refs(
         self, principal: Principal, workspace_id: str, capability: str
