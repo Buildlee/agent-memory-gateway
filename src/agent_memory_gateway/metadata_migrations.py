@@ -61,6 +61,8 @@ REQUIRED_METADATA_COLUMNS = frozenset(
         ("memory_recall_events", "query_hash"),
         ("memory_feedback_events", "action"),
         ("external_memory_bindings", "source_revision"),
+        ("pairing_codes", "workspace_id"),
+        ("pairing_codes", "workspace_capabilities"),
     }
 )
 
@@ -145,6 +147,12 @@ def migration_specs(schema_path: str | Path | None = None) -> tuple[MigrationSpe
             MigrationSpec(
                 "2026-07-23.1",
                 schema_directory() / "migrations" / "20260723_1_memory_experience.sql",
+            )
+        )
+        specs.append(
+            MigrationSpec(
+                "2026-07-30.1",
+                schema_directory() / "migrations" / "20260730_1_pairing_workspace_binding.sql",
             )
         )
     return tuple(specs)

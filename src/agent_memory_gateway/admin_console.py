@@ -2312,7 +2312,7 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
     def _handle_api_post(self, path: str) -> None:
         try:
             payload = self._read_json()
-            if not bool(payload.get("confirmed_by_user")):
+            if payload.get("confirmed_by_user") is not True:
                 raise AdminConsoleError("USER_CONFIRMATION_REQUIRED")
             sidecar = self.state.sidecar_factory()
             if path == "/api/reviews/resolve":
@@ -2344,7 +2344,7 @@ class _AdminConsoleHandler(BaseHTTPRequestHandler):
             "idempotency_key": _required_text(payload, "idempotency_key", "IDEMPOTENCY_KEY_REQUIRED", 256),
             "confirmed_by_user": True,
         }
-        if bool(payload.get("approve_instruction_like")):
+        if payload.get("approve_instruction_like") is True:
             result["approve_instruction_like"] = True
         if action == "confirm_edit":
             result["content"] = _required_text(payload, "content", "CONTENT_REQUIRED", 20_000)

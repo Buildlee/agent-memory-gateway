@@ -44,6 +44,22 @@ class GatewayBodyLimitTests(unittest.TestCase):
             handler._read_json()
         self.assertEqual(raised.exception.code, "CONTENT_LENGTH_INVALID")
 
+    def test_request_body_must_be_a_json_object(self):
+        handler = _handler({"Content-Length": "2"}, b"[]")
+
+        with self.assertRaises(EventValidationError) as raised:
+            handler._read_json()
+
+        self.assertEqual(raised.exception.code, "REQUEST_BODY_OBJECT_REQUIRED")
+
+    def test_invalid_json_uses_a_stable_error_code(self):
+        handler = _handler({"Content-Length": "1"}, b"{")
+
+        with self.assertRaises(EventValidationError) as raised:
+            handler._read_json()
+
+        self.assertEqual(raised.exception.code, "REQUEST_BODY_INVALID")
+
 
 if __name__ == "__main__":
     unittest.main()

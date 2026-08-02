@@ -17,7 +17,9 @@ $patterns = @(
 if ($Path) {
     $files = $Path | Where-Object { $_ -ne 'tests/fixtures/security_cases.json' }
 } else {
-    $files = git ls-files | Where-Object {
+    # 发布前既要检查已跟踪文件，也要检查尚未暂存、但会被加入提交的文件。
+    # --exclude-standard 保留 .gitignore 的本地运维文件隔离，避免把本机私密资料当成公开候选。
+    $files = @(git ls-files --cached --others --exclude-standard) | Where-Object {
         $_ -ne 'tests/fixtures/security_cases.json'
     }
 }

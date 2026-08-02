@@ -77,7 +77,7 @@ python -m compileall -q src tests
 - 配对码只通过 `Read-Host -AsSecureString` 从标准输入读取。
 - 刷新凭据只写入 Windows Credential Manager（`write_generic_credential`）。
 - MCP JSON 只包含命令和参数，不含 Gateway 令牌、刷新凭据或私钥。
-- 已有本机 key、计划任务、运行环境和 MCP JSON 均拒绝覆盖。
+- 已有本机 key、运行环境和 MCP JSON 均拒绝覆盖。计划任务在普通模式也拒绝覆盖；恢复模式只会刷新经标识和启动参数校验的受管 Sidecar 任务。
 - 配对完成后的恢复只允许 `-UseExistingCredential`，要求原设备私钥存在。
 - 服务端模式没有 `-Apply` 时不连接远端，也不创建发布目录。
 - 公开受信任的 HTTPS 地址不应因默认不存在的 CA 而失败；内部 CA 必须由用户明确传入并校验。

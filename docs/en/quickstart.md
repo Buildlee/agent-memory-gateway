@@ -60,7 +60,16 @@ The local demo helps you understand how things work. Device pairing, short-lived
 
 ## Connect to a deployed shared service
 
-After the admin generates one-time pairing codes, the client runs a one-time setup wizard. The `-Agent` format is `instance ID|type|display name` and can be repeated for multiple agents:
+Create each one-time pairing code with the intended workspace and only the capabilities the new device needs. Gateway applies that grant atomically when it registers the new Agents, so the first sync works without giving the client administrative access:
+
+```powershell
+memory-gateway pairing-code `
+  --tenant-id personal --user-id chlee --device-type windows --agent-types codex,hermes `
+  --workspace-id agent-memory-gateway `
+  --capabilities memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event
+```
+
+The client then runs a one-time setup wizard. The `-Agent` format is `instance ID|type|display name` and can be repeated for multiple agents:
 
 ```powershell
 .\scripts\setup-shared-memory.ps1 `
@@ -75,13 +84,13 @@ After the admin generates one-time pairing codes, the client runs a one-time set
   -InstallAutostart
 ```
 
-The wizard prompts for the pairing code, then saves the refresh credential in Windows Credential Manager. The device private key, Sidecar outbox key, and local MCP config are skipped (not overwritten) if the files already exist. On first run, it also creates `.shared-memory-venv` in the repo to keep MCP dependencies out of the global Python installation.
+The wizard prompts for the pairing code, then saves the refresh credential in Windows Credential Manager. The device private key, Sidecar outbox key, and local MCP config are skipped (not overwritten) if the files already exist. On first run, it also creates `.shared-memory-venv` in the repo to keep MCP dependencies out of the global Python installation. With `-InstallAutostart`, it also performs one real sync as the first Agent after the task starts; authentication, workspace authorization, or Gateway reachability failures stop the setup instead of being reported as usable.
 
-If pairing succeeds but local setup is interrupted later, re-run the same command with `-UseExistingCredential` to continue. This requires the original device private key to still be present, and only reuses the existing Windows credential — it does not read, print, or overwrite the credential, nor does it overwrite scheduled tasks or MCP JSON.
+If pairing succeeds but local setup is interrupted later, re-run the same command with `-UseExistingCredential`. The original device private key must still exist and the existing Windows credential is reused. A Sidecar scheduled task created by this installer is refreshed with the current device, Agent, and runtime settings; an unknown task is still never replaced. Credentials are not read, printed, or written to configuration files, and existing MCP JSON is not overwritten.
 
 If the Gateway uses an internal CA, add `-GatewayCaCertificate "<CA cert path>"`. Publicly trusted certificates do not need this parameter. If there is a certificate mismatch, fix the certificate chain — do not disable TLS validation.
 
-After the command finishes, it lists the generated MCP JSON files. Import each JSON into Codex, Hermes, or another MCP client, then restart the corresponding Agent. The JSON only contains the local startup script, Agent ID, workspace, and local key file path — it does not store Gateway tokens, refresh credentials, database addresses, or private keys.
+After the command finishes, it lists the generated MCP JSON files. A successful `-InstallAutostart` result shows `gateway_sync: ready`; without autostart the state is only `configured`, so start the Sidecar manually or rerun with `-InstallAutostart` before importing the MCP JSON. The JSON only contains the local startup script, Agent ID, workspace, and local key file path — it does not store Gateway tokens, refresh credentials, database addresses, or private keys.
 
 Agents running in Docker use the same identity and workspace protocol, but do not need the Windows runtime replicated into the container. Follow [Unified Access for Container Agents](container-sidecar.md) and run with `-Mode container` — it creates an MCP Bridge that listens only on the container's loopback address.
 

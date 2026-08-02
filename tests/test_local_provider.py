@@ -153,6 +153,40 @@ class LocalProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(LocalProviderError, "LOCAL_PROVIDER_NOT_FOUND"):
             load_provider_registry().require("missing")
 
+    def test_preview_requires_boolean_auto_share_filter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "MEMORY.md"
+            path.write_text("# 项目决定\n默认部署使用两个容器。", encoding="utf-8")
+            provider = FileMemoryProvider("shared-source", "共享来源", [path])
+            service = LocalMemoryShareService(load_provider_registry_from(provider), _Client())
+
+            with self.assertRaisesRegex(LocalProviderError, "LOCAL_AUTO_SHARE_FILTER_INVALID"):
+                service.preview(
+                    {"provider_id": "shared-source", "only_auto_share_eligible": "false"}
+                )
+
+    def test_local_share_inputs_reject_non_text_ids_and_fractional_limits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "MEMORY.md"
+            path.write_text("# 项目决定\n默认部署使用两个容器。", encoding="utf-8")
+            provider = FileMemoryProvider("shared-source", "共享来源", [path])
+            service = LocalMemoryShareService(load_provider_registry_from(provider), _Client())
+
+            with self.assertRaisesRegex(LocalProviderError, "LOCAL_PROVIDER_ID_INVALID"):
+                service.preview({"provider_id": True})
+            with self.assertRaisesRegex(LocalProviderError, "LOCAL_PROVIDER_CURSOR_INVALID"):
+                service.preview({"provider_id": "shared-source", "cursor": 1})
+            with self.assertRaisesRegex(LocalProviderError, "LOCAL_PROVIDER_LIMIT_INVALID"):
+                service.preview({"provider_id": "shared-source", "limit": 1.5})
+            with self.assertRaisesRegex(LocalProviderError, "LOCAL_RECORD_SELECTION_INVALID"):
+                service.share_selected(
+                    {
+                        "provider_id": "shared-source",
+                        "workspace_id": "project-memory",
+                        "record_ids": [1],
+                    }
+                )
+
 
 def load_provider_registry_from(provider):
     from agent_memory_gateway.local_provider import LocalProviderRegistry

@@ -16,6 +16,17 @@
 
 客户端只会再要求输入一次隐藏的配对码。设备私钥、刷新凭据、Sidecar key 和 MCP 连接凭据仍按原有安全边界分别保存在本机受保护位置。
 
+生成配对码时，管理员应把工作区和最小能力一起写入配对记录。这样客户端完成配对即可开始同步，不需要让端侧程序拥有管理权限：
+
+```powershell
+memory-gateway pairing-code `
+  --tenant-id personal --user-id chlee --device-type windows --agent-types codex,hermes `
+  --workspace-id agent-memory-gateway `
+  --capabilities memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event
+```
+
+配对码是短时敏感信息，只通过受控渠道交给对应设备；示例安装配置里不能包含它。
+
 如果客户端只有安装脚本，未配置 `release` 时会默认下载 GitHub 当前 `main` 源码包。日常接入可以直接使用这个默认值；需要稳定、可审核的环境，管理员应额外提供不可变 ZIP 的 HTTPS 地址和本地 ZIP 路径。生成器会计算 SHA-256 并把 `release` 写入配置；客户端会优先使用该固定版本，并在摘要一致后才解压和运行。
 
 ---

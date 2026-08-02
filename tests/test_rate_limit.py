@@ -23,6 +23,18 @@ class RateLimitTests(unittest.TestCase):
             limiter.allow("key", limit=10, window_seconds=0)
         with self.assertRaises(ValueError):
             limiter.allow("", limit=10, window_seconds=10)
+        with self.assertRaises(ValueError):
+            SlidingWindowRateLimiter(max_keys=0)
+
+    def test_key_count_is_bounded_and_expired_buckets_are_reclaimed(self):
+        now = [100.0]
+        limiter = SlidingWindowRateLimiter(clock=lambda: now[0], max_keys=2)
+        self.assertTrue(limiter.allow("client-a", limit=1, window_seconds=10))
+        self.assertTrue(limiter.allow("client-b", limit=1, window_seconds=10))
+        self.assertFalse(limiter.allow("client-c", limit=1, window_seconds=10))
+        now[0] = 111.0
+        self.assertTrue(limiter.allow("client-c", limit=1, window_seconds=10))
+        self.assertEqual(len(limiter._events), 1)
 
     def test_concurrent_safety(self):
         now = [1000.0]

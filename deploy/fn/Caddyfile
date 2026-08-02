@@ -12,6 +12,8 @@ https://{$MEMORY_GATEWAY_PUBLIC_NAME}:8443 {
     reverse_proxy admin-sidecar:8767
   }
   handle {
-    reverse_proxy gateway:8787
+    reverse_proxy gateway:8787 {
+      header_up X-Forwarded-For {remote_host}
+    }
   }
 }

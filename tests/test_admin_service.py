@@ -189,6 +189,16 @@ class AdminServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(AdminServiceError, "LIMIT_INVALID"):
             self.service.list_audit({"workspace_id": "workspace-a", "limit": 101}, manager())
 
+    def test_workspace_and_limit_reject_non_json_scalar_types(self):
+        for value in (True, 1, [], {}):
+            with self.subTest(workspace=value):
+                with self.assertRaisesRegex(AdminServiceError, "WORKSPACE_REQUIRED"):
+                    self.service.overview({"workspace_id": value}, manager())
+        for value in (True, 1.5, [], {}):
+            with self.subTest(limit=value):
+                with self.assertRaisesRegex(AdminServiceError, "LIMIT_INVALID"):
+                    PostgresAdminService._limit(value, default=50, maximum=100)
+
     def test_memory_impact_exposes_usage_without_raw_queries_or_content(self):
         result = self.service.memory_impact({"workspace_id": "workspace-a"}, manager())
         self.assertEqual(result["summary"]["recall_count_24h"], 8)
@@ -263,6 +273,12 @@ class AdminMutationTests(unittest.TestCase):
         self.assertEqual(result["capabilities"], ["memory.feedback", "memory.read_context", "memory.search"])
         self.assertTrue(any("UPDATE workspace_bindings" in sql for sql, _ in self.connection.executed))
         self.assertTrue(any("INSERT INTO audit_log" in sql for sql, _ in self.connection.executed))
+
+    def test_confirmation_requires_literal_json_true(self):
+        for value in (None, False, 1, "true", "false", [], {}):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(AdminServiceError, "USER_CONFIRMATION_REQUIRED"):
+                    PostgresAdminService._require_confirmation({"confirmed_by_user": value})
 
     def test_update_binding_cannot_remove_current_admin_manage(self):
         with self.assertRaisesRegex(AuthError, "ADMIN_SELF_LOCKOUT_FORBIDDEN"):

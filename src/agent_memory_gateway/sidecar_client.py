@@ -15,6 +15,7 @@ from .hybrid_retrieval import (
     HybridSelection,
     build_context_pack,
     normalize_context_token_budget,
+    normalize_memory_result_limit,
     select_hybrid_memories,
 )
 from .outbox import Outbox
@@ -133,7 +134,7 @@ class SidecarClient:
     def _offline_search(self, payload: dict[str, Any]) -> dict[str, Any]:
         workspace_id = str(payload.get("workspace_id") or self.default_workspace)
         state = self.outbox.sync_state(workspace_id)
-        limit = max(1, min(int(payload.get("limit") or 8), 50))
+        limit = normalize_memory_result_limit(payload.get("limit"))
         selection = self._select_offline_memories(
             workspace_id=workspace_id,
             query=str(payload.get("query") or ""),
@@ -152,7 +153,9 @@ class SidecarClient:
     def _offline_context(self, payload: dict[str, Any]) -> dict[str, Any]:
         workspace_id = str(payload.get("workspace_id") or self.default_workspace)
         state = self.outbox.sync_state(workspace_id)
-        limit = max(1, min(int(payload.get("max_items") or payload.get("limit") or 8), 50))
+        limit = normalize_memory_result_limit(
+            payload.get("max_items") if "max_items" in payload else payload.get("limit")
+        )
         token_budget = normalize_context_token_budget(payload.get("max_tokens"))
         selection = self._select_offline_memories(
             workspace_id=workspace_id,

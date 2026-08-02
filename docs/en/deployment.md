@@ -139,6 +139,17 @@ An administrator first creates a JSON profile with `new-device-install-profile.p
 
 The installer derives a stable device ID, creates the isolated runtime, scheduled task, and MCP JSON, and prompts once for a hidden pairing code. If the same profile is pre-positioned at `%LOCALAPPDATA%\memory-gateway\device-install.json`, the client can simply run `.\scripts\memory-device-install.ps1`. Profile templates support Codex, Hermes, and `other`; without a profile, only locally detected Codex or Hermes clients are selected automatically, while other Agents use the generic `-Agent 'installation-id|type|display-name'` parameter.
 
+To avoid a successful pair followed by a rejected first sync, create each one-time code with the intended workspace and the smallest required capabilities. Gateway stores that grant with the pairing record and applies it atomically to the newly registered Agents; neither the client nor the installation profile can expand it:
+
+```powershell
+memory-gateway pairing-code `
+  --tenant-id personal --user-id chlee --device-type windows --agent-types codex,hermes `
+  --workspace-id agent-memory-gateway `
+  --capabilities memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event
+```
+
+Older pairing codes without a workspace grant remain supported, but require the existing `bind-workspace` step after pairing. Deliver the code only to its intended device; never put it in an installation profile, script, or terminal history.
+
 A brand-new computer may keep only `memory-device-install.ps1`. Without `release`, the installer downloads the current GitHub `main` source archive, then extracts it below `%LOCALAPPDATA%\memory-gateway\releases` before invoking the controlled setup wizard. The download is size-limited and its SHA-256 is printed locally. For reproducible, auditable production installs, include `release.release_id`, `release.archive_url`, and `release.sha256`; this verified release always takes precedence over `main`. Archive URLs must be HTTPS without credentials, query strings, or fragments. Existing caches, partial downloads, and incomplete release directories are never overwritten.
 
 On the administration machine, `new-device-install-profile.ps1 -ReleaseArchiveUrl <HTTPS URL> -ReleaseArchivePath <local ZIP>` computes the ZIP's SHA-256 and writes it into the profile. The archive URL must identify an immutable release. The default `main` path is useful for routine onboarding; production environments should use a verified release instead of a mutable branch.
@@ -155,9 +166,11 @@ On the administration machine, `new-device-install-profile.ps1 -ReleaseArchiveUr
   -InstallAutostart
 ```
 
-The administrator provides a one-time pairing code in advance. The wizard reads it via hidden input, and after successful pairing stores the refresh credential in Windows Credential Manager. The generated MCP JSON files are placed in `%LOCALAPPDATA%\memory-gateway\mcp`; import them into the corresponding client and restart the Agent. If you need custom directories, manual Sidecar startup, or non-Windows environments, you can still use `start-sidecar.ps1`, `install-sidecar-autostart.ps1`, and the [example documentation](../../examples/README.md).
+The administrator provides a one-time pairing code in advance. The wizard reads it via hidden input, and after successful pairing stores the refresh credential in Windows Credential Manager. With `-InstallAutostart`, it performs one Gateway sync as the first Agent after the scheduled task starts and returns `ready` only when that sync succeeds. The generated MCP JSON files are placed in `%LOCALAPPDATA%\memory-gateway\mcp`; import them into the corresponding client and restart the Agent. If you need custom directories, manual Sidecar startup, or non-Windows environments, you can still use `start-sidecar.ps1`, `install-sidecar-autostart.ps1`, and the [example documentation](../../examples/README.md).
 
 The Sidecar listens only on the local loopback address. Connect to the internal HTTPS address directly within the LAN; from outside the LAN, reach it through a VPN, zero-trust network, or controlled tunnel back to the same network boundary. Regardless of the network path, **never disable TLS certificate verification**.
+
+The bundled FN Compose profile makes Caddy overwrite and pass the client IP; Gateway trusts `X-Forwarded-For` for rate limiting only in that controlled proxy mode. Do not enable `MEMORY_TRUST_PROXY_X_FORWARDED_FOR=1` for a direct deployment or an unverified proxy, because forged headers would then affect rate limiting.
 
 When upgrading the Gateway, ensure the Gateway, Worker, and every Sidecar use compatible versions. Complete the server-side upgrade and health check first, then restart Sidecars one by one during a maintenance window. After each restart, immediately perform a read-only health check. Do not bypass old Sidecars using a browser, script, or direct database connection.
 

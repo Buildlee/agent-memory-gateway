@@ -43,6 +43,15 @@ Demo data stays in `%LOCALAPPDATA%\agent-memory-gateway-demo`. No device pairing
 
 ### One-command production setup
 
+Create the one-time pairing code with the smallest workspace capabilities needed by the new device. The binding is stored in the code and applied atomically during pairing, so the first sync does not require a separate per-Agent administration step:
+
+```powershell
+memory-gateway pairing-code `
+  --tenant-id personal --user-id chlee --device-type windows --agent-types codex,hermes `
+  --workspace-id agent-memory-gateway `
+  --capabilities memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event
+```
+
 After the admin generates a one-time pairing code, run on the client:
 
 ```powershell
@@ -53,7 +62,7 @@ After the admin generates a one-time pairing code, run on the client:
   -InstallAutostart
 ```
 
-The wizard completes device pairing, key generation, credential storage, starts the Sidecar (listening on `127.0.0.1`), and generates MCP config files. For server deployment, use `-Mode server` with `-Apply`. The default profile runs two containers: `memory-app` and Caddy. The existing split profile remains available for stricter isolation. See the [deployment guide](docs/en/deployment.md).
+The wizard completes device pairing, key generation, credential storage, starts the Sidecar (listening on `127.0.0.1`), and generates MCP config files. With `-InstallAutostart`, it reports `ready` only after the first Agent completes a Gateway sync, so a local listener is not mistaken for a usable shared-memory connection. For server deployment, use `-Mode server` with `-Apply`. The default profile runs two containers: `memory-app` and Caddy. The existing split profile remains available for stricter isolation. See the [deployment guide](docs/en/deployment.md).
 
 ## 🔧 Architecture
 

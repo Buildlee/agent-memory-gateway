@@ -30,7 +30,10 @@ class SyncProtocolError(ValueError):
 
 
 def _required_text(payload: dict[str, Any], field: str, maximum: int) -> str:
-    value = str(payload.get(field) or "").strip()
+    value = payload.get(field)
+    if not isinstance(value, str):
+        raise SyncProtocolError(f"{field.upper()}_REQUIRED")
+    value = value.strip()
     if not value:
         raise SyncProtocolError(f"{field.upper()}_REQUIRED")
     if len(value) > maximum:
@@ -39,7 +42,7 @@ def _required_text(payload: dict[str, Any], field: str, maximum: int) -> str:
 
 
 def _integer(value: Any, code: str, *, minimum: int = 0) -> int:
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise SyncProtocolError(code)
     try:
         parsed = int(value)

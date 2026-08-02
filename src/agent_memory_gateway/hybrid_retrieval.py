@@ -9,7 +9,7 @@ import re
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 
 _CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
@@ -19,6 +19,7 @@ _SPACE_PATTERN = re.compile(r"\s+")
 DEFAULT_CONTEXT_TOKEN_BUDGET = 1200
 MIN_CONTEXT_TOKEN_BUDGET = 64
 MAX_CONTEXT_TOKEN_BUDGET = 12_000
+MAX_MEMORY_RESULT_ITEMS = 50
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,20 @@ def normalize_context_token_budget(value: Any | None) -> int:
     if not MIN_CONTEXT_TOKEN_BUDGET <= budget <= MAX_CONTEXT_TOKEN_BUDGET:
         raise ValueError("MAX_TOKENS_OUT_OF_RANGE")
     return budget
+
+
+def normalize_memory_result_limit(value: Any | None, *, default: int = 8) -> int:
+    """校验记忆查询数量，避免不同入口静默接受不同类型。"""
+
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError("MEMORY_LIMIT_INVALID")
+    try:
+        limit = int(value)
+    except ValueError as exc:
+        raise ValueError("MEMORY_LIMIT_INVALID") from exc
+    return max(1, min(limit, MAX_MEMORY_RESULT_ITEMS))
 
 
 def build_context_pack(
@@ -165,7 +180,7 @@ class _ScoredCandidate:
 
 
 def select_hybrid_memories(
-    records: Sequence[Mapping[str, Any]],
+    records: Iterable[Mapping[str, Any]],
     *,
     query: str,
     limit: int,
@@ -210,15 +225,19 @@ def select_hybrid_memories(
 
     scored.sort(key=lambda candidate: (-candidate.base_score, str(candidate.record.get("memory_id") or "")))
     unique: list[_ScoredCandidate] = []
+    unique_contents: set[str] = set()
     duplicate_count = 0
     for candidate in scored:
+        if candidate.normalized_content in unique_contents:
+            duplicate_count += 1
+            continue
         if any(
-            candidate.normalized_content == existing.normalized_content
-            or _cosine(candidate.vector, existing.vector) >= 0.94
+            _cosine(candidate.vector, existing.vector) >= 0.94
             for existing in unique
         ):
             duplicate_count += 1
             continue
+        unique_contents.add(candidate.normalized_content)
         unique.append(candidate)
 
     selected: list[_ScoredCandidate] = []

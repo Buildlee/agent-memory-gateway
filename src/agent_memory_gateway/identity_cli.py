@@ -44,6 +44,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     pairing.add_argument("--device-type", choices=sorted(VALID_DEVICE_TYPES), required=True)
     pairing.add_argument("--agent-types", type=_agent_types, required=True, help="逗号分隔")
     pairing.add_argument("--ttl-seconds", type=int, default=PAIRING_TTL_SECONDS)
+    pairing.add_argument("--workspace-id", help="可选：配对成功后自动绑定的工作区")
+    pairing.add_argument("--capabilities", type=_capabilities, help="与 --workspace-id 一起使用，逗号分隔")
 
     revoke_device = commands.add_parser("revoke-device", help="撤销设备、刷新凭据和该设备全部 Agent")
     add_metadata_dsn(revoke_device)
@@ -73,12 +75,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error("需要 --metadata-dsn 或 MEMORY_METADATA_MIGRATOR_DSN")
     admin = IdentityAdmin(args.metadata_dsn)
     if args.command == "pairing-code":
+        if bool(args.workspace_id) != bool(args.capabilities):
+            parser.error("--workspace-id 与 --capabilities 必须同时提供")
         result = admin.create_pairing_code(
             tenant_id=args.tenant_id,
             user_id=args.user_id,
             allowed_device_type=args.device_type,
             allowed_agent_types=args.agent_types,
             ttl_seconds=args.ttl_seconds,
+            workspace_id=args.workspace_id,
+            workspace_capabilities=args.capabilities or (),
         )
     elif args.command == "revoke-device":
         result = admin.revoke_device(args.device_id)

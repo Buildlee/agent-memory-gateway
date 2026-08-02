@@ -71,6 +71,17 @@ Stop-Process -Id <process_id>
   -OutputPath "C:\secure-share\device-install.json"
 ```
 
+每台新设备都使用一枚独立配对码。生成配对码时同时附上该设备需要的最小工作区能力，Gateway 会在配对事务内把这些能力绑定给本次登记的 Agent；客户端不具备自行授权的能力：
+
+```powershell
+memory-gateway pairing-code `
+  --tenant-id personal --user-id chlee --device-type windows --agent-types codex,hermes `
+  --workspace-id agent-memory-gateway `
+  --capabilities memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event
+```
+
+输出的配对码只通过受控渠道交给对应设备，不写入安装配置、聊天记录或命令行历史。旧版本生成的配对码没有工作区信息，仍可用于兼容接入，但需要管理员在配对后手动绑定。
+
 客户端只拿到安装脚本时，默认会从 GitHub 下载当时的 `main` 源码包。若希望每台电脑使用同一份可审核版本，管理端应制作不可变 ZIP 发布包并放到受控 HTTPS 地址。生成配置时提供发布包本地文件，脚本会自动计算并写入 SHA-256：
 
 ```powershell
@@ -97,7 +108,7 @@ Stop-Process -Id <process_id>
 .\scripts\memory-device-install.ps1 -ProfileUrl "https://memory-gateway.example.internal/device-install.json"
 ```
 
-安装器自动生成设备 ID、创建独立运行环境、完成配对、创建计划任务并输出每个 Agent 的 MCP JSON。它只在最后提示输入一次性配对码，输入不会显示、写入配置或落到命令行历史。将配置预先放到 `%LOCALAPPDATA%\memory-gateway\device-install.json` 后，只需运行 `.\scripts\memory-device-install.ps1`。
+安装器自动生成设备 ID、创建独立运行环境、完成配对、创建计划任务并输出每个 Agent 的 MCP JSON。它只在最后提示输入一次性配对码，输入不会显示、写入配置或落到命令行历史。计划任务启动后，安装器会让首个 Agent 做一次真实同步；只有本机 Sidecar、凭据、工作区授权和 Gateway 都通过时才输出 `ready`。将配置预先放到 `%LOCALAPPDATA%\memory-gateway\device-install.json` 后，只需运行 `.\scripts\memory-device-install.ps1`。
 
 在只有安装脚本的新电脑上，安装器没有 `release` 时会下载 GitHub 当前 `main` 源码包；它适合希望随项目更新的日常安装。配置了 `release` 时，安装器会改用 SHA-256 校验后的固定发布副本，适合生产或需要审计的环境。两种方式都会限制下载体积、保留异常现场，并拒绝覆盖已有缓存、发布目录、密钥、凭据或任务。
 
@@ -116,13 +127,13 @@ Stop-Process -Id <process_id>
   -InstallAutostart
 ```
 
-向导提示输入配对码，然后把刷新凭证保存在 Windows Credential Manager。设备私钥、Sidecar outbox key 和本机 MCP 配置在文件已有时会跳过，不自动覆盖。首次执行还会在仓库中建 `.shared-memory-venv`，避免把 MCP 依赖装进全局 Python。
+向导提示输入配对码，然后把刷新凭证保存在 Windows Credential Manager。设备私钥、Sidecar outbox key 和本机 MCP 配置在文件已有时会跳过，不自动覆盖。首次执行还会在仓库中建 `.shared-memory-venv`，避免把 MCP 依赖装进全局 Python。带 `-InstallAutostart` 时，向导会在任务启动后用第一条 Agent 身份执行一次同步；认证、工作区授权或 Gateway 网络不通都会直接报错，不会把只有端口存活的状态称为可用。
 
-若配对成功但之后本地准备中断，用原命令加 `-UseExistingCredential` 继续。这要求原设备私钥还在，且只复用现有 Windows 凭证——不读取、不打印、不覆盖凭证，也不覆盖计划任务和 MCP JSON。
+若配对成功但之后本地准备中断，用原命令加 `-UseExistingCredential` 继续。这要求原设备私钥还在，只复用现有 Windows 凭证。若发现由本安装器创建的 Sidecar 计划任务，恢复时会把它更新为当前设备、Agent 和运行环境；未知任务仍会拒绝替换。凭证不会读取、打印或写入配置文件，已有 MCP JSON 也不会覆盖。
 
 如果 Gateway 使用内部 CA，加 `-GatewayCaCertificate "<CA 证书路径>"`。公网受信任证书不需要此参数；证书不匹配时修正证书链，不要关闭 TLS 校验。
 
-命令结束后列出生成的 MCP JSON 文件。把各自的 JSON 导入 Codex、Hermes 或其他 MCP 客户端，然后重启对应 Agent。JSON 只包含本机启动脚本、Agent ID、工作区和本机 key 文件路径，不保存 Gateway 令牌、刷新凭证、数据库地址或私钥。
+命令结束后列出生成的 MCP JSON 文件。带 `-InstallAutostart` 的成功结果中 `gateway_sync` 为 `ready`；未启用自启时结果为 `configured`，先手动启动 Sidecar 或重新运行并加上 `-InstallAutostart`，再导入 MCP 配置。JSON 只包含本机启动脚本、Agent ID、工作区和本机 key 文件路径，不保存 Gateway 令牌、刷新凭证、数据库地址或私钥。
 
 Docker 中的 Agent 使用同一套身份和工作区协议，但不需要把 Windows 运行环境复制进容器。按[容器内 Agent 的统一接入](container-sidecar.md)运行 `-Mode container`——它会为目标容器建一个只监听容器回环地址的 MCP Bridge。
 

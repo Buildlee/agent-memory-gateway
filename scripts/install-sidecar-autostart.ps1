@@ -27,6 +27,8 @@ param(
     [AllowEmptyString()]
     [string]$GatewayCaCertificate = "",
 
+    [switch]$ReplaceExistingManagedTask,
+
     [string]$PythonExecutable = "python"
 )
 
@@ -63,8 +65,42 @@ if ($DefaultWorkspace -notmatch "^[A-Za-z0-9_.@:-]+$") {
 if ($Port -lt 1024 -or $Port -gt 65535) {
     throw "Port 必须在 1024 到 65535 之间"
 }
-if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-    throw "计划任务已存在，拒绝覆盖：$TaskName"
+$managedTaskDescription = "启动仅回环访问的 Memory Gateway Sidecar；内部 CA 仅在该进程中使用。"
+
+function Test-ManagedSidecarTask($Task) {
+    if ($Task.Description -ne $managedTaskDescription) {
+        return $false
+    }
+    $actions = @($Task.Actions)
+    if ($actions.Count -ne 1) {
+        return $false
+    }
+    return $actions[0].Arguments -match '(?i)(?:^|\s)-File\s+"?[^"]*\\scripts\\start-sidecar(?:-host)?\.ps1"?'
+}
+
+$existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($existingTask) {
+    if (-not $ReplaceExistingManagedTask) {
+        throw "计划任务已存在，拒绝覆盖：$TaskName"
+    }
+    if (-not (Test-ManagedSidecarTask $existingTask)) {
+        throw "计划任务已存在，但不是本安装器创建的受管 Sidecar 任务，拒绝替换：$TaskName"
+    }
+    if ($existingTask.State -eq "Running") {
+        Stop-ScheduledTask -TaskName $TaskName
+        $stopped = $false
+        for ($attempt = 0; $attempt -lt 10; $attempt++) {
+            Start-Sleep -Milliseconds 500
+            $currentTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+            if ($currentTask.State -ne "Running") {
+                $stopped = $true
+                break
+            }
+        }
+        if (-not $stopped) {
+            throw "受管 Sidecar 任务未在 5 秒内停止，拒绝替换：$TaskName"
+        }
+    }
 }
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -79,7 +115,10 @@ if (-not [string]::IsNullOrWhiteSpace($GatewayCaCertificate) -and -not (Test-Pat
     throw "找不到 Gateway CA 证书文件：$GatewayCaCertificate"
 }
 
-$pwsh = (Get-Command pwsh -ErrorAction Stop).Source
+$taskHost = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\pwsh.exe"
+if (-not (Test-Path -LiteralPath $taskHost -PathType Leaf)) {
+    throw "找不到当前用户的 PowerShell 启动程序：$taskHost"
+}
 $taskUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 if ([string]::IsNullOrWhiteSpace($taskUser)) {
     throw "无法识别当前 Windows 用户"
@@ -106,24 +145,26 @@ $arguments = @(
     "-PythonExecutable", (Quote-TaskArgument $PythonExecutable)
 ) -join " "
 
-$action = New-ScheduledTaskAction -Execute $pwsh -Argument $arguments -WorkingDirectory $projectRoot
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $taskUser
+$action = New-ScheduledTaskAction -Execute $taskHost -Argument $arguments -WorkingDirectory $projectRoot
+$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $taskUser
+$recoveryTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 365)
 $principal = New-ScheduledTaskPrincipal -UserId $taskUser -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
 $registration = @{
     TaskName = $TaskName
     Action = $action
-    Trigger = $trigger
+    Trigger = @($logonTrigger, $recoveryTrigger)
     Principal = $principal
     Settings = $settings
-    Description = "启动仅回环访问的 Memory Gateway Sidecar；内部 CA 仅在该进程中使用。"
+    Description = $managedTaskDescription
 }
-Register-ScheduledTask @registration | Out-Null
+Register-ScheduledTask @registration -Force | Out-Null
 
 [pscustomobject]@{
     task_name = $TaskName
     user = $taskUser
     trigger = "AtLogOn"
+    recovery_check = "every 5 minutes"
     gateway_url = $GatewayUrl
     default_workspace = $DefaultWorkspace
     gateway_ca_certificate = $GatewayCaCertificate

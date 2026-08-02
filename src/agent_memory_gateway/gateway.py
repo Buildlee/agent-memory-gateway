@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import ipaddress
 import json
 import os
 import sys
@@ -35,6 +36,31 @@ from .sync_service import PostgresSyncService, SyncProtocolError
 
 
 MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024
+
+ROUTE_CAPABILITIES = {
+    "/v1/events": "memory.write_event",
+    "/v1/sync/push": "memory.write_event",
+    "/v1/sync/pull": "memory.read_context",
+    "/v1/memories/search": "memory.search",
+    "/v1/context": "memory.read_context",
+    "/v1/memories/feedback": "memory.feedback",
+    "/v1/memories/forget": "memory.forget",
+    "/v1/reviews/list": "memory.manage",
+    "/v1/reviews/resolve": "memory.manage",
+    "/v1/reviews/revert": "memory.manage",
+    "/v1/crystals/rebuild": "memory.manage",
+    "/v1/admin/overview": "memory.manage",
+    "/v1/admin/devices/list": "memory.manage",
+    "/v1/admin/bindings/update": "memory.manage",
+    "/v1/admin/agents/revoke": "memory.manage",
+    "/v1/admin/devices/revoke": "memory.manage",
+    "/v1/admin/audit/list": "memory.manage",
+    "/v1/admin/dead-letters/list": "memory.manage",
+    "/v1/admin/memories/list": "memory.manage",
+    "/v1/admin/graph": "memory.manage",
+    "/v1/admin/impact": "memory.manage",
+    "/v1/admin/sources": "memory.manage",
+}
 
 
 class GatewayHandler(BaseHTTPRequestHandler):
@@ -85,7 +111,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     self._json({"error": "not_found"}, status=404)
                     return
                 limit, window = (5, 600) if path == "/v1/auth/pair" else (20, 60)
-                remote_ip = self.client_address[0] if self.client_address else "unknown"
+                remote_ip = self._rate_limit_client_ip()
                 if not self.auth_rate_limiter.allow(
                     f"{remote_ip}:{path}",
                     limit=limit,
@@ -99,30 +125,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 return
             principal = self.authenticator.authenticate(self.headers.get("Authorization"))
             self.authenticator.validate_payload_identity(principal, payload)
-            capability = {
-                "/v1/events": "memory.write_event",
-                "/v1/sync/push": "memory.write_event",
-                "/v1/sync/pull": "memory.read_context",
-                "/v1/memories/search": "memory.search",
-                "/v1/context": "memory.read_context",
-                "/v1/memories/feedback": "memory.feedback",
-                "/v1/memories/forget": "memory.forget",
-                "/v1/reviews/list": "memory.manage",
-                "/v1/reviews/resolve": "memory.manage",
-                "/v1/reviews/revert": "memory.manage",
-                "/v1/crystals/rebuild": "memory.manage",
-                "/v1/admin/overview": "memory.manage",
-                "/v1/admin/devices/list": "memory.manage",
-                "/v1/admin/bindings/update": "memory.manage",
-                "/v1/admin/agents/revoke": "memory.manage",
-                "/v1/admin/devices/revoke": "memory.manage",
-                "/v1/admin/audit/list": "memory.manage",
-                "/v1/admin/dead-letters/list": "memory.manage",
-                "/v1/admin/memories/list": "memory.search",
-                "/v1/admin/graph": "memory.search",
-                "/v1/admin/impact": "memory.manage",
-                "/v1/admin/sources": "memory.manage",
-            }.get(path)
+            capability = ROUTE_CAPABILITIES.get(path)
             if capability is None:
                 self._json({"error": "not_found"}, status=404)
                 return
@@ -264,8 +267,26 @@ class GatewayHandler(BaseHTTPRequestHandler):
             raise EventValidationError("CONTENT_LENGTH_REQUIRED")
         if length > MAX_REQUEST_BODY_BYTES:
             raise EventValidationError("REQUEST_BODY_TOO_LARGE")
-        raw = self.rfile.read(length).decode("utf-8")
-        return json.loads(raw) if raw else {}
+        try:
+            raw = self.rfile.read(length).decode("utf-8")
+            payload = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise EventValidationError("REQUEST_BODY_INVALID") from exc
+        if not isinstance(payload, dict):
+            raise EventValidationError("REQUEST_BODY_OBJECT_REQUIRED")
+        return payload
+
+    def _rate_limit_client_ip(self) -> str:
+        """仅在受控反向代理明确启用时使用其传递的客户端地址。"""
+
+        fallback = self.client_address[0] if self.client_address else "unknown"
+        if os.environ.get("MEMORY_TRUST_PROXY_X_FORWARDED_FOR") != "1":
+            return fallback
+        forwarded = (self.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip()
+        try:
+            return str(ipaddress.ip_address(forwarded))
+        except ValueError:
+            return fallback
 
     def _json(self, payload: dict[str, Any], status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")

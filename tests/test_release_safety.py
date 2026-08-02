@@ -38,6 +38,13 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assertIn('McpExecutable -eq "memory-sidecar-mcp"', mcp_script)
         self.assertIn("PythonExecutable", mcp_script)
 
+    def test_sidecar_autostart_uses_a_stable_task_host(self) -> None:
+        install_script = (ROOT / "scripts" / "install-sidecar-autostart.ps1").read_text(encoding="utf-8")
+
+        self.assertIn('Microsoft\\WindowsApps\\pwsh.exe', install_script)
+        self.assertIn('"-File", (Quote-TaskArgument $startScript)', install_script)
+        self.assertNotIn('$pwsh = (Get-Command pwsh', install_script)
+
     def test_sidecar_autostart_sets_an_explicit_heartbeat_agent(self) -> None:
         start_script = (ROOT / "scripts" / "start-sidecar.ps1").read_text(encoding="utf-8")
         install_script = (ROOT / "scripts" / "install-sidecar-autostart.ps1").read_text(encoding="utf-8")
@@ -82,7 +89,8 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assertNotIn("HEAD^ HEAD", workflow)
 
         scanner = (ROOT / "scripts" / "check-public-sensitive.ps1").read_text(encoding="utf-8")
-        self.assertIn("git ls-files", scanner)
+        self.assertIn("git ls-files --cached --others --exclude-standard", scanner)
+        self.assertIn("尚未暂存", scanner)
         self.assertIn("$_ -ne 'tests/fixtures/security_cases.json'", scanner)
 
         hook = (ROOT / ".githooks" / "pre-push").read_text(encoding="utf-8")

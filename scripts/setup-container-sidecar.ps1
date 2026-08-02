@@ -257,6 +257,7 @@ gid="${container_user##*:}"
 bootstrap_suffix="$(printf '%s' "$device_id" | sha256sum | cut -c1-12)"
 pair_container="memory-sidecar-pair-$bootstrap_suffix"
 key_container="memory-sidecar-key-$bootstrap_suffix"
+paired_with_workspace=0
 if [ -f "$device_key" ] || [ -f "$refresh_file" ]; then
   if [ "$resume" != 1 ] || [ ! -f "$device_key" ] || [ ! -f "$refresh_file" ]; then
     echo '已有或不完整的设备凭据；拒绝覆盖。请核对后使用 -Resume。' >&2
@@ -270,10 +271,11 @@ else
   install -d -m 0700 "$state_dir"
   test "$(stat -c %u:%g "$state_dir")" = "$uid:$gid"
 
-  pairing_code="$(docker exec "$gateway_container" "$gateway_entrypoint" memory-gateway pairing-code --tenant-id "$tenant_id" --user-id "$user_id" --device-type "$device_type" --agent-types "$agent_type" | docker exec -i "$gateway_container" python -c 'import json, sys; print(json.load(sys.stdin)["pairing_code"])')"
+  pairing_code="$(docker exec "$gateway_container" "$gateway_entrypoint" memory-gateway pairing-code --tenant-id "$tenant_id" --user-id "$user_id" --device-type "$device_type" --agent-types "$agent_type" --workspace-id "$workspace_id" --capabilities "$capabilities" | docker exec -i "$gateway_container" python -c 'import json, sys; print(json.load(sys.stdin)["pairing_code"])')"
   test -n "$pairing_code"
   printf '%s\n' "$pairing_code" | docker run --name "$pair_container" -i --network "container:$client_container" --user "$container_user" --read-only --tmpfs /tmp:rw,noexec,nosuid,size=32m --security-opt no-new-privileges:true --cap-drop ALL --pids-limit 64 -v "$state_dir:/state" --entrypoint python "$image" -m agent_memory_gateway.device_pair --gateway-url "$gateway_url" --pairing-code-stdin --device-id "$device_id" --device-name "$device_name" --device-type "$device_type" --device-key-file /state/device-identity.pem --credential-file /state/refresh-credential.json --credential-username "$user_id" --agent "$agent_id|$agent_type|$agent_name"
   pairing_code=''
+  paired_with_workspace=1
 fi
 
 if [ ! -f "$sidecar_env" ]; then
@@ -286,7 +288,9 @@ test "$(stat -c %a "$device_key")" = 600
 test "$(stat -c %a "$refresh_file")" = 600
 test "$(stat -c %a "$sidecar_env")" = 600
 
-docker exec "$gateway_container" "$gateway_entrypoint" memory-gateway bind-workspace --agent-installation-id "$agent_id" --workspace-id "$workspace_id" --capabilities "$capabilities"
+if [ "$paired_with_workspace" != 1 ]; then
+  docker exec "$gateway_container" "$gateway_entrypoint" memory-gateway bind-workspace --agent-installation-id "$agent_id" --workspace-id "$workspace_id" --capabilities "$capabilities"
+fi
 
 if [ -e "$bridge_env" ] && [ "$resume" != 1 ]; then
   echo 'Bridge 配置已存在；拒绝覆盖。请核对后使用 -Resume。' >&2

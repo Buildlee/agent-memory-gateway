@@ -110,10 +110,35 @@ def verify_pairing_proof(
 
 
 def _validate_identifier(name: str, value: Any) -> str:
-    text = str(value).strip()
+    if not isinstance(value, str):
+        raise AuthError(f"{name.upper()}_INVALID", status=400)
+    text = value.strip()
     if not text or len(text) > 256:
         raise AuthError(f"{name.upper()}_INVALID", status=400)
     return text
+
+
+def _normalize_capabilities(values: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    if not isinstance(values, (tuple, list)):
+        raise AuthError("WORKSPACE_CAPABILITIES_INVALID", status=400)
+    if any(not isinstance(value, str) for value in values):
+        raise AuthError("WORKSPACE_CAPABILITIES_INVALID", status=400)
+    capabilities = tuple(sorted({value.strip() for value in values if value.strip()}))
+    if not capabilities or any(
+        len(value) > 128 or not value.replace(".", "").replace("_", "").isalnum()
+        for value in capabilities
+    ):
+        raise AuthError("WORKSPACE_CAPABILITIES_INVALID", status=400)
+    return capabilities
+
+
+def _normalize_agent_types(values: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    if not isinstance(values, (tuple, list)) or any(not isinstance(value, str) for value in values):
+        raise AuthError("AGENT_TYPES_INVALID", status=400)
+    agent_types = tuple(sorted({value.strip() for value in values if value.strip()}))
+    if not agent_types or any(value not in VALID_AGENT_TYPES for value in agent_types):
+        raise AuthError("AGENT_TYPES_INVALID", status=400)
+    return agent_types
 
 
 def new_refresh_credential() -> tuple[str, str, str]:
@@ -178,16 +203,29 @@ class IdentityAdmin:
         allowed_device_type: str,
         allowed_agent_types: tuple[str, ...],
         ttl_seconds: int = PAIRING_TTL_SECONDS,
+        workspace_id: str | None = None,
+        workspace_capabilities: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         tenant_id = _validate_identifier("tenant_id", tenant_id)
         user_id = _validate_identifier("user_id", user_id)
+        allowed_device_type = _validate_identifier("device_type", allowed_device_type)
         if allowed_device_type not in VALID_DEVICE_TYPES:
             raise AuthError("DEVICE_TYPE_INVALID", status=400)
-        agent_types = tuple(sorted(set(allowed_agent_types)))
-        if not agent_types or any(value not in VALID_AGENT_TYPES for value in agent_types):
-            raise AuthError("AGENT_TYPES_INVALID", status=400)
-        if ttl_seconds < 60 or ttl_seconds > PAIRING_TTL_SECONDS:
+        agent_types = _normalize_agent_types(allowed_agent_types)
+        if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or not 60 <= ttl_seconds <= PAIRING_TTL_SECONDS:
             raise AuthError("PAIRING_TTL_INVALID", status=400)
+        if not isinstance(workspace_capabilities, (tuple, list)):
+            raise AuthError("WORKSPACE_CAPABILITIES_INVALID", status=400)
+        requested_workspace = "" if workspace_id is None else _validate_identifier(
+            "workspace_id", workspace_id
+        )
+        if bool(requested_workspace) != bool(workspace_capabilities):
+            raise AuthError("PAIRING_WORKSPACE_BINDING_INVALID", status=400)
+        granted_capabilities = (
+            _normalize_capabilities(workspace_capabilities) if requested_workspace else ()
+        )
+        if requested_workspace:
+            workspace_id = _validate_identifier("workspace_id", requested_workspace)
         code_id = f"pair_{secrets.token_urlsafe(12)}"
         code = f"{code_id}.{secrets.token_urlsafe(18)}"
         psycopg = self._psycopg()
@@ -204,14 +242,37 @@ class IdentityAdmin:
                 ).fetchone()
                 if principal is None or tuple(principal) != ("active", "active"):
                     raise AuthError("PAIRING_OWNER_INVALID", status=400)
+                if workspace_id:
+                    workspace = connection.execute(
+                        """
+                        SELECT tenant_id, user_id, status
+                        FROM workspaces
+                        WHERE workspace_id = %s
+                        FOR UPDATE
+                        """,
+                        (workspace_id,),
+                    ).fetchone()
+                    if workspace is None or tuple(workspace) != (tenant_id, user_id, "active"):
+                        raise AuthError("PAIRING_WORKSPACE_BINDING_INVALID", status=400)
                 connection.execute(
                     """
                     INSERT INTO pairing_codes (
                       pairing_code_id, tenant_id, user_id, code_hash,
-                      allowed_device_type, allowed_agent_types, expires_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, now() + (%s * interval '1 second'))
+                      allowed_device_type, allowed_agent_types, expires_at,
+                      workspace_id, workspace_capabilities
+                    ) VALUES (%s, %s, %s, %s, %s, %s, now() + (%s * interval '1 second'), %s, %s)
                     """,
-                    (code_id, tenant_id, user_id, _hash(code), allowed_device_type, list(agent_types), ttl_seconds),
+                    (
+                        code_id,
+                        tenant_id,
+                        user_id,
+                        _hash(code),
+                        allowed_device_type,
+                        list(agent_types),
+                        ttl_seconds,
+                        workspace_id,
+                        list(granted_capabilities) or None,
+                    ),
                 )
                 _audit(
                     connection,
@@ -221,13 +282,20 @@ class IdentityAdmin:
                     action="auth.pairing_code.create",
                     result_code="created",
                     target_ref=code_id,
-                    details={"device_type": allowed_device_type, "agent_types": list(agent_types)},
+                    details={
+                        "device_type": allowed_device_type,
+                        "agent_types": list(agent_types),
+                        "workspace_id": workspace_id,
+                        "capabilities": list(granted_capabilities),
+                    },
                 )
         return {
             "pairing_code": code,
             "expires_in": ttl_seconds,
             "allowed_device_type": allowed_device_type,
             "allowed_agent_types": list(agent_types),
+            "workspace_id": workspace_id,
+            "workspace_capabilities": list(granted_capabilities),
         }
 
     def revoke_device(self, device_id: str) -> dict[str, Any]:
@@ -281,9 +349,7 @@ class IdentityAdmin:
 
         agent_installation_id = _validate_identifier("agent_installation_id", agent_installation_id)
         workspace_id = _validate_identifier("workspace_id", workspace_id)
-        capabilities = tuple(sorted({str(value).strip() for value in capabilities if str(value).strip()}))
-        if not capabilities or any(len(value) > 128 or not value.replace(".", "").replace("_", "").isalnum() for value in capabilities):
-            raise AuthError("WORKSPACE_CAPABILITIES_INVALID", status=400)
+        capabilities = _normalize_capabilities(capabilities)
         psycopg = self._psycopg()
         with psycopg.connect(self._dsn) as connection:
             with connection.transaction():
@@ -511,7 +577,8 @@ class PostgresIdentityService:
                 code = connection.execute(
                     """
                     SELECT pairing_code_id, tenant_id, user_id, allowed_device_type,
-                           allowed_agent_types, expires_at > now() AS unexpired, used_at
+                           allowed_agent_types, expires_at > now() AS unexpired, used_at,
+                           workspace_id, workspace_capabilities
                     FROM pairing_codes
                     WHERE code_hash = %s
                     FOR UPDATE
@@ -529,6 +596,23 @@ class PostgresIdentityService:
                 allowed_agents = set(code[4])
                 if any(agent.agent_type not in allowed_agents for agent in agents):
                     raise AuthError("AGENT_TYPE_FORBIDDEN")
+                pairing_workspace_id = str(code[7] or "").strip()
+                pairing_capabilities = tuple(code[8] or ())
+                if bool(pairing_workspace_id) != bool(pairing_capabilities):
+                    raise AuthError("PAIRING_WORKSPACE_BINDING_INVALID", status=400)
+                if pairing_workspace_id:
+                    pairing_capabilities = _normalize_capabilities(pairing_capabilities)
+                    workspace = connection.execute(
+                        """
+                        SELECT tenant_id, user_id, status
+                        FROM workspaces
+                        WHERE workspace_id = %s
+                        FOR UPDATE
+                        """,
+                        (pairing_workspace_id,),
+                    ).fetchone()
+                    if workspace is None or tuple(workspace) != (code[1], code[2], "active"):
+                        raise AuthError("PAIRING_WORKSPACE_BINDING_INVALID", status=400)
                 existing = connection.execute(
                     "SELECT 1 FROM devices WHERE device_id = %s",
                     (device_id,),
@@ -544,6 +628,16 @@ class PostgresIdentityService:
                 ).fetchone()
                 if existing_display_name is not None:
                     raise AuthError("DEVICE_DISPLAY_NAME_CONFLICT", status=409)
+                existing_agents = connection.execute(
+                    """
+                    SELECT agent_installation_id
+                    FROM agent_installations
+                    WHERE agent_installation_id = ANY(%s)
+                    """,
+                    ([agent.agent_installation_id for agent in agents],),
+                ).fetchone()
+                if existing_agents is not None:
+                    raise AuthError("AGENT_INSTALLATION_ID_CONFLICT", status=409)
                 connection.execute(
                     """
                     INSERT INTO devices (
@@ -562,6 +656,15 @@ class PostgresIdentityService:
                         """,
                         (agent.agent_installation_id, device_id, agent.agent_type, agent.display_name),
                     )
+                    if pairing_workspace_id:
+                        connection.execute(
+                            """
+                            INSERT INTO workspace_bindings (
+                              agent_installation_id, workspace_id, capabilities
+                            ) VALUES (%s, %s, %s)
+                            """,
+                            (agent.agent_installation_id, pairing_workspace_id, list(pairing_capabilities)),
+                        )
                 connection.execute(
                     """
                     INSERT INTO refresh_credentials (
@@ -589,13 +692,19 @@ class PostgresIdentityService:
                     result_code="paired",
                     device_id=device_id,
                     target_ref=str(code[0]),
-                    details={"agent_installation_ids": [value.agent_installation_id for value in agents]},
+                    details={
+                        "agent_installation_ids": [value.agent_installation_id for value in agents],
+                        "workspace_id": pairing_workspace_id or None,
+                        "capabilities": list(pairing_capabilities),
+                    },
                 )
         return {
             "device_id": device_id,
             "agent_installation_ids": [value.agent_installation_id for value in agents],
             "refresh_credential": refresh_credential,
             "refresh_expires_in": int(timedelta(days=REFRESH_TTL_DAYS).total_seconds()),
+            "workspace_id": pairing_workspace_id or None,
+            "workspace_capabilities": list(pairing_capabilities),
         }
 
     def refresh(self, payload: dict[str, Any]) -> dict[str, Any]:
