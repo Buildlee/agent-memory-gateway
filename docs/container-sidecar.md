@@ -29,7 +29,21 @@ Bridge 与目标容器共用网络命名空间：
 - 不绑定宿主机端口
 - Gateway、数据库、刷新凭据不暴露给局域网
 
-默认 Gateway 地址使用 Docker 服务名 `gateway`。部分 Docker 版本在共享网络命名空间时，只让目标 Agent 解析这个名字，Bridge 自己可能无法解析。安装器会从 Gateway 与目标 Agent 的共同网络中取得 Gateway 当前私有地址，再写入受保护的 Bridge 配置。该地址仅在 Docker 内部使用；以 `-Resume` 恢复时会刷新它，因此 Gateway 重建后也能重新连接。
+Bridge 由目标 Agent 的 Compose 项目管理，Gateway 仍由 `memory-gateway` Compose 管理。两者不互相纳入对方的 Compose：Bridge 跟随目标 Agent 的容器生命周期，Gateway 升级也不会重建 Hermes 或其他 Agent。
+
+安装器会确认二者处于共同 Docker 网络，并把 Gateway 的稳定 Compose 服务名写入受保护的 Bridge 配置；默认是 `http://app:8787`。不会再写入某次启动时的私有 IP，因此 Gateway 重建后不需要重新配对。
+
+目标 Agent 被更新或重建后，旧 Bridge 仍可能绑定已消失的网络命名空间。先运行只读对账：
+
+```powershell
+.\scripts\reconcile-container-sidecar.ps1 `
+  -SshHost "deploy-user@nas" `
+  -SshPort 22 `
+  -ClientContainerName "agent-webui" `
+  -StateDirectory "/srv/agent-memory/agent-webui"
+```
+
+结果为 `needs_recreate=1` 时，确认只替换该 Bridge 后，再在同一命令末尾加 `-Apply`。它会复用原有设备私钥、刷新凭据和 outbox，只重建 `memory-mcp-bridge`；不会重启目标 Agent、Gateway、数据库或其他服务，也不会使用 `--remove-orphans`。
 
 ---
 
@@ -75,7 +89,7 @@ Bridge 与目标容器共用网络命名空间：
 | `-DeviceName` | 设备显示名 | 等于 `-DeviceId` |
 | `-DeviceType` | `nas` 或 `other` | `nas` |
 | `-ContainerCapabilities` | 逗号分隔的能力列表 | 不含 `memory.manage`（见下方） |
-| `-ContainerGatewayUrl` | 容器内 Gateway 地址 | `http://gateway:8787` |
+| `-ContainerGatewayUrl` | 容器内 Gateway 地址 | `http://app:8787` |
 
 ---
 

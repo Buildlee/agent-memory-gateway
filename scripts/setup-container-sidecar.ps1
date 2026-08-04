@@ -39,7 +39,7 @@ param(
 
     [string]$Capabilities = "memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event",
 
-    [string]$GatewayInternalUrl = "http://gateway:8787",
+    [string]$GatewayInternalUrl = "http://app:8787",
 
     [ValidatePattern("^[0-9]+:[0-9]+$")]
     [string]$ContainerUser = "1000:1001",
@@ -194,29 +194,25 @@ gateway_entrypoint="$(docker inspect "$gateway_container" --format '{{index .Con
 test -n "$gateway_entrypoint" && test "$gateway_entrypoint" != '<no value>'
 docker exec "$gateway_container" "$gateway_entrypoint" memory-gateway --help >/dev/null
 
-# 使用 `network_mode: service` 时，部分 Docker 版本不会把 Bridge 自身登记到
-# 内置 DNS。目标 Agent 可以解析 `gateway`，Bridge 却可能解析失败。默认服务名
-# 因此在接入时改为双方共享网络中的当前 Gateway 私有地址；不会开放宿主机端口。
-gateway_scheme="${gateway_url%%://*}"
-gateway_authority="${gateway_url#*://}"
-gateway_host="${gateway_authority%%:*}"
-gateway_port_suffix="${gateway_authority#"$gateway_host"}"
-if [ "$gateway_host" = gateway ]; then
-  client_networks="$(docker inspect "$client_container" --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}')"
-  gateway_networks="$(docker inspect "$gateway_container" --format '{{range $name, $network := .NetworkSettings.Networks}}{{println $name $network.IPAddress}}{{end}}')"
-  gateway_ip=''
-  for client_network in $client_networks; do
-    candidate_ip="$(printf '%s\n' "$gateway_networks" | awk -v network="$client_network" '$1 == network { print $2; exit }')"
-    if [ -n "$candidate_ip" ]; then
-      gateway_ip="$candidate_ip"
-      break
-    fi
-  done
-  if [ -z "$gateway_ip" ]; then
-    echo 'Gateway 与目标 Agent 容器没有共同的 Docker 网络，无法建立仅容器内可见的 Bridge。' >&2
-    exit 69
+# Bridge 由目标 Agent 的 Compose 项目管理，必须通过共同网络中的稳定服务名访问
+# Gateway。拒绝把当次私有 IP 写入 bridge.env，否则 Gateway 重建后会留下失效地址。
+gateway_service="$(docker inspect "$gateway_container" --format '{{ index .Config.Labels "com.docker.compose.service" }}')"
+test -n "$gateway_service" && test "$gateway_service" != '<no value>'
+client_networks="$(docker inspect "$client_container" --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}')"
+gateway_networks="$(docker inspect "$gateway_container" --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}')"
+shared_network=0
+for client_network in $client_networks; do
+  if printf '%s\n' "$gateway_networks" | grep -Fx "$client_network" >/dev/null; then
+    shared_network=1
+    break
   fi
-  gateway_url="$gateway_scheme://$gateway_ip$gateway_port_suffix"
+done
+if [ "$shared_network" != 1 ]; then
+  echo 'Gateway 与目标 Agent 容器没有共同的 Docker 网络，无法建立仅容器内可见的 Bridge。' >&2
+  exit 69
+fi
+if [ "$gateway_url" = http://app:8787 ] || [ "$gateway_url" = http://gateway:8787 ]; then
+  gateway_url="http://$gateway_service:8787"
 fi
 
 sidecar_env="$state_dir/sidecar.env"

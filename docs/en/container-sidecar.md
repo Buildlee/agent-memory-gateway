@@ -29,6 +29,22 @@ The Bridge shares the network namespace with the target container:
 - No host port binding
 - Gateway, database, and refresh credentials are not exposed to the LAN
 
+The Bridge belongs to the target Agent's Compose project, while the Gateway remains in the `memory-gateway` Compose project. This keeps their lifecycles independent: updating the Gateway does not recreate Hermes or another Agent, and rebuilding an Agent only requires rebuilding its Bridge.
+
+The installer verifies a shared Docker network and records the Gateway's stable Compose service name, `http://app:8787` by default. It never records a one-time private IP address.
+
+After an Agent container is updated or recreated, first run the read-only reconciler:
+
+```powershell
+.\scripts\reconcile-container-sidecar.ps1 `
+  -SshHost "deploy-user@nas" `
+  -SshPort 22 `
+  -ClientContainerName "agent-webui" `
+  -StateDirectory "/srv/agent-memory/agent-webui"
+```
+
+When it reports `needs_recreate=1`, add `-Apply` after confirming that only the Bridge may be replaced. It reuses the device key, refresh credential, and outbox; it does not restart the target Agent, Gateway, database, or unrelated services, and never uses `--remove-orphans`.
+
 ---
 
 ## Running the Installer
@@ -73,7 +89,7 @@ Execute from a deployment machine that can reach the Gateway. All names are plac
 | `-DeviceName` | Device display name | Equals `-DeviceId` |
 | `-DeviceType` | `nas` or `other` | `nas` |
 | `-ContainerCapabilities` | Comma-separated capability list | Does not include `memory.manage` (see below) |
-| `-ContainerGatewayUrl` | Gateway URL inside the container | `http://gateway:8787` |
+| `-ContainerGatewayUrl` | Gateway URL inside the container | `http://app:8787` |
 
 ---
 
