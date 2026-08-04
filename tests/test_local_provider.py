@@ -2,11 +2,13 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from agent_memory_gateway.local_provider import (
     FileMemoryProvider,
     LocalMemoryShareService,
     LocalProviderError,
+    MAX_LOCAL_SOURCE_FILE_BYTES,
     load_provider_registry,
 )
 
@@ -35,6 +37,25 @@ class _Outbox:
 
 
 class LocalProviderTests(unittest.TestCase):
+    def test_reuses_short_lived_snapshot_for_list_and_selected_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "MEMORY.md"
+            path.write_text("# 用户偏好\n使用简体中文回复。", encoding="utf-8")
+            provider = FileMemoryProvider("cached-local", "缓存样例", [path], cache_seconds=30)
+            with patch.object(provider, "_markdown_records", wraps=provider._markdown_records) as reader:
+                first = provider.list_records().records
+                provider.get_records([first[0].record_id])
+
+            self.assertEqual(reader.call_count, 1)
+
+    def test_skips_source_files_above_safe_read_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "too-large.md"
+            path.write_bytes(b"x" * (MAX_LOCAL_SOURCE_FILE_BYTES + 1))
+            provider = FileMemoryProvider("bounded-local", "大小限制", [path])
+
+            self.assertEqual(provider.list_records().records, ())
+
     def test_markdown_only_marks_explicit_whitelist_headings_as_automatic(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "MEMORY.md"

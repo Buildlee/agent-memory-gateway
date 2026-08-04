@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from agent_memory_gateway.gbrain_backend import GBrainFact
 from agent_memory_gateway.hybrid_retrieval import (
+    MAX_RERANK_CANDIDATES,
     build_context_pack,
     estimate_tokens,
     normalize_context_token_budget,
@@ -116,6 +117,22 @@ class HybridRetrievalTests(unittest.TestCase):
             normalize_context_token_budget(63)
         with self.assertRaisesRegex(ValueError, "MAX_TOKENS_INVALID"):
             normalize_context_token_budget(True)
+        for value in (64.9, [], {}):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "MAX_TOKENS_INVALID"):
+                    normalize_context_token_budget(value)
+
+    def test_rerank_keeps_highest_relevance_after_candidate_pool_is_full(self):
+        records = [
+            record(f"gbrain:fact:{index:04d}", f"无关记录 {index:04x}", confidence=0.1)
+            for index in range(MAX_RERANK_CANDIDATES + 20)
+        ]
+        records.append(record("gbrain:fact:best", "共享记忆网关部署方案", confidence=1.0))
+
+        selection = select_hybrid_memories(records, query="共享记忆网关部署", limit=1)
+
+        self.assertEqual(selection.candidate_count, len(records))
+        self.assertEqual(selection.items[0]["memory_id"], "gbrain:fact:best")
 
     def test_context_pack_contains_only_policy_and_selected_references(self):
         payload = json.loads(

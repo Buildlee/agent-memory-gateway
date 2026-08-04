@@ -121,6 +121,23 @@ class AdminConnection:
         raise AssertionError(f"unexpected query: {normalized}")
 
 
+class GraphConnection(AdminConnection):
+    def __init__(self, *, lifecycle_available: bool) -> None:
+        super().__init__()
+        self.lifecycle_available = lifecycle_available
+
+    def execute(self, sql, params=None):
+        normalized = " ".join(sql.split())
+        self.executed.append((normalized, params))
+        if "SELECT backend_ref, device_id, agent_installation_id" in normalized:
+            return Cursor(rows=[("gbrain:fact:7", "device-a", "codex-admin", "workspace")])
+        if "FROM memory_lifecycle lifecycle" in normalized:
+            if not self.lifecycle_available:
+                raise RuntimeError("temporary lifecycle query failure")
+            return Cursor(rows=[("gbrain:fact:7", "active", None)])
+        return super().execute(sql, params)
+
+
 class AdminServiceTests(unittest.TestCase):
     def setUp(self):
         self.connection = AdminConnection()
@@ -216,6 +233,23 @@ class AdminServiceTests(unittest.TestCase):
         serialized = str(result).lower()
         self.assertNotIn("path", serialized)
         self.assertNotIn("content", serialized)
+
+    def test_memory_graph_marks_lifecycle_as_unavailable_without_hiding_base_graph(self):
+        connection = GraphConnection(lifecycle_available=False)
+        service = PostgresAdminService("postgresql://test", connection_factory=lambda: connection)
+
+        result = service.memory_graph({"workspace_id": "workspace-a"}, manager())
+
+        self.assertFalse(result["lifecycle_available"])
+        self.assertEqual(result["nodes"][0]["id"], "gbrain:fact:7")
+
+    def test_memory_graph_marks_lifecycle_as_available_after_successful_query(self):
+        connection = GraphConnection(lifecycle_available=True)
+        service = PostgresAdminService("postgresql://test", connection_factory=lambda: connection)
+
+        result = service.memory_graph({"workspace_id": "workspace-a"}, manager())
+
+        self.assertTrue(result["lifecycle_available"])
 
 
 class MutationConnection(AdminConnection):
