@@ -1050,7 +1050,7 @@ class PostgresReviewService:
 
     @staticmethod
     def _positive_int(value: Any, code: str) -> int:
-        if isinstance(value, bool):
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
             raise ReviewError(code)
         try:
             converted = int(value)

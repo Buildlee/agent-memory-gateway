@@ -211,6 +211,8 @@ def _load_or_create_session_secret(path_value: str) -> str:
 
 
 def _bounded_limit(value: Any, default: int = 30) -> int:
+    if isinstance(value, bool) or (value is not None and not isinstance(value, (int, str))):
+        raise AdminConsoleError("LIMIT_INVALID")
     try:
         limit = int(value if value is not None else default)
     except (TypeError, ValueError) as exc:
@@ -229,7 +231,7 @@ def _required_text(payload: dict[str, Any], key: str, code: str, maximum: int = 
 
 def _required_positive_int(payload: dict[str, Any], key: str, code: str) -> int:
     value = payload.get(key)
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise AdminConsoleError(code)
     try:
         converted = int(value)

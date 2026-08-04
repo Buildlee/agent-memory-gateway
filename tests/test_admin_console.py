@@ -10,7 +10,9 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 from agent_memory_gateway.admin_console import (
     AdminConsoleError,
     LocalAdminSession,
+    _bounded_limit,
     _load_or_create_session_secret,
+    _required_positive_int,
     create_admin_console_server,
 )
 
@@ -437,6 +439,24 @@ class AdminConsoleTests(unittest.TestCase):
         request = Request(base_url + path, headers={"Cookie": cookie}, method="GET")
         with urlopen(request, timeout=2) as response:  # noqa: S310
             return json.loads(response.read().decode("utf-8"))
+
+
+class AdminConsoleInputValidationTests(unittest.TestCase):
+    def test_limit_rejects_non_integer_json_values(self):
+        for value in (True, 1.5, [], {}):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(AdminConsoleError, "LIMIT_INVALID"):
+                    _bounded_limit(value)
+
+    def test_revision_and_epoch_reject_non_integer_json_values(self):
+        for value in (True, 1.5, [], {}):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(AdminConsoleError, "EXPECTED_REVISION_REQUIRED"):
+                    _required_positive_int(
+                        {"expected_revision": value},
+                        "expected_revision",
+                        "EXPECTED_REVISION_REQUIRED",
+                    )
 
 
 if __name__ == "__main__":
