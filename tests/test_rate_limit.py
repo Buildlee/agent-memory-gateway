@@ -31,10 +31,21 @@ class RateLimitTests(unittest.TestCase):
         limiter = SlidingWindowRateLimiter(clock=lambda: now[0], max_keys=2)
         self.assertTrue(limiter.allow("client-a", limit=1, window_seconds=10))
         self.assertTrue(limiter.allow("client-b", limit=1, window_seconds=10))
-        self.assertFalse(limiter.allow("client-c", limit=1, window_seconds=10))
-        now[0] = 111.0
         self.assertTrue(limiter.allow("client-c", limit=1, window_seconds=10))
+        self.assertEqual(set(limiter._events), {"client-b", "client-c"})
+        now[0] = 111.0
+        self.assertTrue(limiter.allow("client-d", limit=1, window_seconds=10))
         self.assertEqual(len(limiter._events), 1)
+
+    def test_capacity_evicts_the_earliest_expiring_bucket(self):
+        now = [100.0]
+        limiter = SlidingWindowRateLimiter(clock=lambda: now[0], max_keys=2)
+        self.assertTrue(limiter.allow("long", limit=1, window_seconds=30))
+        now[0] = 101.0
+        self.assertTrue(limiter.allow("short", limit=1, window_seconds=10))
+        self.assertTrue(limiter.allow("new", limit=1, window_seconds=20))
+
+        self.assertEqual(set(limiter._events), {"long", "new"})
 
     def test_concurrent_safety(self):
         now = [1000.0]
