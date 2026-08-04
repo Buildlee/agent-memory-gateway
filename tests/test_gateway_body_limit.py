@@ -60,6 +60,19 @@ class GatewayBodyLimitTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "REQUEST_BODY_INVALID")
 
+    def test_json_response_ignores_a_client_disconnect(self):
+        class BrokenPipeStream:
+            def write(self, _body):
+                raise BrokenPipeError()
+
+        handler = _handler({})
+        handler.send_response = lambda _status: None
+        handler.send_header = lambda _name, _value: None
+        handler.end_headers = lambda: None
+        handler.wfile = BrokenPipeStream()
+
+        handler._json({"ok": True})
+
 
 if __name__ == "__main__":
     unittest.main()

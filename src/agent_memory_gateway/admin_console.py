@@ -1975,15 +1975,18 @@ def _html_page(workspace_id: str, nonce: str, mount_path: str = "") -> bytes:
       const nodes = payload.nodes || [];
       const edges = payload.edges || [];
       const root = document.getElementById("graph-container");
+      const lifecycleNotice = payload.lifecycle_available === false
+        ? '<div class="subtle" style="padding:0.75rem 1rem;color:#9a6700">取代关系暂未载入，当前只显示基础关联。</div>'
+        : "";
       if (!nodes.length) {{
-        root.innerHTML = "<div class='empty'>当前还没有可展示的内存关系数据。</div>";
+        root.innerHTML = lifecycleNotice + "<div class='empty'>当前还没有可展示的内存关系数据。</div>";
         return;
       }}
       const groups = {{memory: "#2f6fed", device: "#b45309", agent: "#7c3aed"}};
       const byId = {{}};
       nodes.forEach(n => {{ n.x = null; n.y = null; byId[n.id] = n; }});
       
-      root.innerHTML = `<div style="padding:1rem;font-size:0.85rem;color:var(--subtle)">
+      root.innerHTML = lifecycleNotice + `<div style="padding:1rem;font-size:0.85rem;color:var(--subtle)">
         节点 ${{nodes.length}} · 连线 ${{edges.length}}
         <span style="margin-left:1rem">${{Object.entries(groups).map(([k,v]) => `<span style="color:${{v}}">■</span> ${{k}}`).join(" &nbsp; ")}}</span>
       </div><canvas id="graph-canvas" style="width:100%;height:550px;display:block"></canvas>`;

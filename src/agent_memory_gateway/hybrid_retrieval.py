@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 import math
 import re
@@ -20,6 +21,10 @@ DEFAULT_CONTEXT_TOKEN_BUDGET = 1200
 MIN_CONTEXT_TOKEN_BUDGET = 64
 MAX_CONTEXT_TOKEN_BUDGET = 12_000
 MAX_MEMORY_RESULT_ITEMS = 50
+# 基础相关度先筛出固定数量的候选，再执行两两比较的去重和 MMR。
+# 单次最多返回 50 条，600 条候选足以保留多样性，同时防止大工作区的
+# 全量候选长期占用内存。
+MAX_RERANK_CANDIDATES = 600
 
 
 @dataclass(frozen=True)
@@ -79,7 +84,7 @@ def normalize_context_token_budget(value: Any | None) -> int:
 
     if value is None:
         return DEFAULT_CONTEXT_TOKEN_BUDGET
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise ValueError("MAX_TOKENS_INVALID")
     try:
         budget = int(value)
@@ -179,6 +184,32 @@ class _ScoredCandidate:
     tokens: int
 
 
+def _candidate_memory_id(candidate: _ScoredCandidate) -> str:
+    return str(candidate.record.get("memory_id") or "")
+
+
+@dataclass(frozen=True)
+class _RerankHeapItem:
+    """让 heap 顶部始终保存基础相关度最低的候选。"""
+
+    candidate: _ScoredCandidate
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, _RerankHeapItem):
+            return NotImplemented
+        current = self.candidate
+        compared = other.candidate
+        if current.base_score != compared.base_score:
+            return current.base_score < compared.base_score
+        return _candidate_memory_id(current) > _candidate_memory_id(compared)
+
+
+def _is_better_candidate(current: _ScoredCandidate, compared: _ScoredCandidate) -> bool:
+    if current.base_score != compared.base_score:
+        return current.base_score > compared.base_score
+    return _candidate_memory_id(current) < _candidate_memory_id(compared)
+
+
 def select_hybrid_memories(
     records: Iterable[Mapping[str, Any]],
     *,
@@ -193,7 +224,8 @@ def select_hybrid_memories(
     normalized_query = normalize_text(query)
     query_features = _feature_counts(normalized_query)
     query_vector = _hashed_vector(query_features)
-    scored: list[_ScoredCandidate] = []
+    scored_heap: list[_RerankHeapItem] = []
+    candidate_count = 0
     for source in records:
         item = dict(source)
         # 检索层是最后一道防线：任何被标记为命令式的内容都不能作为
@@ -212,17 +244,21 @@ def select_hybrid_memories(
         base_score = confidence if not normalized_query else 0.50 * lexical + 0.35 * vector_score + 0.15 * confidence
         item["retrieval_score"] = round(base_score, 6)
         group = f"{item.get('scope') or ''}:{item.get('kind') or ''}"
-        scored.append(
-            _ScoredCandidate(
-                record=item,
-                normalized_content=normalized_content,
-                vector=vector,
-                base_score=base_score,
-                group=group,
-                tokens=estimate_tokens(content),
-            )
+        candidate_count += 1
+        candidate = _ScoredCandidate(
+            record=item,
+            normalized_content=normalized_content,
+            vector=vector,
+            base_score=base_score,
+            group=group,
+            tokens=estimate_tokens(content),
         )
+        if len(scored_heap) < MAX_RERANK_CANDIDATES:
+            heapq.heappush(scored_heap, _RerankHeapItem(candidate))
+        elif _is_better_candidate(candidate, scored_heap[0].candidate):
+            heapq.heapreplace(scored_heap, _RerankHeapItem(candidate))
 
+    scored = [item.candidate for item in scored_heap]
     scored.sort(key=lambda candidate: (-candidate.base_score, str(candidate.record.get("memory_id") or "")))
     unique: list[_ScoredCandidate] = []
     unique_contents: set[str] = set()
@@ -277,7 +313,7 @@ def select_hybrid_memories(
 
     return HybridSelection(
         items=tuple(dict(candidate.record) for candidate in selected),
-        candidate_count=len(scored),
+        candidate_count=candidate_count,
         duplicate_count=duplicate_count,
         budget_skipped_count=budget_skipped_count,
         token_estimate=sum(candidate.tokens for candidate in selected),

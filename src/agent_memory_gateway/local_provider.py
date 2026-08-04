@@ -7,6 +7,7 @@ import importlib.metadata
 import json
 import os
 import re
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Protocol
@@ -20,6 +21,8 @@ AUTO_SHARE_KINDS = frozenset(
 SUPPORTED_FILE_SUFFIXES = frozenset({".md", ".json", ".jsonl"})
 MAX_PROVIDER_CONFIG_BYTES = 65_536
 MAX_LOCAL_MEMORY_BYTES = 20_000
+MAX_LOCAL_SOURCE_FILE_BYTES = 2 * 1024 * 1024
+LOCAL_RECORD_CACHE_SECONDS = 3.0
 _HEADING_KIND_PATTERNS = (
     ("user_preference", re.compile(r"(?:偏好|习惯|preference|preferences)", re.IGNORECASE)),
     ("project_decision", re.compile(r"(?:决定|决策|架构决策|decision|decisions|adr)", re.IGNORECASE)),
@@ -147,6 +150,7 @@ class FileMemoryProvider:
         paths: Iterable[str | Path],
         *,
         scanner: SensitiveContentScanner | None = None,
+        cache_seconds: float = LOCAL_RECORD_CACHE_SECONDS,
     ) -> None:
         self.provider_id = _identifier(provider_id, "LOCAL_PROVIDER_ID_INVALID")
         self.display_name = str(display_name or self.provider_id).strip()[:256]
@@ -155,18 +159,39 @@ class FileMemoryProvider:
             raise LocalProviderError("LOCAL_PROVIDER_PATH_REQUIRED")
         self._paths = configured_paths
         self._scanner = scanner or SensitiveContentScanner()
+        if not 0 < float(cache_seconds) <= 60:
+            raise LocalProviderError("LOCAL_PROVIDER_CACHE_SECONDS_INVALID")
+        self._cache_seconds = float(cache_seconds)
+        self._cached_records: tuple[LocalMemoryRecord, ...] = ()
+        self._cache_expires_at = 0.0
+
+    @staticmethod
+    def _is_readable_source_file(path: Path) -> bool:
+        try:
+            return path.stat().st_size <= MAX_LOCAL_SOURCE_FILE_BYTES
+        except OSError:
+            return False
 
     def _source_files(self) -> tuple[Path, ...]:
         files: set[Path] = set()
         for configured in self._paths:
             if configured.is_file():
-                if configured.suffix.lower() in SUPPORTED_FILE_SUFFIXES and not configured.is_symlink():
+                if (
+                    configured.suffix.lower() in SUPPORTED_FILE_SUFFIXES
+                    and not configured.is_symlink()
+                    and self._is_readable_source_file(configured)
+                ):
                     files.add(configured)
                 continue
             if not configured.is_dir():
                 continue
             for path in configured.rglob("*"):
-                if path.is_symlink() or not path.is_file() or path.suffix.lower() not in SUPPORTED_FILE_SUFFIXES:
+                if (
+                    path.is_symlink()
+                    or not path.is_file()
+                    or path.suffix.lower() not in SUPPORTED_FILE_SUFFIXES
+                    or not self._is_readable_source_file(path)
+                ):
                     continue
                 resolved = path.resolve()
                 try:
@@ -257,6 +282,9 @@ class FileMemoryProvider:
         return records
 
     def _all_records(self) -> tuple[LocalMemoryRecord, ...]:
+        now = time.monotonic()
+        if now < self._cache_expires_at:
+            return self._cached_records
         records: list[LocalMemoryRecord] = []
         for path in self._source_files():
             try:
@@ -266,7 +294,9 @@ class FileMemoryProvider:
                     records.extend(self._json_records(path))
             except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
                 continue
-        return tuple(records)
+        self._cached_records = tuple(records)
+        self._cache_expires_at = time.monotonic() + self._cache_seconds
+        return self._cached_records
 
     def list_records(self, *, cursor: str | None = None, limit: int = 50) -> ProviderPage:
         bounded = _bounded_limit(limit)

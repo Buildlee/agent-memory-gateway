@@ -746,6 +746,7 @@ class PostgresAdminService:
                 (principal.tenant_id, principal.user_id, workspace_id),
             ).fetchall()
             lifecycle_rows = []
+            lifecycle_available = True
             try:
                 lifecycle_rows = connection.execute(
                 """
@@ -759,7 +760,9 @@ class PostgresAdminService:
                 (principal.tenant_id, principal.user_id, workspace_id),
             ).fetchall()
             except Exception:
-                pass
+                # 旧数据库或临时连接故障不应让基础图谱消失，但必须让调用方
+                # 知道取代关系没有加载完成。
+                lifecycle_available = False
         nodes = []
         edges = []
         seen = set()
@@ -795,7 +798,12 @@ class PostgresAdminService:
                 node = next((n for n in nodes if n["id"] == ref), None)
                 if node:
                     node["status"] = "archived"
-        return {"workspace_id": workspace_id, "nodes": nodes, "edges": edges}
+        return {
+            "workspace_id": workspace_id,
+            "nodes": nodes,
+            "edges": edges,
+            "lifecycle_available": lifecycle_available,
+        }
 
     def list_dead_letters(self, payload: dict[str, Any], principal: Principal) -> dict[str, Any]:
         """列出未处理死信的元数据，供运维排障使用。"""
