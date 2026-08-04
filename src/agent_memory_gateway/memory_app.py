@@ -9,8 +9,9 @@ import stat
 import subprocess
 import sys
 import time
+from collections import deque
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 
 class MemoryAppError(RuntimeError):
@@ -18,6 +19,10 @@ class MemoryAppError(RuntimeError):
 
 
 ALLOWED_SIDECAR_KEYS = frozenset({"MEMORY_OUTBOX_KEY", "MEMORY_OUTBOX_KEY_VERSION"})
+MAX_CHILD_RESTARTS = 5
+CHILD_RESTART_WINDOW_SECONDS = 60.0
+CHILD_RESTART_DELAY_SECONDS = 1.0
+MAX_CHILD_RESTART_DELAY_SECONDS = 15.0
 
 
 def load_sidecar_environment(path: Path, *, require_private_permissions: bool = True) -> dict[str, str]:
@@ -115,9 +120,22 @@ def run_supervisor(
     *,
     environment: Mapping[str, str],
     poll_seconds: float = 0.5,
+    process_factory: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    max_child_restarts: int = MAX_CHILD_RESTARTS,
+    restart_window_seconds: float = CHILD_RESTART_WINDOW_SECONDS,
+    restart_delay_seconds: float = CHILD_RESTART_DELAY_SECONDS,
 ) -> int:
-    children: list[subprocess.Popen[bytes]] = []
+    if max_child_restarts < 1 or restart_window_seconds <= 0 or restart_delay_seconds < 0:
+        raise ValueError("MEMORY_APP_RESTART_POLICY_INVALID")
+    children: list[subprocess.Popen[bytes] | None] = []
+    restart_history = [deque() for _ in commands]
+    restart_after = [0.0 for _ in commands]
     stopping = False
+
+    def start_child(index: int) -> subprocess.Popen[bytes]:
+        return process_factory(tuple(commands[index]), env=dict(environment))
 
     def stop_children(_signum: int | None = None, _frame: object | None = None) -> None:
         nonlocal stopping
@@ -125,31 +143,57 @@ def run_supervisor(
             return
         stopping = True
         for child in children:
-            if child.poll() is None:
+            if child is not None and child.poll() is None:
                 child.terminate()
 
     signal.signal(signal.SIGTERM, stop_children)
     signal.signal(signal.SIGINT, stop_children)
     try:
-        for command in commands:
-            children.append(subprocess.Popen(tuple(command), env=dict(environment)))
+        for index in range(len(commands)):
+            children.append(start_child(index))
         while not stopping:
-            for child in children:
+            now = clock()
+            for index, child in enumerate(children):
+                if child is None:
+                    if now >= restart_after[index]:
+                        children[index] = start_child(index)
+                    continue
                 return_code = child.poll()
-                if return_code is not None:
+                if return_code is None:
+                    continue
+                history = restart_history[index]
+                cutoff = now - restart_window_seconds
+                while history and history[0] <= cutoff:
+                    history.popleft()
+                history.append(now)
+                if len(history) > max_child_restarts:
                     stop_children()
                     return return_code if return_code != 0 else 1
-            time.sleep(poll_seconds)
+                delay = min(
+                    restart_delay_seconds * (2 ** (len(history) - 1)),
+                    MAX_CHILD_RESTART_DELAY_SECONDS,
+                )
+                restart_after[index] = now + delay
+                children[index] = None
+                print(
+                    f"memory-app child {index} exited ({return_code}); retrying in {delay:.1f}s",
+                    flush=True,
+                )
+            sleep(poll_seconds)
     finally:
         stop_children()
         deadline = time.monotonic() + 10
         for child in children:
+            if child is None:
+                continue
             if child.poll() is None:
                 try:
                     child.wait(timeout=max(0.1, deadline - time.monotonic()))
                 except subprocess.TimeoutExpired:
                     child.kill()
         for child in children:
+            if child is None:
+                continue
             if child.poll() is None:
                 child.wait()
     return 0
