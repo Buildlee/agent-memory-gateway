@@ -36,6 +36,14 @@ class UpdateCursor(Cursor):
         self.rowcount = rowcount
 
 
+class ReviewInputValidationTests(unittest.TestCase):
+    def test_positive_int_rejects_non_integer_json_values(self):
+        for value in (True, 1.5, [], {}):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ReviewError, "EXPECTED_REVISION_REQUIRED"):
+                    PostgresReviewService._positive_int(value, "EXPECTED_REVISION_REQUIRED")
+
+
 class TombstoneConnection:
     def __init__(self, rowcount=1):
         self.rowcount = rowcount

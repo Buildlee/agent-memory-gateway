@@ -34,7 +34,7 @@ class SlidingWindowRateLimiter:
                 if len(self._events) >= self._max_keys:
                     self._discard_expired(now)
                 if len(self._events) >= self._max_keys:
-                    return False
+                    self._discard_earliest_expiring()
                 events = deque()
                 self._events[key] = events
             while events and events[0] <= cutoff:
@@ -50,3 +50,12 @@ class SlidingWindowRateLimiter:
             if self._expires_at.get(key, now) <= now:
                 self._events.pop(key, None)
                 self._expires_at.pop(key, None)
+
+    def _discard_earliest_expiring(self) -> None:
+        """容量已满时回收最早失效的桶，避免新客户端被全部拒绝。"""
+
+        if not self._events:
+            return
+        key = min(self._events, key=lambda item: (self._expires_at.get(item, 0.0), item))
+        self._events.pop(key, None)
+        self._expires_at.pop(key, None)

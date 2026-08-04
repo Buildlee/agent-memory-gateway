@@ -37,6 +37,11 @@ from .sync_service import PostgresSyncService, SyncProtocolError
 
 MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024
 
+AUTH_RATE_LIMITS = {
+    "/v1/auth/pair": {"client": (5, 600), "global": (50, 600)},
+    "/v1/auth/refresh": {"client": (20, 60), "global": (300, 60)},
+}
+
 ROUTE_CAPABILITIES = {
     "/v1/events": "memory.write_event",
     "/v1/sync/push": "memory.write_event",
@@ -70,6 +75,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
     authenticator: TokenAuthenticator
     identity_service: PostgresIdentityService | None = None
     auth_rate_limiter = SlidingWindowRateLimiter()
+    auth_global_rate_limiter = SlidingWindowRateLimiter(max_keys=4)
     event_ledger: PostgresEventLedger | None = None
     query_service: PostgresQueryService | None = None
     review_service: PostgresReviewService | None = None
@@ -110,13 +116,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 if self.identity_service is None:
                     self._json({"error": "not_found"}, status=404)
                     return
-                limit, window = (5, 600) if path == "/v1/auth/pair" else (20, 60)
-                remote_ip = self._rate_limit_client_ip()
-                if not self.auth_rate_limiter.allow(
-                    f"{remote_ip}:{path}",
-                    limit=limit,
-                    window_seconds=window,
-                ):
+                if not self._allow_auth_request(path):
                     raise AuthError("RATE_LIMITED", status=429)
                 if path == "/v1/auth/pair":
                     self._json(self.identity_service.pair(payload), status=201)
@@ -287,6 +287,25 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return str(ipaddress.ip_address(forwarded))
         except ValueError:
             return fallback
+
+    def _allow_auth_request(self, path: str) -> bool:
+        """先限制认证入口总量，再按经受控代理确认的客户端地址限流。"""
+
+        policy = AUTH_RATE_LIMITS[path]
+        global_limit, global_window = policy["global"]
+        if not self.auth_global_rate_limiter.allow(
+            f"global:{path}",
+            limit=global_limit,
+            window_seconds=global_window,
+        ):
+            return False
+        client_limit, client_window = policy["client"]
+        remote_ip = self._rate_limit_client_ip()
+        return self.auth_rate_limiter.allow(
+            f"{remote_ip}:{path}",
+            limit=client_limit,
+            window_seconds=client_window,
+        )
 
     def _json(self, payload: dict[str, Any], status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
