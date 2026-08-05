@@ -98,7 +98,7 @@ The default layout uses two containers. Choose the split layout only when the ad
 | `deploy/fn/compose.slim.yaml` | **Default**: `memory-app` + Caddy, two containers total |
 | `deploy/fn/compose.yaml` | **Hardened core**: Gateway + Worker + Caddy |
 | `deploy/fn/admin-console.compose.yaml` | **Hardened admin**: standalone admin Sidecar + web console |
-| `deploy/fn/memory-mcp-bridge.compose.yaml` | **Container Bridge**: connects Docker-based Agents to shared memory via shared network namespace (independently deployed) |
+| `deploy/fn/memory-mcp-bridge.compose.yaml` | **Container Bridge template**: runs in the target Agent's Compose project, independently of Gateway releases |
 
 ### Launch the Default Two-Container Service
 
@@ -121,7 +121,7 @@ Switching from split to slim leaves the old services as Compose orphans. The rel
 
 ### Container-Based Agent Access
 
-Docker-based Agents (e.g., NAS Hermes) use the generic Bridge template, sharing the network namespace with the target container. See [Container-Based Agent Integration](container-sidecar.md).
+Docker-based Agents (e.g., NAS Hermes) use the generic Bridge template, sharing the network namespace with the target container. The Bridge belongs to the Agent's Compose project, not the `memory-gateway` Compose project. After an Agent is recreated, run `reconcile-container-sidecar.ps1` in read-only mode and explicitly confirm before replacing only its Bridge. See [Container-Based Agent Integration](container-sidecar.md).
 
 ---
 

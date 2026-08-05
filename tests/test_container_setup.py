@@ -28,9 +28,11 @@ class ContainerSetupTests(unittest.TestCase):
         self.assertIn('gateway_entrypoint="$(docker inspect "$gateway_container"', script)
         self.assertIn('label=com.docker.compose.service=app', script)
         self.assertIn('label=com.docker.compose.service=gateway', script)
-        self.assertIn('gateway_host="${gateway_authority%%:*}"', script)
-        self.assertIn('gateway_url="$gateway_scheme://$gateway_ip$gateway_port_suffix"', script)
+        self.assertIn('[string]$GatewayInternalUrl = "http://app:8787"', script)
+        self.assertIn('gateway_service="$(docker inspect "$gateway_container"', script)
+        self.assertIn('gateway_url="http://$gateway_service:8787"', script)
         self.assertIn('Gateway 与目标 Agent 容器没有共同的 Docker 网络', script)
+        self.assertNotIn('gateway_ip=', script)
         self.assertIn('client_status="$(docker inspect "$client_container"', script)
         self.assertIn('bridge_status=absent', script)
         self.assertIn('目标 Agent 容器当前未运行', script)
@@ -51,6 +53,20 @@ class ContainerSetupTests(unittest.TestCase):
         self.assertIn("mcp_sync_status=ready", script)
         self.assertIn('if [ ! -e "$bridge_env" ] || [ "$resume" = 1 ]; then', script)
         self.assertNotIn("hermes-webui", script)
+
+    def test_reconciler_recreates_only_a_stale_bridge_owned_by_the_client_compose_project(self) -> None:
+        script = (ROOT / "scripts" / "reconcile-container-sidecar.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("ClientContainerName", script)
+        self.assertIn("StateDirectory", script)
+        self.assertIn("status=waiting_for_apply", script)
+        self.assertIn('label=com.docker.compose.service=memory-mcp-bridge', script)
+        self.assertIn('bridge_network_mode="$(docker inspect "$bridge_id"', script)
+        self.assertIn('[ "$bridge_network_mode" = "container:$client_id" ]', script)
+        self.assertIn('gateway_url="http://$gateway_service:8787"', script)
+        self.assertIn("--force-recreate memory-mcp-bridge", script)
+        self.assertNotIn("--remove-orphans", script)
+        self.assertNotIn("docker system prune", script)
 
 
 if __name__ == "__main__":

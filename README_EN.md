@@ -187,7 +187,7 @@ Stable memories can be compiled into crystal pages (`crystal_service.py`), rebui
 - [Operations](docs/en/operations.md) — Admin UI, health checks, dead letters, recovery drills
 - [Development](docs/en/development.md) — Test commands, retrieval specs, contribution conventions
 - [Importing existing memory](docs/en/importing-existing-memory.md) — Migrate existing data into the shared library
-- [Container agent](docs/en/container-sidecar.md) — Docker Sidecar and MCP Bridge
+- [Container agent](docs/en/container-sidecar.md) — Docker Sidecar, MCP Bridge, and post-recreate reconciliation
 
 ## 🔨 Development
 

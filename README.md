@@ -199,7 +199,7 @@ memory-gateway --help
 - [日常运维与恢复](docs/operations.md) — 管理页、运行检查、死信排查、恢复演练
 - [开发与验证](docs/development.md) — 测试命令、检索口径、修改约定
 - [导入已有记忆](docs/importing-existing-memory.md) — 把既有资料迁入共享库
-- [容器 Agent 接入](docs/container-sidecar.md) — 通用 Docker Sidecar 和 MCP Bridge
+- [容器 Agent 接入](docs/container-sidecar.md) — 通用 Docker Sidecar、MCP Bridge 与重建后对账
 
 ## 🔨 开发
 

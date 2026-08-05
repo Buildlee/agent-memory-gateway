@@ -98,7 +98,7 @@ memory-gateway gbrain-migrate --gbrain-dsn $env:MEMORY_GBRAIN_MIGRATOR_DSN --ver
 | `deploy/fn/compose.slim.yaml` | **默认布局**：`memory-app` + Caddy，共两个容器 |
 | `deploy/fn/compose.yaml` | **高隔离核心**：Gateway + Worker + Caddy |
 | `deploy/fn/admin-console.compose.yaml` | **高隔离管理端**：独立管理 Sidecar + Web 管理页 |
-| `deploy/fn/memory-mcp-bridge.compose.yaml` | **容器 Bridge**：让 Docker 内的 Agent 通过同网络命名空间接入共享记忆（独立部署） |
+| `deploy/fn/memory-mcp-bridge.compose.yaml` | **容器 Bridge 模板**：由目标 Agent 的 Compose 项目运行，与 Gateway 独立发布 |
 
 ### 启动默认双容器服务
 
@@ -123,7 +123,7 @@ docker compose --env-file ".env" -f deploy/fn/compose.yaml -f deploy/fn/admin-co
 
 ### 容器内 Agent 接入
 
-Docker 内的 Agent（如 NAS Hermes）使用通用 Bridge 模板，与目标容器共用网络命名空间。详见[容器内 Agent 的统一接入](container-sidecar.md)。
+Docker 内的 Agent（如 NAS Hermes）使用通用 Bridge 模板，与目标容器共用网络命名空间。Bridge 运行在目标 Agent 的 Compose 项目中，不属于 `memory-gateway` Compose；目标容器更新或重建后，先用 `reconcile-container-sidecar.ps1` 只读检查，再确认是否仅重建 Bridge。详见[容器内 Agent 的统一接入](container-sidecar.md)。
 
 ---
 
