@@ -63,6 +63,9 @@ function Invoke-RemoteScript([string]$Script) {
         }
         throw "Bridge 对账命令失败，退出码：$($process.ExitCode)"
     }
+    if ($errorOutput) {
+        Write-Verbose $errorOutput
+    }
 }
 
 Require-Identifier -Name "ClientContainerName" -Value $ClientContainerName
