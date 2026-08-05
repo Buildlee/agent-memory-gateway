@@ -14,7 +14,7 @@ keywords = ["agent", "memory", "mcp", "hermes", "codex", "openclaw"]
 dependencies = ["cryptography>=42,<47"]
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.0.0"]
+mcp = ["mcp>=1.0.0,<2"]
 postgres = ["psycopg[binary,pool]>=3.2,<4"]
 dev = ["pytest>=8.0.0"]
 
