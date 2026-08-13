@@ -82,7 +82,7 @@ class DeviceInstallTests(unittest.TestCase):
         self.assertNotIn("ConvertFrom-Json -AsHashtable", script)
         self.assertIn("setup-shared-memory.ps1", script)
         self.assertIn('"agent_memory_gateway.device_runtime", "onboard"', script)
-        self.assertIn('Join-Path $env:LOCALAPPDATA "memory-gateway\\runtime"', script)
+        self.assertIn('Join-Path $localDataRoot "memory-gateway\\runtime"', script)
         self.assertIn('if ($NoAutostart) { $onboardArguments += "--no-autostart" }', script)
         self.assertIn('if ($Resume) { $onboardArguments += "--resume" }', script)
         self.assertIn('[Environment]::SetEnvironmentVariable("Path"', script)
@@ -232,7 +232,7 @@ class DeviceInstallTests(unittest.TestCase):
         self.assertIn("verified_release_download", result.stdout)
 
     @unittest.skipUnless(shutil.which("pwsh"), "requires PowerShell 7")
-    def test_standalone_bootstrap_plan_defaults_to_main_without_downloading(self) -> None:
+    def test_standalone_bootstrap_plan_defaults_to_stable_release_without_downloading(self) -> None:
         profile = {
             "version": 1,
             "gateway_url": "https://memory-gateway.example.internal",
@@ -264,7 +264,7 @@ class DeviceInstallTests(unittest.TestCase):
             )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("default_main_archive", result.stdout)
+        self.assertIn("stable_release_download", result.stdout)
 
     @unittest.skipUnless(shutil.which("pwsh"), "requires PowerShell 7")
     def test_profile_generator_calculates_the_release_archive_hash(self) -> None:

@@ -32,6 +32,43 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Get-UserHomeDirectory {
+    $candidate = if (-not [string]::IsNullOrWhiteSpace($HOME)) {
+        $HOME
+    } else {
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    }
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        throw "无法确定当前用户目录。"
+    }
+    return [System.IO.Path]::GetFullPath($candidate)
+}
+
+function Get-LocalDataDirectory([string]$UserHome) {
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        return [System.IO.Path]::GetFullPath($env:LOCALAPPDATA)
+    }
+    $knownFolder = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+    if (-not [string]::IsNullOrWhiteSpace($knownFolder)) {
+        return [System.IO.Path]::GetFullPath($knownFolder)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:XDG_DATA_HOME)) {
+        return [System.IO.Path]::GetFullPath($env:XDG_DATA_HOME)
+    }
+    if ($PSVersionTable.PSVersion.Major -ge 6 -and $IsMacOS) {
+        return Join-Path $UserHome "Library/Application Support"
+    }
+    return Join-Path $UserHome ".local/share"
+}
+
+$userHome = Get-UserHomeDirectory
+$localDataRoot = Get-LocalDataDirectory -UserHome $userHome
+$roamingDataRoot = if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+    [System.IO.Path]::GetFullPath($env:APPDATA)
+} else {
+    $localDataRoot
+}
+
 # 默认安装稳定发布；只有明确选择 development 时才跟随 main。
 # 安装配置中的 release（含 SHA-256）始终具有最高优先级。
 $DefaultStableManifestUrl = "https://github.com/Buildlee/agent-memory-gateway/releases/latest/download/release-manifest.json"
@@ -228,7 +265,7 @@ function Get-InstallProfile {
         $candidate = $env:MEMORY_DEVICE_INSTALL_PROFILE
     }
     if ([string]::IsNullOrWhiteSpace($candidate)) {
-        $defaultPath = Join-Path $env:LOCALAPPDATA "memory-gateway\device-install.json"
+        $defaultPath = Join-Path $localDataRoot "memory-gateway\device-install.json"
         if (Test-Path -LiteralPath $defaultPath -PathType Leaf) {
             $candidate = $defaultPath
         }
@@ -273,23 +310,23 @@ function Test-CommandAvailable([string]$Name) {
 
 function Get-DetectedAgentSpecs([string]$ResolvedDeviceId) {
     $detected = @()
-    $codexHome = Join-Path $HOME ".codex"
+    $codexHome = Join-Path $userHome ".codex"
     if ((Test-Path -LiteralPath $codexHome -PathType Container) -or (Test-CommandAvailable -Name "codex")) {
         $detected += "codex-$ResolvedDeviceId|codex|Codex"
     }
     $hermesSignals = @(
-        (Join-Path $env:LOCALAPPDATA "hermes"),
-        (Join-Path $env:LOCALAPPDATA "Hermes Studio"),
-        (Join-Path $env:APPDATA "hermes"),
-        (Join-Path $HOME ".hermes")
+        (Join-Path $localDataRoot "hermes"),
+        (Join-Path $localDataRoot "Hermes Studio"),
+        (Join-Path $roamingDataRoot "hermes"),
+        (Join-Path $userHome ".hermes")
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
     if ((Test-CommandAvailable -Name "hermes") -or @($hermesSignals | Where-Object { Test-Path -LiteralPath $_ }).Count -gt 0) {
         $detected += "hermes-$ResolvedDeviceId|hermes|Hermes"
     }
     $openClawSignals = @(
-        (Join-Path $env:LOCALAPPDATA "openclaw"),
-        (Join-Path $env:APPDATA "openclaw"),
-        (Join-Path $HOME ".openclaw")
+        (Join-Path $localDataRoot "openclaw"),
+        (Join-Path $roamingDataRoot "openclaw"),
+        (Join-Path $userHome ".openclaw")
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
     if ((Test-CommandAvailable -Name "openclaw") -or @($openClawSignals | Where-Object { Test-Path -LiteralPath $_ }).Count -gt 0) {
         $detected += "openclaw-$ResolvedDeviceId|openclaw|OpenClaw"
@@ -347,7 +384,7 @@ function Save-OnboardProfile([System.Collections.IDictionary]$Profile, [string]$
         device_id_prefix = if ($Profile.Contains("device_id_prefix")) { [string]$Profile["device_id_prefix"] } else { "windows" }
         agents = $agents
     }
-    $targetDirectory = Join-Path $env:LOCALAPPDATA "memory-gateway"
+    $targetDirectory = Join-Path $localDataRoot "memory-gateway"
     New-Item -ItemType Directory -Path $targetDirectory -Force | Out-Null
     $target = Join-Path $targetDirectory "device-onboard.json"
     if (Test-Path -LiteralPath $target) {
@@ -477,7 +514,7 @@ function Save-ReleaseArchiveDownload([string]$ArchiveUrl, [string]$PartialPath, 
 }
 
 function Save-VerifiedReleaseArchive([System.Collections.IDictionary]$Release) {
-    $cacheRoot = Join-Path $env:LOCALAPPDATA "memory-gateway\downloads"
+    $cacheRoot = Join-Path $localDataRoot "memory-gateway\downloads"
     New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
     $expectedHash = [string]$Release["sha256"]
     $archivePath = Join-Path $cacheRoot "$expectedHash.zip"
@@ -501,7 +538,7 @@ function Save-VerifiedReleaseArchive([System.Collections.IDictionary]$Release) {
 }
 
 function Save-DefaultMainArchive() {
-    $cacheRoot = Join-Path $env:LOCALAPPDATA "memory-gateway\downloads"
+    $cacheRoot = Join-Path $localDataRoot "memory-gateway\downloads"
     New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
     $downloadId = "main-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmssfff'))-$PID"
     $partialPath = Join-Path $cacheRoot "$downloadId.zip.partial"
@@ -613,7 +650,7 @@ function Resolve-ProjectRoot([System.Collections.IDictionary]$Profile) {
         }
     }
     if ($null -ne $release) {
-        $releaseRoot = Join-Path $env:LOCALAPPDATA "memory-gateway\releases\$($release["release_id"])-$($release["sha256"].Substring(0, 16))"
+        $releaseRoot = Join-Path $localDataRoot "memory-gateway\releases\$($release["release_id"])-$($release["sha256"].Substring(0, 16))"
         if (Test-Path -LiteralPath $releaseRoot) {
             return [pscustomobject]@{ Source = "${source}_cache"; Root = (Resolve-ExtractedProjectRoot -ReleaseDirectory $releaseRoot); ReleaseId = $release["release_id"] }
         }
@@ -629,7 +666,7 @@ function Resolve-ProjectRoot([System.Collections.IDictionary]$Profile) {
     }
 
     $mainArchive = Save-DefaultMainArchive
-    $releaseRoot = Join-Path $env:LOCALAPPDATA "memory-gateway\releases\$($mainArchive.Id)-$($mainArchive.Sha256.Substring(0, 16))"
+    $releaseRoot = Join-Path $localDataRoot "memory-gateway\releases\$($mainArchive.Id)-$($mainArchive.Sha256.Substring(0, 16))"
     if (Test-Path -LiteralPath $releaseRoot) {
         throw "发现同名 main 源码包目录，拒绝覆盖：$releaseRoot"
     }
@@ -648,9 +685,9 @@ function Resolve-ProjectRoot([System.Collections.IDictionary]$Profile) {
     }
 }
 
-$existingRuntimePython = Join-Path $env:LOCALAPPDATA "memory-gateway\runtime\Scripts\python.exe"
-$existingRuntimeConfig = Join-Path $env:LOCALAPPDATA "memory-gateway\runtime.json"
-$legacySidecarKey = Join-Path $env:LOCALAPPDATA "memory-gateway\secrets\pc-sidecar.env"
+$existingRuntimePython = Join-Path $localDataRoot "memory-gateway\runtime\Scripts\python.exe"
+$existingRuntimeConfig = Join-Path $localDataRoot "memory-gateway\runtime.json"
+$legacySidecarKey = Join-Path $localDataRoot "memory-gateway\secrets\pc-sidecar.env"
 $explicitInstallInput = (
     -not [string]::IsNullOrWhiteSpace($ProfilePath) -or
     -not [string]::IsNullOrWhiteSpace($ProfileUrl) -or
@@ -747,7 +784,7 @@ elseif ($projectResolution.Source -like "stable_release_*") {
     Write-Output "已校验稳定发布：$($projectResolution.ReleaseId)"
 }
 Write-Output "正在准备共享记忆端侧：$($resolvedAgents.Count) 个 Agent，自动启动=$(-not $NoAutostart)。"
-$runtimeRoot = Join-Path $env:LOCALAPPDATA "memory-gateway\runtime"
+$runtimeRoot = Join-Path $localDataRoot "memory-gateway\runtime"
 $runtimePython = Join-Path $runtimeRoot "Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) {
     if (Test-Path -LiteralPath $runtimeRoot) {
@@ -783,7 +820,7 @@ if (-not [string]::IsNullOrWhiteSpace($GatewayCaCertificate)) {
 & $runtimePython @onboardArguments
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $runtimeScripts = Split-Path -Parent $runtimePython
-$launcherRoot = Join-Path $env:LOCALAPPDATA "memory-gateway\bin"
+$launcherRoot = Join-Path $localDataRoot "memory-gateway\bin"
 New-Item -ItemType Directory -Path $launcherRoot -Force | Out-Null
 $launcherPython = Join-Path $launcherRoot "memory-device-launcher.py"
 $launcherCommand = Join-Path $launcherRoot "memory-device.cmd"

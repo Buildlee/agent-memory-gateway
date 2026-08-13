@@ -27,7 +27,9 @@ def _validate_mode(path: Path) -> None:
         metadata = path.stat()
     except OSError as exc:
         raise FileCredentialError("REFRESH_CREDENTIAL_UNAVAILABLE") from exc
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
+    if not stat.S_ISREG(metadata.st_mode):
+        raise FileCredentialError("REFRESH_CREDENTIAL_FILE_PERMISSIONS_INVALID")
+    if os.name != "nt" and metadata.st_mode & 0o077:
         raise FileCredentialError("REFRESH_CREDENTIAL_FILE_PERMISSIONS_INVALID")
 
 
@@ -73,7 +75,9 @@ def _write(path: Path, body: bytes, *, replace: bool) -> None:
             dir=path.parent,
             text=False,
         )
-        os.fchmod(descriptor, 0o600)
+        fchmod = getattr(os, "fchmod", None)
+        if callable(fchmod):
+            fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb", closefd=True) as stream:
             descriptor = None
             stream.write(body)
