@@ -72,6 +72,7 @@ class DeviceInstallTests(unittest.TestCase):
         self.assertIn("$DefaultMainArchiveUrl", script)
         self.assertIn("default_main_archive", script)
         self.assertIn("MEMORY_DEVICE_INSTALL_PROFILE", script)
+        self.assertIn('[string]$DeviceName = [Environment]::MachineName', script)
         self.assertIn("memory-gateway\\device-install.json", script)
         self.assertIn("Get-DetectedAgentSpecs", script)
         self.assertIn("没有自动检测到 Agent", script)

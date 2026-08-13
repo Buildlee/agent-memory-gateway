@@ -10,7 +10,7 @@ param(
 
     [string]$DeviceId = "",
 
-    [string]$DeviceName = $env:COMPUTERNAME,
+    [string]$DeviceName = [Environment]::MachineName,
 
     [string[]]$Agent = @(),
 

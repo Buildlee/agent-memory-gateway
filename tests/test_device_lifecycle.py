@@ -400,7 +400,11 @@ class DeviceLifecycleTests(unittest.TestCase):
             old_runtime, new_runtime = activator.call_args.args[2:4]
             self.assertEqual(old_runtime["python_executable"], runtime["python_executable"])
             self.assertEqual(new_runtime["python_executable"], str(new_python))
-            self.assertEqual(new_runtime["previous_python_executable"], runtime["python_executable"])
+            self.assertTrue(
+                Path(new_runtime["previous_python_executable"]).samefile(
+                    Path(runtime["python_executable"])
+                )
+            )
 
     def test_upgrade_health_failure_automatically_reactivates_previous_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -455,7 +459,7 @@ class DeviceLifecycleTests(unittest.TestCase):
             self.assertEqual(preview["status"], "planned")
             self.assertEqual(applied["status"], "rolled_back")
             restored = activator.call_args.args[3]
-            self.assertEqual(restored["python_executable"], str(previous))
+            self.assertTrue(Path(restored["python_executable"]).samefile(previous))
             self.assertEqual(restored["program_release_id"], "v0.1.0")
             self.assertNotIn("previous_python_executable", restored)
 
