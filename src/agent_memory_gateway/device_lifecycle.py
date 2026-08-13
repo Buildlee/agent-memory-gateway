@@ -469,6 +469,35 @@ def diagnose_device(platform_name: str, paths: Any) -> dict[str, Any]:
             repairable=service in {"installed", "running", "stopped"},
         )
     )
+    if healthy:
+        try:
+            encoded = load_sidecar_environment(
+                sidecar_key, require_private_permissions=os.name != "nt"
+            )["MEMORY_OUTBOX_KEY"]
+            proxy = LocalSidecarProxy(
+                f"http://127.0.0.1:{int(runtime['port'])}",
+                daemon_auth_token(encoded),
+                str(runtime["heartbeat_agent"]),
+            )
+            integrity = proxy.local_integrity({})
+            integrity_ok = integrity.get("status") == "ok"
+            detail = (
+                "本机记忆库完整性检查通过"
+                if integrity_ok
+                else "本机记忆库完整性异常："
+                + str(integrity.get("quick_check") or "UNKNOWN")
+            )
+            checks.append(
+                DeviceCheck("local_memory_integrity", "ok" if integrity_ok else "error", detail)
+            )
+        except (OSError, RuntimeError, ValueError):
+            checks.append(
+                DeviceCheck(
+                    "local_memory_integrity",
+                    "error",
+                    "无法通过 Sidecar 检查本机记忆库完整性",
+                )
+            )
     return {
         "status": "ok" if all(item.status == "ok" for item in checks) else "needs_attention",
         "platform": platform_name,

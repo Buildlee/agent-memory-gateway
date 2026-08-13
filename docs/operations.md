@@ -70,8 +70,13 @@ Windows Sidecar 启动脚本优先从当前发布副本的 `src` 目录加载代
 - `memory_admin_dead_letters` — 未处理死信的 ID、错误码、错误类别和创建时间
 - `memory_admin_audit` — 近期操作的时间、操作者、结果码和 trace ID
 - `memory_admin_devices` — 设备、Agent、工作区绑定和权限状态
+- `memory_list_crystal_candidates` — 待处理的结晶重建候选，只含范围、来源引用、原因和修订号
 
 这些工具不返回设备公钥、凭据、`details_json`、事件正文或密文。排查时先用 trace ID 和错误码关联受保护环境的服务日志；不要把日志中的令牌、连接串或用户内容复制到 issue、聊天记录或 Git。
+
+设备端的 `memory-device doctor` 会在 Sidecar 健康时追加 `local_memory_integrity` 检查。它验证 SQLite `quick_check`、必需表、队列状态和少量密文可解密性，不读取或打印正文。失败时先保留现场并备份本机状态目录，不要直接删除数据库或锁文件。
+
+Worker 启动后立即规划一次结晶重建候选，之后默认每 300 秒规划一次，但不会自动重建。可通过 `--crystal-plan-interval-seconds` 在 30 到 86400 秒之间调整周期。管理员先查看候选和来源引用，再调用 `memory_rebuild_crystal`。重建成功后候选标记为 `rebuilt`，来源历史不删除。
 
 ---
 

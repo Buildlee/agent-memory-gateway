@@ -109,7 +109,7 @@ flowchart LR
 | Access | Codex / Hermes / OpenClaw | Request memory via MCP or HTTP |
 | Local | Memory Sidecar | Credentials, encrypted outbox, cache; not exposed to LAN |
 | Service | Memory Gateway | Auth, permissions, event ledger, query and review APIs |
-| Storage | PostgreSQL + GBrain/adapter | Production audit, authorization, and memory; SQLite is local-demo only |
+| Storage | PostgreSQL + GBrain/adapter; encrypted Sidecar SQLite | Central audit, authorization, and shared memory; local outbox, cache, and checkpoints; the Gateway SQLite shared store is demo-only |
 
 The default `slim` profile runs Gateway, Worker, admin Sidecar, and console in one application container while filtering sensitive environment variables per child process. This is an operationally compact profile, not container-level isolation; use `split` when stronger failure-domain and filesystem isolation is required.
 
@@ -141,7 +141,7 @@ memory-gateway --help
 |--------|------|---------------|
 | HTTP Gateway | `gateway.py` | Health checks, event CRUD, sync push/pull, review, admin pages |
 | Auth & Permissions | `auth.py` | O(1) token hash authentication + workspace/capability checks |
-| Encrypted Outbox | `outbox.py` | Encrypt offline writes, sync in order when back online |
+| Encrypted Outbox and checkpoints | `outbox.py` | Sync offline writes in order; store layered task summaries and details encrypted locally |
 | Sync Protocol | `sync_service.py` | Push/pull: per-event receipts, cursor increments, tombstone markers |
 | Rate Limiter | `rate_limit.py` | Sliding-window rate limiter for auth endpoints |
 | DB Pool | `db_pool.py` | PostgreSQL connection pool with busy fallback |
@@ -156,9 +156,9 @@ memory-gateway --help
 | Query Service | `query_service.py` | Authorized memory retrieval |
 | Feedback Service | `feedback_service.py` | Store recall feedback and produce bounded ranking signals |
 | Hybrid Retrieval | `hybrid_retrieval.py` | Keyword + CJK n-gram + dedup + token budget + MMR diversity |
-| Scoring | `scoring.py` | Half-life decay scoring (preference 180d / fact 90d / temporary 3d) |
+| Decay observation | `scoring.py` | Compute hot/warm/cold/dead shadow results without changing production ranking |
 | Vector Index | `gbrain_backend.py`, `gbrain.py` | Vector search backend for long-term memory |
-| Crystal Memory | `crystal_service.py` | Stable memory pages, auditable reconstruction |
+| Crystal Memory | `crystal_service.py` | Plan rebuild candidates in the worker; rebuild explicitly and auditably |
 
 ### Security & Credentials
 
@@ -173,7 +173,7 @@ memory-gateway --help
 
 | Module | File | Responsibility |
 |--------|------|---------------|
-| MCP Sidecar | `sidecar_mcp.py` | Expose `memory_context`/`memory_remember`/`memory_sync_status` tools |
+| MCP Sidecar | `sidecar_mcp.py` | Expose standard context, long-term memory, checkpoint, and resume tools |
 | Local Providers | `local_provider.py` | Read local stores and safely propose selected records |
 | Local Daemon | `sidecar_daemon.py` | Single instance, shared via loopback RPC |
 | Review Service | `review_service.py` | Pending observation and approval workflow |
@@ -189,6 +189,12 @@ Write → sensitive check (security.py) → idempotent dedup (metadata_store.py)
 
 Stable memories can be compiled into crystal pages (`crystal_service.py`), rebuilt explicitly when source facts change.
 
+Long-running tasks do not require access to an Agent's private session files. Any standard MCP client can call `memory_checkpoint` to save conclusions, next steps, blockers, and references in the encrypted local store, then call `memory_resume` later. Resume returns the short skeleton by default and decrypts details only with `include_details=true`. Checkpoints are not uploaded to the Gateway or converted into shared long-term memories automatically.
+
+The daily core tools are `memory_context`, `memory_remember`, `memory_checkpoint`, `memory_resume`, and `memory_sync_status`. Their parameters and behavior are identical across MCP clients.
+
+The worker creates crystal rebuild candidates from confirmed source references. `memory_list_crystal_candidates` returns only scope, references, and revisions; `memory_rebuild_crystal` remains explicit. Production results include `shadow_decay.applied: false` for observation only, so decay does not affect current ranking.
+
 ## 🔒 Security boundaries
 
 - Agent config never stores Gateway refresh tokens, database connection strings, or private keys
@@ -202,11 +208,11 @@ Stable memories can be compiled into crystal pages (`crystal_service.py`), rebui
 
 | Method | Use case | Reference |
 |--------|----------|-----------|
-| Codex MCP | Local Codex sharing project context / preferences | [codex-mcp.json](examples/codex-mcp.json) |
-| Hermes MCP | Multi-agent on the same device | [hermes-mcp.json](examples/hermes-mcp.json) |
-| OpenClaw MCP | Production integration | [openclaw-mcp.json](examples/openclaw-mcp.json) |
+| Standard MCP client | All core features; no Agent-specific plugin or hook required | [examples README](examples/en/README.md) |
+| Codex MCP template | Connect Codex to the same MCP service | [codex-mcp.json](examples/codex-mcp.json) |
+| Hermes MCP template | Connect Hermes to the same MCP service | [hermes-mcp.json](examples/hermes-mcp.json) |
+| OpenClaw MCP template | Connect OpenClaw to the same MCP service | [openclaw-mcp.json](examples/openclaw-mcp.json) |
 | OpenClaw HTTP | Local prototyping or custom workflow | [openclaw-http.md](examples/openclaw-http.md) |
-| Standard MCP client | Any MCP-compatible agent | [examples README](examples/en/README.md) |
 | Container agent | Docker service + Streamable HTTP MCP | [container sidecar](docs/en/container-sidecar.md) |
 
 ## 📖 Documentation

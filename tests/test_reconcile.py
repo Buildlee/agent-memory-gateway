@@ -6,10 +6,34 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from agent_memory_gateway.crypto import EventCipher
-from agent_memory_gateway.reconcile import PendingEventWorker, ReconcileResult, reconcile_cycle
+from agent_memory_gateway.reconcile import (
+    CrystalPlanSchedule,
+    PendingEventWorker,
+    ReconcileResult,
+    plan_crystal_candidates,
+    reconcile_cycle,
+)
 
 
 class ReconcileResultTests(unittest.TestCase):
+    def test_crystal_plan_schedule_runs_immediately_then_waits_for_interval(self):
+        schedule = CrystalPlanSchedule(interval_seconds=300.0)
+
+        self.assertTrue(schedule.consume_if_due(1000.0))
+        self.assertFalse(schedule.consume_if_due(1299.9))
+        self.assertTrue(schedule.consume_if_due(1300.0))
+
+    def test_crystal_candidate_failure_does_not_escape_into_event_worker(self):
+        class Planner:
+            def plan(self, *, limit):
+                raise RuntimeError(f"database failed at limit {limit}")
+
+        result = plan_crystal_candidates(Planner(), limit=10)
+
+        self.assertEqual(result["status"], "crystal_candidate_planning_failed")
+        self.assertEqual(result["error"], "PLANNING_FAILED")
+        self.assertNotIn("database", repr(result))
+
     def test_result_omits_unavailable_fields(self):
         self.assertEqual(ReconcileResult(status="idle").as_dict(), {"status": "idle"})
 

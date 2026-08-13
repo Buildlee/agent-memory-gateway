@@ -22,6 +22,7 @@ class QueryServiceResultTests(unittest.TestCase):
         self.assertEqual(result["status"], "confirmed")
         self.assertEqual(result["content_role"], "reference_data")
         self.assertFalse(result["instruction_like"])
+        self.assertFalse(result["shadow_decay"]["applied"])
 
     def test_feedback_adjustment_is_bounded_before_ranking(self):
         fact = GBrainFact("gbrain:fact:42", 42, "memory-gateway:personal", "已确认记忆", "fact", 0.8)

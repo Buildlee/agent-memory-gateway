@@ -248,6 +248,85 @@ class OutboxEncryptionTests(unittest.TestCase):
             finally:
                 outbox.close()
 
+    def test_checkpoint_is_layered_encrypted_and_resumes_on_demand(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outbox = Outbox(Path(directory) / "outbox.db", cipher())
+            try:
+                saved = outbox.save_checkpoint(
+                    {
+                        "checkpoint_id": "task-42",
+                        "workspace_id": "workspace-a",
+                        "session_id": "session-a",
+                        "status": "blocked",
+                        "summary": "安装流程已完成到服务验证。",
+                        "next_steps": ["恢复网络后运行全量测试"],
+                        "blockers": ["测试服务暂不可达"],
+                        "decisions": ["只通过标准 MCP 接入"],
+                        "references": ["src/agent_memory_gateway/sidecar_mcp.py"],
+                        "metadata": {"phase": 1},
+                    }
+                )
+                self.assertEqual(saved["status"], "saved")
+                row = outbox.conn.execute(
+                    "SELECT summary_ciphertext, details_ciphertext FROM local_checkpoints_v1"
+                ).fetchone()
+                for ciphertext in row:
+                    self.assertNotIn("安装流程".encode("utf-8"), bytes(ciphertext))
+                    self.assertNotIn("只通过标准 MCP".encode("utf-8"), bytes(ciphertext))
+
+                skeleton = outbox.resume_checkpoint(workspace_id="workspace-a")
+                self.assertEqual(skeleton["checkpoint_id"], "task-42")
+                self.assertEqual(skeleton["summary"]["summary"], "安装流程已完成到服务验证。")
+                self.assertNotIn("details", skeleton)
+
+                detailed = outbox.resume_checkpoint(
+                    workspace_id="workspace-a", checkpoint_id="task-42", include_details=True
+                )
+                self.assertEqual(detailed["details"]["decisions"], ["只通过标准 MCP 接入"])
+                self.assertEqual(detailed["details"]["metadata"], {"phase": 1})
+            finally:
+                outbox.close()
+
+    def test_checkpoint_ids_are_isolated_by_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outbox = Outbox(Path(directory) / "outbox.db", cipher())
+            try:
+                for workspace, summary in (("workspace-a", "A 状态"), ("workspace-b", "B 状态")):
+                    outbox.save_checkpoint(
+                        {
+                            "checkpoint_id": "same-task",
+                            "workspace_id": workspace,
+                            "summary": summary,
+                        }
+                    )
+                self.assertEqual(
+                    outbox.resume_checkpoint(workspace_id="workspace-a")["summary"]["summary"],
+                    "A 状态",
+                )
+                self.assertEqual(
+                    outbox.resume_checkpoint(workspace_id="workspace-b")["summary"]["summary"],
+                    "B 状态",
+                )
+            finally:
+                outbox.close()
+
+    def test_integrity_report_checks_required_tables_and_ciphertext(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outbox = Outbox(Path(directory) / "outbox.db", cipher())
+            try:
+                event = outbox.prepare_event(
+                    {"workspace_id": "workspace-a", "content": "用于完整性抽样的事件"}
+                )
+                outbox.enqueue(event)
+                report = outbox.integrity_report()
+                self.assertEqual(report["status"], "ok")
+                self.assertEqual(report["quick_check"], "ok")
+                self.assertEqual(report["missing_tables"], [])
+                self.assertEqual(report["encrypted_samples_checked"], 1)
+                self.assertEqual(report["checkpoint_samples_checked"], 0)
+            finally:
+                outbox.close()
+
     def test_pull_page_updates_encrypted_cache_and_cursor_atomically(self):
         with tempfile.TemporaryDirectory() as directory:
             outbox = Outbox(Path(directory) / "outbox.db", cipher())
