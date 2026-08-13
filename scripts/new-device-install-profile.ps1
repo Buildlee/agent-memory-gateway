@@ -98,12 +98,13 @@ if (-not [string]::IsNullOrWhiteSpace($ReleaseArchiveUrl)) {
 $displayNames = @{
     codex = "Codex"
     hermes = "Hermes"
+    openclaw = "OpenClaw"
     other = "Other Agent"
 }
 $agents = @()
 foreach ($type in $AgentType) {
-    if ($type -notin @("codex", "hermes", "other")) {
-        throw "AgentType 只能是 codex、hermes 或 other。"
+    if ($type -notin @("codex", "hermes", "openclaw", "other")) {
+        throw "AgentType 只能是 codex、hermes、openclaw 或 other。"
     }
     $agents += [ordered]@{
         type = $type

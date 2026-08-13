@@ -38,12 +38,12 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assertIn('McpExecutable -eq "memory-sidecar-mcp"', mcp_script)
         self.assertIn("PythonExecutable", mcp_script)
 
-    def test_sidecar_autostart_uses_a_stable_task_host(self) -> None:
+    def test_sidecar_autostart_discovers_powershell_7_without_hardcoding_install_channel(self) -> None:
         install_script = (ROOT / "scripts" / "install-sidecar-autostart.ps1").read_text(encoding="utf-8")
 
-        self.assertIn('Microsoft\\WindowsApps\\pwsh.exe', install_script)
+        self.assertIn('Get-Command -Name "pwsh"', install_script)
+        self.assertNotIn('Microsoft\\WindowsApps\\pwsh.exe', install_script)
         self.assertIn('"-File", (Quote-TaskArgument $startScript)', install_script)
-        self.assertNotIn('$pwsh = (Get-Command pwsh', install_script)
 
     def test_sidecar_autostart_sets_an_explicit_heartbeat_agent(self) -> None:
         start_script = (ROOT / "scripts" / "start-sidecar.ps1").read_text(encoding="utf-8")
@@ -83,10 +83,17 @@ class ReleaseSafetyTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")
         self.assertIn("python -m unittest discover -s tests", workflow)
         self.assertIn("python -m compileall -q src tests", workflow)
+        self.assertIn("sh -n scripts/memory-device-install.sh", workflow)
         self.assertIn("公开文件是否包含敏感信息", workflow)
         self.assertIn(".\\scripts\\check-public-sensitive.ps1", workflow)
         self.assertIn("git diff-tree --check -r HEAD", workflow)
         self.assertNotIn("HEAD^ HEAD", workflow)
+        self.assertIn("ubuntu-latest", workflow)
+        self.assertIn("macos-latest", workflow)
+        self.assertIn("cross-platform:", workflow)
+        self.assertIn('python-version: ["3.10", "3.11", "3.12", "3.13"]', workflow)
+        self.assertIn("python scripts/build-wheel.py --outdir dist", workflow)
+        self.assertIn("memory-device --help", workflow)
 
         scanner = (ROOT / "scripts" / "check-public-sensitive.ps1").read_text(encoding="utf-8")
         self.assertIn("git ls-files --cached --others --exclude-standard", scanner)
@@ -95,6 +102,38 @@ class ReleaseSafetyTests(unittest.TestCase):
 
         hook = (ROOT / ".githooks" / "pre-push").read_text(encoding="utf-8")
         self.assertIn("check-public-sensitive.ps1", hook)
+
+    def test_wheel_checker_rejects_temporary_modules_and_local_paths(self) -> None:
+        checker = (ROOT / "scripts" / "check-wheel.py").read_text(encoding="utf-8")
+
+        self.assertIn("_tmp", checker)
+        self.assertIn("C:/Users/", checker)
+        self.assertIn("memory-device = agent_memory_gateway.device_runtime:main", checker)
+
+        builder = (ROOT / "scripts" / "build-wheel.py").read_text(encoding="utf-8")
+        self.assertIn("clean_packaging_cache", builder)
+        self.assertIn('"check-wheel.py"', builder)
+        self.assertIn('startswith(("lib", "bdist.", "temp."))', builder)
+        self.assertIn("cwd=outdir", builder)
+        self.assertIn('"--no-build-isolation"', builder)
+        self.assertNotIn("rmtree(ROOT", builder)
+
+    def test_release_workflow_builds_immutable_assets_and_checksums(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        builder = (ROOT / "scripts" / "build-release.py").read_text(encoding="utf-8")
+
+        self.assertIn('tags:', workflow)
+        self.assertIn('git merge-base --is-ancestor "$GITHUB_SHA" origin/main', workflow)
+        self.assertIn("python scripts/build-release.py", workflow)
+        self.assertIn("sha256sum --check SHA256SUMS", workflow)
+        self.assertIn('gh release create "$GITHUB_REF_NAME"', workflow)
+        self.assertIn('release_flags+=(--prerelease)', workflow)
+        self.assertIn("release-manifest.json", builder)
+        self.assertIn("git", builder)
+        self.assertIn("ls-files", builder)
+        self.assertIn("refuse_existing", builder)
+        self.assertIn("必须预先包含且仅包含一个已校验", builder)
+        self.assertIn("archive_url", builder)
 
     def test_security_fixture_is_explicitly_nonworking_test_data(self) -> None:
         fixture = (ROOT / "tests" / "fixtures" / "security_cases.json").read_text(encoding="utf-8")

@@ -2,7 +2,7 @@
   "version": 1,
   "gateway_url": "https://memory-gateway.example.internal",
   "default_workspace": "shared-workspace",
-  "device_id_prefix": "windows",
+  "device_id_prefix": "device",
   "agents": [
     {
       "type": "codex",
@@ -13,6 +13,11 @@
       "type": "hermes",
       "display_name": "Hermes",
       "installation_id_template": "hermes-{device_id}"
+    },
+    {
+      "type": "openclaw",
+      "display_name": "OpenClaw",
+      "installation_id_template": "openclaw-{device_id}"
     }
   ]
 }

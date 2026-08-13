@@ -111,6 +111,8 @@ docker compose --env-file "<发布环境文件>" --env-file "<管理环境文件
 
 `memory-app` 会独立重试意外退出的 Gateway、Worker、管理 Sidecar 或管理页进程。初始等待 1 秒，并在 60 秒窗口内最多重试 5 次；连续失败超过阈值时，应用容器退出，由 Compose 的重启策略接管。这样数据库短暂重启不会同时中断管理页和端侧同步；持续配置错误仍会明确暴露为容器故障。
 
+一体化进程会给四个子进程分别过滤环境变量，管理页不会继承数据库 DSN、签名密钥或刷新凭据。但这些进程仍共享容器和挂载卷，因此 `slim` 是运维精简布局，不是强安全隔离。需要容器级权限、卷和故障域隔离时使用下方 `split` 布局。
+
 ### 使用高隔离布局
 
 管理控制台依赖核心服务已运行。按[中枢管理页](central-admin.md)配置后，在中枢环境上使用双 Compose 文件启动：
@@ -133,28 +135,40 @@ Docker 内的 Agent（如 NAS Hermes）使用通用 Bridge 模板，与目标容
 
 ### 推荐：一条命令安装
 
+Windows 一键入口可由系统 PowerShell 启动，使用 Credential Manager 和当前用户计划任务。Linux 与 macOS 使用 Python 3.10+、systemd 用户服务或 LaunchAgent；刷新凭据、设备私钥和 Sidecar key 都写入仅当前用户可读的位置。
+
 管理员先用 `new-device-install-profile.ps1` 生成只含 Gateway、工作区、设备 ID 前缀和 Agent 模板的 JSON 配置。该工具拒绝写入配对码、刷新凭据、私钥、令牌、密码或数据库连接串。将配置通过受控文件共享或内部 HTTPS 地址交付后，客户端运行：
 
 ```powershell
-.\scripts\memory-device-install.ps1 -ProfileUrl "https://memory-gateway.example.internal/device-install.json"
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Buildlee/agent-memory-gateway/main/scripts/memory-device-install.ps1)))
 ```
 
-安装器自动生成稳定设备 ID，默认创建独立运行环境、计划任务和 MCP JSON；它只提示一次隐藏的配对码。把同一配置放到 `%LOCALAPPDATA%\memory-gateway\device-install.json` 后，客户端不再需要参数，直接运行 `.\scripts\memory-device-install.ps1` 即可。配置中的 Agent 模板可以覆盖 Codex、Hermes 和 `other` 类型；未使用配置时，安装器只自动识别已安装的 Codex 或 Hermes，其他 Agent 通过通用 `-Agent '实例ID|类型|显示名'` 接入。
+安装器自动生成稳定设备 ID，创建独立运行环境、后台服务和 MCP JSON；它识别 Codex、Hermes、OpenClaw，并只提示一次隐藏的配对码。管理员也可以继续把固定配置放到 `%LOCALAPPDATA%\memory-gateway\device-install.json`，或通过 `-ProfileUrl` 交付。
+
+Linux 或 macOS 在已安装 `agent-memory-gateway` 后使用同一份配置：
+
+```bash
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/Buildlee/agent-memory-gateway/main/scripts/memory-device-install.sh | sh
+```
+
+Linux/macOS 生产安装可预先设置 `MEMORY_DEVICE_ARCHIVE_URL` 与 `MEMORY_DEVICE_ARCHIVE_SHA256`，固定源码包并验证摘要；未设置时使用最新稳定 Release 清单。开发测试跟随 `main` 必须显式设置 `MEMORY_DEVICE_CHANNEL=development`。
+
+三种平台启动后都做 Sidecar 健康检查和首轮 Gateway 同步。中断后使用 `memory-device onboard --resume`；已有内容与当前参数冲突时停止。日常使用 `memory-device status`、`doctor`、`repair` 和 `uninstall`。修复和卸载默认只预览，卸载默认保留凭据与本地记忆。
 
 为避免“配对成功但首次同步被拒绝”，管理员生成每枚一次性配对码时应预先指定工作区和最小能力。授权内容只保存在 Gateway 的配对记录中，并在配对事务内绑定给本次新增的 Agent；客户端和安装配置都不能扩大权限：
 
 ```powershell
 memory-gateway pairing-code `
-  --tenant-id personal --user-id chlee --device-type windows --agent-types codex,hermes `
+  --tenant-id personal --user-id user-a --device-type windows --agent-types codex,hermes,openclaw `
   --workspace-id agent-memory-gateway `
   --capabilities memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event
 ```
 
 没有附带工作区授权的旧配对码继续兼容，但需在配对完成后按既有流程使用 `bind-workspace`。配对码只通过受控渠道交付给对应设备，不要写入安装配置、脚本或终端历史。
 
-全新电脑可以只保留 `memory-device-install.ps1`。没有 `release` 时，安装器默认下载 GitHub 当前 `main` 源码包，再在 `%LOCALAPPDATA%\memory-gateway\releases` 中展开并执行受控向导；下载受体积限制，实际 SHA-256 会输出到控制台。需要稳定、可复核的生产安装时，配置应包含 `release.release_id`、`release.archive_url` 和 `release.sha256`。此固定发布包优先于 `main`，安装器只接受无账号、查询参数或片段的 HTTPS 地址，并在 SHA-256 一致后才解压。缓存、未完成下载或不完整发布目录一律不覆盖；处理失败时保留现场供核对。
+全新电脑可以只保留 `memory-device-install.ps1`。没有配置内 `release` 时，安装器读取 GitHub 最新稳定 Release 清单，再在 `%LOCALAPPDATA%\memory-gateway\releases` 中展开 SHA-256 已校验的源码包。配置中的 `release.release_id`、`release.archive_url` 和 `release.sha256` 优先于公共清单。安装器只接受受控 HTTPS 地址，并限制清单、下载和解压体积；缓存、未完成下载或不完整发布目录一律不覆盖，处理失败时保留现场供核对。
 
-管理端使用 `new-device-install-profile.ps1 -ReleaseArchiveUrl <HTTPS 地址> -ReleaseArchivePath <本地 ZIP>` 生成配置时，`ReleaseArchivePath` 的实际 SHA-256 会自动写入配置，避免人工复制摘要。发布包必须指向不可变版本。默认 `main` 适合日常快速接入；生产环境不要依赖可变分支，应配置固定发布包。
+管理端使用 `new-device-install-profile.ps1 -ReleaseArchiveUrl <HTTPS 地址> -ReleaseArchivePath <本地 ZIP>` 生成配置时，`ReleaseArchivePath` 的实际 SHA-256 会自动写入配置，避免人工复制摘要。发布包必须指向不可变版本。公共稳定清单适合普通安装；生产环境也可按组织要求配置内部固定发布包，不应依赖可变分支。
 
 ### 高级：完整向导参数
 
@@ -168,7 +182,7 @@ memory-gateway pairing-code `
   -InstallAutostart
 ```
 
-管理员先提供一次性配对码。向导在隐藏输入中读取它，配对成功后把刷新凭据存入 Windows Credential Manager。带 `-InstallAutostart` 时，计划任务启动后会由第一条 Agent 身份完成一次 Gateway 同步；只有同步正常才返回 `ready`。生成的 MCP JSON 文件位于 `%LOCALAPPDATA%\memory-gateway\mcp`；导入对应客户端后重启 Agent。需要自定义目录、手动运行 Sidecar 或接入非 Windows 环境时，仍可用 `start-sidecar.ps1`、`install-sidecar-autostart.ps1` 和[示例说明](../examples/README.md)。
+管理员先提供一次性配对码。Windows 向导在隐藏输入中读取它，配对成功后把刷新凭据存入 Windows Credential Manager。带 `-InstallAutostart` 时，计划任务启动后会由第一条 Agent 身份完成一次 Gateway 同步；只有同步正常才返回 `ready`。生成的 MCP JSON 文件位于 `%LOCALAPPDATA%\memory-gateway\mcp`；导入对应客户端后重启 Agent。Linux/macOS 使用前述 `memory-device install`；手动配置细节见[示例说明](../examples/README.md)。
 
 Sidecar 只监听本机回环地址。局域网内直连内部 HTTPS 地址；外网通过 VPN、零信任网络或受控隧道回到同一网络边界。无论什么网络路径，都不要关 TLS 证书校验。
 

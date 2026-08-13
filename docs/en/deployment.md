@@ -109,6 +109,8 @@ docker compose --env-file "<release env file>" --env-file "<admin env file>" -f 
 
 Always run `config` first to verify that secrets, database ports, and volume mappings are not exposed to the public network. Gateway and Worker use the same image version. Only the proxy should expose an HTTPS entry point; the database should not be mapped to a public host port.
 
+The integrated application filters environment variables separately for Gateway, Worker, admin Sidecar, and console, so the console does not inherit database DSNs, signing keys, or refresh credentials. The processes still share a container and mounted volumes, so `slim` is an operationally compact layout rather than strong isolation. Use `split` for container-level permissions, volumes, and failure domains.
+
 ### Use the Hardened Split Layout
 
 The admin console depends on core services already running. After following the [central admin setup](central-admin.md), launch with dual Compose files:
@@ -131,28 +133,40 @@ Start **exactly one** Sidecar per device. We recommend using the setup wizard fo
 
 ### Recommended: one-command installation
 
+The Windows one-command entry can start from the built-in PowerShell and uses Credential Manager plus a per-user scheduled task. Linux and macOS require Python 3.10+ and use a systemd user service or LaunchAgent. Credentials and keys stay in owner-only locations.
+
 An administrator first creates a JSON profile with `new-device-install-profile.ps1`. The profile contains only the Gateway address, workspace, device-ID prefix, and Agent templates; it rejects pairing codes, refresh credentials, private keys, tokens, passwords, and database connection strings. Deliver it through a controlled file share or internal HTTPS endpoint, then run:
 
 ```powershell
-.\scripts\memory-device-install.ps1 -ProfileUrl "https://memory-gateway.example.internal/device-install.json"
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Buildlee/agent-memory-gateway/main/scripts/memory-device-install.ps1)))
 ```
 
-The installer derives a stable device ID, creates the isolated runtime, scheduled task, and MCP JSON, and prompts once for a hidden pairing code. If the same profile is pre-positioned at `%LOCALAPPDATA%\memory-gateway\device-install.json`, the client can simply run `.\scripts\memory-device-install.ps1`. Profile templates support Codex, Hermes, and `other`; without a profile, only locally detected Codex or Hermes clients are selected automatically, while other Agents use the generic `-Agent 'installation-id|type|display-name'` parameter.
+The installer derives a stable device ID, creates the isolated runtime, background service, and MCP JSON, detects Codex, Hermes, and OpenClaw, and prompts once for a hidden pairing code. A fixed profile can still be pre-positioned at `%LOCALAPPDATA%\memory-gateway\device-install.json` or delivered with `-ProfileUrl`.
+
+On Linux or macOS, install the package and use the same profile:
+
+```bash
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/Buildlee/agent-memory-gateway/main/scripts/memory-device-install.sh | sh
+```
+
+For pinned Linux/macOS production installs, set `MEMORY_DEVICE_ARCHIVE_URL` and `MEMORY_DEVICE_ARCHIVE_SHA256` so the source archive is immutable and verified. When unset, the latest stable Release manifest is used. Following `main` requires the explicit `MEMORY_DEVICE_CHANNEL=development` setting.
+
+Every platform verifies the local Sidecar and performs an initial Gateway sync. Resume an interrupted flow with `memory-device onboard --resume`; conflicting state stops the install. Use `memory-device status`, `doctor`, `repair`, and `uninstall` for maintenance. Repair and uninstall preview by default, and uninstall preserves credentials and local memory unless explicitly told to purge them.
 
 To avoid a successful pair followed by a rejected first sync, create each one-time code with the intended workspace and the smallest required capabilities. Gateway stores that grant with the pairing record and applies it atomically to the newly registered Agents; neither the client nor the installation profile can expand it:
 
 ```powershell
 memory-gateway pairing-code `
-  --tenant-id personal --user-id chlee --device-type windows --agent-types codex,hermes `
+  --tenant-id personal --user-id user-a --device-type windows --agent-types codex,hermes,openclaw `
   --workspace-id agent-memory-gateway `
   --capabilities memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event
 ```
 
 Older pairing codes without a workspace grant remain supported, but require the existing `bind-workspace` step after pairing. Deliver the code only to its intended device; never put it in an installation profile, script, or terminal history.
 
-A brand-new computer may keep only `memory-device-install.ps1`. Without `release`, the installer downloads the current GitHub `main` source archive, then extracts it below `%LOCALAPPDATA%\memory-gateway\releases` before invoking the controlled setup wizard. The download is size-limited and its SHA-256 is printed locally. For reproducible, auditable production installs, include `release.release_id`, `release.archive_url`, and `release.sha256`; this verified release always takes precedence over `main`. Archive URLs must be HTTPS without credentials, query strings, or fragments. Existing caches, partial downloads, and incomplete release directories are never overwritten.
+A brand-new computer may keep only `memory-device-install.ps1`. Without a profile-level `release`, the installer reads the latest stable GitHub Release manifest and extracts the SHA-256-verified source archive below `%LOCALAPPDATA%\memory-gateway\releases`. A profile containing `release.release_id`, `release.archive_url`, and `release.sha256` takes precedence over the public manifest. Manifest, download, and extraction sizes are bounded; existing caches, partial downloads, and incomplete release directories are never overwritten.
 
-On the administration machine, `new-device-install-profile.ps1 -ReleaseArchiveUrl <HTTPS URL> -ReleaseArchivePath <local ZIP>` computes the ZIP's SHA-256 and writes it into the profile. The archive URL must identify an immutable release. The default `main` path is useful for routine onboarding; production environments should use a verified release instead of a mutable branch.
+On the administration machine, `new-device-install-profile.ps1 -ReleaseArchiveUrl <HTTPS URL> -ReleaseArchivePath <local ZIP>` computes the ZIP's SHA-256 and writes it into the profile. The archive URL must identify an immutable release. Routine installs use the public stable manifest; production environments may instead require an internally controlled pinned release and should never depend on a mutable branch.
 
 ### Advanced: full wizard parameters
 
@@ -166,7 +180,7 @@ On the administration machine, `new-device-install-profile.ps1 -ReleaseArchiveUr
   -InstallAutostart
 ```
 
-The administrator provides a one-time pairing code in advance. The wizard reads it via hidden input, and after successful pairing stores the refresh credential in Windows Credential Manager. With `-InstallAutostart`, it performs one Gateway sync as the first Agent after the scheduled task starts and returns `ready` only when that sync succeeds. The generated MCP JSON files are placed in `%LOCALAPPDATA%\memory-gateway\mcp`; import them into the corresponding client and restart the Agent. If you need custom directories, manual Sidecar startup, or non-Windows environments, you can still use `start-sidecar.ps1`, `install-sidecar-autostart.ps1`, and the [example documentation](../../examples/README.md).
+The administrator provides a one-time pairing code in advance. The Windows wizard reads it via hidden input and stores the refresh credential in Windows Credential Manager. With `-InstallAutostart`, it performs one Gateway sync as the first Agent after the scheduled task starts and returns `ready` only when that sync succeeds. Generated MCP JSON files are placed in `%LOCALAPPDATA%\memory-gateway\mcp`; import them and restart the Agent. Linux and macOS use `memory-device install` as described above; see the [example documentation](../../examples/README.md) for manual configuration details.
 
 The Sidecar listens only on the local loopback address. Connect to the internal HTTPS address directly within the LAN; from outside the LAN, reach it through a VPN, zero-trust network, or controlled tunnel back to the same network boundary. Regardless of the network path, **never disable TLS certificate verification**.
 

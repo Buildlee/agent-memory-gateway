@@ -37,7 +37,7 @@ class MetadataSchemaContractTests(unittest.TestCase):
             metadata_migrations, "repository_root", return_value=Path(directory)
         ):
             self.assertEqual(schema_directory(), bundled)
-            self.assertEqual(len(expected_checksums()), 10)
+            self.assertEqual(len(expected_checksums()), 12)
 
     def test_schema_declares_every_required_metadata_table(self):
         sql = "\n".join(read_schema(spec.path) for spec in migration_specs())
@@ -153,6 +153,23 @@ class MetadataSchemaContractTests(unittest.TestCase):
         self.assertIn("cardinality(workspace_capabilities) > 0", sql)
         normalized = sql.upper()
         for statement in ("DROP ", "DELETE ", "TRUNCATE "):
+            self.assertNotIn(statement, normalized)
+
+    def test_cross_platform_device_migration_only_replaces_type_constraints(self):
+        sql = read_schema(migration_specs()[10].path)
+        self.assertIn("'windows', 'linux', 'macos', 'nas', 'other'", sql)
+        self.assertIn("DROP CONSTRAINT IF EXISTS devices_device_type_check", sql)
+        self.assertIn("DROP CONSTRAINT IF EXISTS pairing_codes_allowed_device_type_check", sql)
+        normalized = sql.upper()
+        for statement in ("DROP TABLE", "DELETE ", "TRUNCATE "):
+            self.assertNotIn(statement, normalized)
+
+    def test_openclaw_agent_migration_only_replaces_the_type_constraint(self):
+        sql = read_schema(migration_specs()[11].path)
+        self.assertIn("'codex', 'hermes', 'openclaw', 'other'", sql)
+        self.assertIn("DROP CONSTRAINT IF EXISTS agent_installations_agent_type_check", sql)
+        normalized = sql.upper()
+        for statement in ("DROP TABLE", "DELETE ", "TRUNCATE "):
             self.assertNotIn(statement, normalized)
 
     def test_migration_registry_uses_packaged_schema_files(self):

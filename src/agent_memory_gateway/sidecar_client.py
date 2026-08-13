@@ -222,6 +222,12 @@ class SidecarClient:
     def forget(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/v1/memories/forget", payload)
 
+    def event_receipts(self, payload: dict[str, Any]) -> dict[str, Any]:
+        event_ids = payload.get("event_ids")
+        if not isinstance(event_ids, list) or not all(isinstance(value, str) for value in event_ids):
+            raise ValueError("EVENT_IDS_INVALID")
+        return {"receipts": self.outbox.event_receipts(event_ids)}
+
     def list_reviews(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/v1/reviews/list", payload)
 

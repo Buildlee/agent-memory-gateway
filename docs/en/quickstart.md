@@ -60,39 +60,55 @@ The local demo helps you understand how things work. Device pairing, short-lived
 
 ## Connect to a deployed shared service
 
+Windows can launch the web installer with the built-in PowerShell. Linux and macOS require Python 3.10+. Every platform creates an isolated runtime and binds the Sidecar to loopback only.
+
 Create each one-time pairing code with the intended workspace and only the capabilities the new device needs. Gateway applies that grant atomically when it registers the new Agents, so the first sync works without giving the client administrative access:
 
 ```powershell
 memory-gateway pairing-code `
-  --tenant-id personal --user-id chlee --device-type windows --agent-types codex,hermes `
+  --tenant-id personal --user-id user-a --device-type windows --agent-types codex,hermes,openclaw `
   --workspace-id agent-memory-gateway `
   --capabilities memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event
 ```
 
-The client then runs a one-time setup wizard. The `-Agent` format is `instance ID|type|display name` and can be repeated for multiple agents:
+Run the one-command installer on Windows:
 
 ```powershell
-.\scripts\setup-shared-memory.ps1 `
-  -Mode device `
-  -GatewayUrl "https://memory-gateway.example.internal" `
-  -DeviceId "local-pc" `
-  -DefaultWorkspace "shared-workspace" `
-  -Agent @(
-    "codex-desktop|codex|Codex Desktop"
-    "hermes-desktop|hermes|Hermes Desktop"
-  ) `
-  -InstallAutostart
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Buildlee/agent-memory-gateway/main/scripts/memory-device-install.ps1)))
 ```
 
-The wizard prompts for the pairing code, then saves the refresh credential in Windows Credential Manager. The device private key, Sidecar outbox key, and local MCP config are skipped (not overwritten) if the files already exist. On first run, it also creates `.shared-memory-venv` in the repo to keep MCP dependencies out of the global Python installation. With `-InstallAutostart`, it also performs one real sync as the first Agent after the task starts; authentication, workspace authorization, or Gateway reachability failures stop the setup instead of being reported as usable.
+Linux / macOS:
 
-If pairing succeeds but local setup is interrupted later, re-run the same command with `-UseExistingCredential`. The original device private key must still exist and the existing Windows credential is reused. A Sidecar scheduled task created by this installer is refreshed with the current device, Agent, and runtime settings; an unknown task is still never replaced. Credentials are not read, printed, or written to configuration files, and existing MCP JSON is not overwritten.
+```bash
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/Buildlee/agent-memory-gateway/main/scripts/memory-device-install.sh | sh
+```
+
+By default, the installer reads the latest stable GitHub Release manifest and verifies the immutable source archive SHA-256. If no stable release exists, an interactive run asks before using development `main`; declining or running non-interactively stops. For development only, pass `-Channel development` on Windows or set `MEMORY_DEVICE_CHANNEL=development` on Linux/macOS. A pinned `MEMORY_DEVICE_ARCHIVE_URL` plus `MEMORY_DEVICE_ARCHIVE_SHA256` still overrides the default.
+
+The wizard asks for the Gateway, workspace, Agents, and hidden pairing code. It detects Codex, Hermes, and OpenClaw, generates the appropriate MCP format, installs the per-user background service, and reports `ready` only after a real sync succeeds. Merge `shared-memory` from each file listed under `client_configuration` into the corresponding Agent settings, then restart the Agent; the wizard does not overwrite existing client settings.
+
+Maintenance uses the same CLI:
+
+```powershell
+memory-device status
+memory-device doctor
+memory-device repair
+memory-device repair --apply
+memory-device upgrade --package <verified source directory or wheel> --release-id v0.2.0
+memory-device upgrade --package <verified source directory or wheel> --release-id v0.2.0 --yes
+memory-device rollback
+memory-device rollback --yes
+memory-device uninstall
+memory-device uninstall --yes
+```
+
+`doctor` is read-only. `repair` previews by default and only fixes safe, managed state. `upgrade` stages and checks a separate versioned runtime before switching the service and MCP configuration; a failed health check automatically restores the previous version. `rollback` previews by default and uses `--yes` to reactivate that retained version. `uninstall` also previews by default; `--yes` removes the service, runtime configuration, and generated MCP files while preserving credentials, local memory, and the maintenance command itself.
 
 If the Gateway uses an internal CA, add `-GatewayCaCertificate "<CA cert path>"`. Publicly trusted certificates do not need this parameter. If there is a certificate mismatch, fix the certificate chain — do not disable TLS validation.
 
 After the command finishes, it lists the generated MCP JSON files. A successful `-InstallAutostart` result shows `gateway_sync: ready`; without autostart the state is only `configured`, so start the Sidecar manually or rerun with `-InstallAutostart` before importing the MCP JSON. The JSON only contains the local startup script, Agent ID, workspace, and local key file path — it does not store Gateway tokens, refresh credentials, database addresses, or private keys.
 
-Agents running in Docker use the same identity and workspace protocol, but do not need the Windows runtime replicated into the container. Follow [Unified Access for Container Agents](container-sidecar.md) and run with `-Mode container` — it creates an MCP Bridge that listens only on the container's loopback address.
+Agents running in Docker use the same identity and workspace protocol, but do not need a desktop runtime replicated into the container. Follow [Unified Access for Container Agents](container-sidecar.md) and run with `-Mode container` — it creates an MCP Bridge that listens only on the container's loopback address.
 
 ### Verify the connection
 

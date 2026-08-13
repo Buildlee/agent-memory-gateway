@@ -18,7 +18,7 @@ python -m compileall -q src tests
 
 ## CI 验证
 
-GitHub Actions 在功能分支和 PR 上运行：完整测试、Python 编译、PowerShell 语法检查、敏感信息扫描、补丁格式检查。不读取环境文件、证书、数据库、Windows 凭据或现场运维脚本。
+GitHub Actions 在所有 push 和 PR 上运行：Windows 使用 Python 3.10-3.13 执行完整测试、Python 编译、PowerShell 语法、敏感信息和补丁格式检查；Linux 与 macOS 在 Python 3.10 和 3.13 运行全量测试。独立打包任务构建 wheel，并从干净虚拟环境验证所有公开 CLI 入口。不读取环境文件、证书、数据库、系统凭据或现场运维脚本。
 
 安全分类器专用语料包含故意无效的私钥、令牌和连接串，用来证明拦截规则有效。CI 字面扫描只排除这份固定测试语料；对应单元测试确认这些样例带有明确无效标记。
 
@@ -65,22 +65,37 @@ CI 通过说明公开代码可合并，不代表功能已部署到运行中的 S
 
 ## 安装向导回归点
 
-`scripts/setup-shared-memory.ps1` 是实际接入入口，不是演示脚本别名。修改它或设备配对客户端时至少运行：
+`memory-device onboard` 是普通用户入口，`scripts/memory-device-install.ps1` 和 `scripts/memory-device-install.sh` 负责引导到同一 Python 安装核心；`scripts/setup-shared-memory.ps1` 保留高级 Windows、服务端和容器场景。修改安装、配对或生命周期代码时至少运行：
 
 ```powershell
-python -m unittest tests.test_device_pair tests.test_setup_installer tests.test_release_safety
+python -m unittest tests.test_device_pair tests.test_device_runtime tests.test_device_lifecycle tests.test_device_install tests.test_setup_installer tests.test_release_safety
 python -m compileall -q src tests
 ```
 
 向导必须守住以下行为：
 
 - 配对码只通过 `Read-Host -AsSecureString` 从标准输入读取。
-- 刷新凭据只写入 Windows Credential Manager（`write_generic_credential`）。
-- MCP JSON 只包含命令和参数，不含 Gateway 令牌、刷新凭据或私钥。
+- Windows 刷新凭据只写入 Credential Manager；Linux/macOS 只写入权限 `0600` 的凭据文件。
+- MCP JSON 只包含命令、参数和本机 key 文件路径，不含 Gateway 令牌、刷新凭据或私钥；OpenClaw 使用 `mcp.servers`，其余当前客户端使用 `mcp_servers`。
 - 已有本机 key、运行环境和 MCP JSON 均拒绝覆盖。计划任务在普通模式也拒绝覆盖；恢复模式只会刷新经标识和启动参数校验的受管 Sidecar 任务。
 - 配对完成后的恢复只允许 `-UseExistingCredential`，要求原设备私钥存在。
+- `status`、`doctor`、`repair`、`uninstall` 只操作默认受管路径；修复和卸载默认预览，越界路径、符号链接和来源不明的同名服务必须失败关闭。
+- `upgrade` 和 `rollback` 默认预览。升级必须先安装到 `runtimes/<release-id>` 独立目录并完成导入自检，切换后还要通过 Sidecar 健康检查；失败时恢复原服务、运行配置和 MCP 配置。
 - 服务端模式没有 `-Apply` 时不连接远端，也不创建发布目录。
 - 公开受信任的 HTTPS 地址不应因默认不存在的 CA 而失败；内部 CA 必须由用户明确传入并校验。
+
+## 稳定版本发布
+
+稳定发布由标签驱动，标签版本必须与 `pyproject.toml` 一致，且标签提交必须来自 `main`。工作流先跑全量测试，再生成 wheel、固定源码 ZIP、两种安装脚本、`release-manifest.json` 和 `SHA256SUMS`，最后创建 GitHub Release。发布构建拒绝脏工作区和已有同名资产。
+
+本机预检可运行：
+
+```powershell
+python scripts/build-wheel.py --outdir dist
+python scripts/build-release.py --tag v0.1.0 --outdir dist
+```
+
+确认变更合并、版本号已更新且全量测试通过后，才能推送对应 `v*` 标签。安装器默认只消费最新稳定 Release 清单；开发通道必须显式选择，不能作为生产回退。
 
 ---
 

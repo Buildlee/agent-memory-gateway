@@ -29,6 +29,12 @@ Both entry points follow the same identity, workspace, audit, and retrieval rule
 
 `device` mode reads the one-time pairing code from hidden input, creates device private key and Sidecar key, refreshes credentials and stores them in Windows Credential Manager. The administrator may include one workspace and its smallest capability set in the code; Gateway binds only the newly registered Agents in the same transaction, while the client has no authority to grant access. By default it creates an isolated Python runtime environment; after startup it generates only an MCP JSON without credentials. Stops when existing private key, key, scheduled task, or MCP configuration is found — it will not overwrite. If pairing succeeds but subsequent local steps are interrupted, the user can pass `-UseExistingCredential` to continue. The script reuses the protected credential and refreshes only a recognized Sidecar task that it created; unknown tasks and existing MCP configuration are never replaced.
 
+Linux and macOS use the same installation core through `memory-device install` instead of copying the PowerShell scheduled-task logic. Linux writes a systemd user unit; macOS writes a LaunchAgent; both store refresh credentials and device keys in `0600` files. Desktop devices register their actual `windows`, `linux`, or `macos` type. Resume requires the existing configuration to match, preventing silent identity replacement.
+
+Normal users enter the same core through `memory-device onboard`. The Windows web entry can start from the built-in PowerShell, while the installed task runs the isolated Python environment directly and does not keep PowerShell as a Sidecar dependency. The wizard detects Codex, Hermes, and OpenClaw, using the `mcp.servers` shape for OpenClaw. It does not rewrite third-party client settings; users import the files listed under `client_configuration` and restart the corresponding Agent.
+
+After installation, `status` and `doctor` are read-only. `repair` and `uninstall` preview by default and require `--apply` or `--yes` before changing managed files or services. Uninstall preserves identity credentials and local memory by default and backs up runtime and MCP configuration first. Credentials and local data are removed only with explicit purge options. Unmanaged same-name services, out-of-scope paths, and symbolic links are rejected.
+
 `server` mode without `-Apply` only echoes validated publishing information. Adding `-Apply` creates the publish directory, uploads public code, and starts containers. Keys, certificates, database migrations, and backups are not within automation scope: these actions require administrator confirmation during maintenance windows.
 
 ---
@@ -86,7 +92,7 @@ The Sidecar specifies a default workspace at startup. MCP tools without a `works
 Device access is divided into two layers:
 
 - **Protocol layer**: Pairing, device private key, credential refresh rotation, workspace binding, offline queue, MCP tools. Behavior does not vary by device brand or Agent vendor.
-- **Runtime layer**: Local credential storage and process lifecycle. Windows uses Credential Manager + scheduled tasks; containers use a state directory with permissions `0600` + loopback MCP Bridge.
+- **Runtime layer**: Local credential storage and process lifecycle. Windows uses Credential Manager + scheduled tasks; Linux uses `0600` files + a systemd user service; macOS uses `0600` files + a LaunchAgent; containers use a `0600` state directory + loopback MCP Bridge.
 
 The container Bridge shares the network namespace with the target service, with the standard address fixed at `http://127.0.0.1:8767/mcp`. Only the Agent's official MCP configuration entry point needs adaptation — no need to reimplement the memory service. The configuration connector must not save refresh credentials, operate the database, or expand workspace permissions.
 

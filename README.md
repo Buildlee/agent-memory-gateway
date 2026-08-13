@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="#三分钟体验"><img src="https://img.shields.io/badge/本地体验-无需_API_key-2ea44f" alt="无需 API key"></a>
-  <a href="#接入方式"><img src="https://img.shields.io/badge/MCP-Codex%20%7C%20Hermes-5a67d8" alt="支持 MCP"></a>
+  <a href="#接入方式"><img src="https://img.shields.io/badge/MCP-Codex%20%7C%20Hermes%20%7C%20OpenClaw-5a67d8" alt="支持 MCP"></a>
   <a href="https://github.com/Buildlee/agent-memory-gateway/actions/workflows/validate.yml"><img src="https://github.com/Buildlee/agent-memory-gateway/actions/workflows/validate.yml/badge.svg" alt="自动验证"></a>
   <a href="#许可证"><img src="https://img.shields.io/badge/license-MIT-4b5563" alt="MIT"></a>
   <a href="#三分钟体验"><img src="https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python" alt="Python 3.10+"></a>
@@ -43,24 +43,45 @@ Stop-Process -Id <脚本输出的 process_id>
 
 ### 一条命令接入正式服务
 
+客户端支持 Windows、Linux 和 macOS。安装器会引导填写 Gateway、工作区和需要接入的 Agent，再隐藏读取一次性配对码。Windows 使用当前用户计划任务，Linux 使用 systemd 用户服务，macOS 使用 LaunchAgent；三种平台使用同一份非敏感配置、配对协议和 MCP 工具。
+
 管理员先生成一份不含凭据的安装配置，再把它放到受控文件共享、设备管理工具或内部 HTTPS 地址。客户端只需运行一条命令，然后输入一次隐藏的配对码：
 
 ```powershell
-.\scripts\memory-device-install.ps1 -ProfileUrl "https://memory-gateway.example.internal/device-install.json"
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Buildlee/agent-memory-gateway/main/scripts/memory-device-install.ps1)))
 ```
 
-安装器会生成稳定设备 ID、按配置登记 Codex、Hermes 或其他 Agent、创建独立运行环境和登录后自启的 Sidecar，并生成 MCP 配置。它只在 Sidecar 启动且首个 Agent 完成一次 Gateway 同步后才报告 `ready`，避免“安装完成但实际无法共享”。管理员生成配对码时可同时写入该工作区的最小能力，因此客户端配对完成后即可同步，不需要再逐个绑定 Agent。配对码、刷新凭据、私钥和数据库地址不在安装配置、命令行或 MCP JSON 中出现。将配置交付到 `%LOCALAPPDATA%\memory-gateway\device-install.json` 后，客户端可直接运行 `.\scripts\memory-device-install.ps1`。
+Linux / macOS：
+
+```bash
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/Buildlee/agent-memory-gateway/main/scripts/memory-device-install.sh | sh
+```
+
+安装器会生成稳定设备 ID，自动识别 Codex、Hermes 和 OpenClaw，创建独立运行环境和登录后自启的 Sidecar，并按客户端格式生成 MCP 配置。它只在 Sidecar 启动且首个 Agent 完成一次 Gateway 同步后才报告 `ready`。最后按输出路径把 `shared-memory` 合并到对应 Agent 的 MCP 配置并重启 Agent；安装器不会擅自改写第三方客户端配置。配对码、刷新凭据、私钥和数据库地址不会进入安装配置、命令行或 MCP JSON。
+
+安装后的日常维护统一使用：
+
+```powershell
+memory-device status
+memory-device doctor
+memory-device repair          # 默认只显示修复计划
+memory-device upgrade --package <已校验的源码目录或 wheel> --release-id v0.2.0
+memory-device rollback        # 默认只显示回滚计划
+memory-device uninstall       # 默认只显示卸载计划并保留凭据与本地记忆
+```
+
+确认安全修复时加 `--apply`。确认卸载时加 `--yes`；只有明确加上 `--purge-credentials` 或 `--purge-data` 才删除设备身份或本地队列。卸载前会备份运行配置和 MCP 配置。独立运行环境和 `memory-device` 维护命令会保留，方便诊断或重新接入；它们不再自启，也不能访问已卸载的 Sidecar 配置。
 
 ```powershell
 memory-gateway pairing-code `
-  --tenant-id personal --user-id chlee --device-type windows --agent-types codex,hermes `
+  --tenant-id personal --user-id user-a --device-type windows --agent-types codex,hermes,openclaw `
   --workspace-id agent-memory-gateway `
   --capabilities memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event
 ```
 
 配对码只交给待接入设备并在过期前使用。没有带工作区授权的旧配对码仍可使用，但配对后需要管理员手动绑定。
 
-如果新电脑只拿到 `memory-device-install.ps1`，安装器默认从 GitHub 下载当时的 `main` 源码包，再继续同一套受控安装。下载仍限制体积、拒绝覆盖已有文件，并在本机记录实际 SHA-256。需要可复现、可审核的安装时，管理员应在同一配置中加入不可变发布包的 HTTPS 地址和 SHA-256；配置中的固定发布包优先于 `main`。
+如果新电脑只拿到安装脚本，安装器默认读取 GitHub 最新稳定 Release 的清单，并在源码包 SHA-256 完全一致后安装。项目尚未发布稳定版本时，交互向导会询问是否临时使用开发版 `main`，未确认或非交互环境都会停止，不会静默降级；开发测试也可显式传入 `-Channel development`，Linux/macOS 则设置 `MEMORY_DEVICE_CHANNEL=development`。安装配置中的固定发布包仍具有最高优先级。
 
 需要手动指定 Agent、设备 ID 或恢复中断安装时，仍可使用底层完整向导：
 
@@ -70,11 +91,19 @@ memory-gateway pairing-code `
 .\scripts\setup-shared-memory.ps1 -Mode device `
   -GatewayUrl "https://memory-gateway.example.internal" `
   -DeviceId "local-pc" -DefaultWorkspace "shared-workspace" `
-  -Agent @("codex-desktop|codex|Codex Desktop", "hermes-desktop|hermes|Hermes Desktop") `
+  -Agent @("codex-desktop|codex|Codex Desktop", "hermes-desktop|hermes|Hermes Desktop", "openclaw-desktop|openclaw|OpenClaw") `
   -InstallAutostart
 ```
 
 向导完成设备配对、密钥和凭据写入、启动只监听 `127.0.0.1` 的 Sidecar，最后生成 MCP 配置。服务端用 `-Mode server`（加 `-Apply` 执行）。默认是 `memory-app + Caddy` 两个容器；已有的拆分部署仍可作为高隔离模式使用。详见[部署说明](docs/deployment.md)。
+
+Linux 或 macOS 在已安装项目后运行同一套 Python CLI：
+
+```powershell
+memory-device install --profile ./device-install.json
+```
+
+安装器隐藏读取配对码，刷新凭据写入仅当前账号可读的文件，Sidecar 分别注册为 systemd 用户服务或 LaunchAgent。中断后使用相同参数加 `--resume`；已有配置不一致时会停止，不会覆盖。
 
 ## 🔧 系统结构
 
@@ -83,8 +112,8 @@ flowchart LR
   A["Codex / Hermes / OpenClaw"] -->|MCP 或本机 HTTP| S["Memory Sidecar<br/>(127.0.0.1 only)"]
   S -->|HTTPS| P["Caddy<br/>唯一公开入口"]
   P --> APP["memory-app<br/>Gateway · Worker · Admin"]
-  APP --> M[("元数据与审计<br/>PostgreSQL / SQLite")]
-  APP --> B[("长期记忆<br/>SQLite / GBrain")]
+  APP --> M[("生产元数据与审计<br/>PostgreSQL")]
+  APP --> B[("生产长期记忆<br/>GBrain / PostgreSQL 适配器")]
   L["端侧记忆<br/>Markdown / JSON / 插件"] -->|"人工选择或白名单提议"| S
   R["中枢管理页"] -->|"HTTPS /admin"| P
 ```
@@ -94,7 +123,9 @@ flowchart LR
 | 接入层 | Codex / Hermes / OpenClaw | MCP 或 HTTP 请求记忆 |
 | 本机层 | Memory Sidecar | 凭据、加密 outbox、缓存，不暴露到局域网 |
 | 服务层 | Memory Gateway | 身份验证、权限判断、事件账本、查询和审核 |
-| 存储层 | PostgreSQL / SQLite / GBrain | 审计日志、授权信息、可检索的记忆内容 |
+| 存储层 | PostgreSQL + GBrain/适配器 | 生产审计、授权和可检索记忆；SQLite 仅供本地演示 |
+
+默认 `slim` 布局把 Gateway、Worker、管理 Sidecar 和管理页放在同一应用容器，但每个子进程只继承自身所需的敏感环境变量。这是运维精简布局，不等同于容器级隔离；需要更强故障域和文件系统隔离时使用 `split` 布局。
 
 正式环境的管理页部署在 Gateway 所在中枢，通过固定 HTTPS `/admin/` 地址访问。浏览器首次完成一次性授权后，会话在有效期内保持；日常可以直接打开该地址。除了审核、设备和运行状态，页面还会展示各 Agent 的实际召回、用户反馈和端侧来源汇总。设备权限变更与撤销都经过确认、版本校验和审计。
 
@@ -105,7 +136,8 @@ flowchart LR
 | `memory-gateway` | 启动 HTTP Gateway | `memory-gateway --host 127.0.0.1 --port 8787` |
 | `memory-app` | 启动默认一体化服务 | `memory-app` |
 | `memory-sidecar-mcp` | MCP Sidecar 桥接 | `memory-sidecar-mcp --transport streamable-http --port 8767` |
-| `memory-sidecar-daemon` | 本机 Sidecar 守护进程 | `memory-sidecar-daemon --gateway-url "https://..."` |
+| `memory-sidecar-daemon` | 本机 Sidecar 守护进程 | `MEMORY_DEVICE_RUNTIME_CONFIG` 配好后运行 `memory-sidecar-daemon` |
+| `memory-device` | 设备安装、诊断、修复、升级、回滚和卸载 | `memory-device onboard`、`memory-device doctor` |
 | `memory-import` | 导入既有记忆 | `memory-import scan --source ./notes --batch 2026_07` |
 | `memory-admin-check` | 管理健康检查 | `memory-admin-check` |
 | `memory-admin-console` | 启动管理 Web 页 | `memory-admin-console --port 18700` |
@@ -155,7 +187,7 @@ memory-gateway --help
 
 | 模块 | 文件 | 职责 |
 |------|------|------|
-| MCP Sidecar | `sidecar_mcp.py` | 暴露 `memory_context`/`memory_write`/`memory_sync_status` |
+| MCP Sidecar | `sidecar_mcp.py` | 暴露 `memory_context`/`memory_remember`/`memory_sync_status` |
 | 端侧 Provider | `local_provider.py` | 读取本机记忆并安全提议到共享库 |
 | 本机 Daemon | `sidecar_daemon.py` | 单实例，多 Agent 通过回环 RPC 共用 |
 | 审核服务 | `review_service.py` | 待审核观察与审批工作流 |
@@ -186,6 +218,7 @@ memory-gateway --help
 |------|------|------|
 | Codex MCP | 本机 Codex 共享项目/偏好 | [codex-mcp.json](examples/codex-mcp.json) |
 | Hermes MCP | 同设备多 Agent 共用 | [hermes-mcp.json](examples/hermes-mcp.json) |
+| OpenClaw MCP | 正式接入 | [openclaw-mcp.json](examples/openclaw-mcp.json) |
 | OpenClaw HTTP | 本地原型或自定义工作流 | [openclaw-http.md](examples/openclaw-http.md) |
 | 标准 MCP 客户端 | 支持 MCP 的 Agent | [示例说明](examples/README.md) |
 | 容器内 Agent | Docker + Streamable HTTP MCP | [容器 Sidecar](docs/container-sidecar.md) |

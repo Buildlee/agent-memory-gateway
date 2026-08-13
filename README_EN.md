@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="#3-minute-demo"><img src="https://img.shields.io/badge/Local demo-No_API_key-2ea44f" alt="No API key needed"></a>
-  <a href="#access-methods"><img src="https://img.shields.io/badge/MCP-Codex%20%7C%20Hermes-5a67d8" alt="MCP support"></a>
+  <a href="#access-methods"><img src="https://img.shields.io/badge/MCP-Codex%20%7C%20Hermes%20%7C%20OpenClaw-5a67d8" alt="MCP support"></a>
   <a href="https://github.com/Buildlee/agent-memory-gateway/actions/workflows/validate.yml"><img src="https://github.com/Buildlee/agent-memory-gateway/actions/workflows/validate.yml/badge.svg" alt="CI"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-4b5563" alt="MIT"></a>
   <a href="#3-minute-demo"><img src="https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python" alt="Python 3.10+"></a>
@@ -43,26 +43,53 @@ Demo data stays in `%LOCALAPPDATA%\agent-memory-gateway-demo`. No device pairing
 
 ### One-command production setup
 
+Clients support Windows, Linux, and macOS. The installer guides the user through Gateway, workspace, and Agent selection, then reads the one-time pairing code through hidden input. Windows uses a per-user scheduled task, Linux uses a systemd user service, and macOS uses a LaunchAgent.
+
 Create the one-time pairing code with the smallest workspace capabilities needed by the new device. The binding is stored in the code and applied atomically during pairing, so the first sync does not require a separate per-Agent administration step:
 
 ```powershell
 memory-gateway pairing-code `
-  --tenant-id personal --user-id chlee --device-type windows --agent-types codex,hermes `
+  --tenant-id personal --user-id user-a --device-type windows --agent-types codex,hermes,openclaw `
   --workspace-id agent-memory-gateway `
   --capabilities memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event
 ```
 
-After the admin generates a one-time pairing code, run on the client:
+After the admin generates a one-time pairing code, run on Windows:
 
 ```powershell
-.\scripts\setup-shared-memory.ps1 -Mode device `
-  -GatewayUrl "https://memory-gateway.example.internal" `
-  -DeviceId "local-pc" -DefaultWorkspace "shared-workspace" `
-  -Agent @("codex-desktop|codex|Codex Desktop", "hermes-desktop|hermes|Hermes Desktop") `
-  -InstallAutostart
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Buildlee/agent-memory-gateway/main/scripts/memory-device-install.ps1)))
 ```
 
-The wizard completes device pairing, key generation, credential storage, starts the Sidecar (listening on `127.0.0.1`), and generates MCP config files. With `-InstallAutostart`, it reports `ready` only after the first Agent completes a Gateway sync, so a local listener is not mistaken for a usable shared-memory connection. For server deployment, use `-Mode server` with `-Apply`. The default profile runs two containers: `memory-app` and Caddy. The existing split profile remains available for stricter isolation. See the [deployment guide](docs/en/deployment.md).
+Linux / macOS:
+
+```bash
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/Buildlee/agent-memory-gateway/main/scripts/memory-device-install.sh | sh
+```
+
+The wizard detects Codex, Hermes, and OpenClaw, completes device pairing, stores credentials, starts the loopback-only Sidecar, and generates the client-specific MCP files. It reports `ready` only after the first Agent completes a Gateway sync. Merge the generated `shared-memory` entry into each Agent's MCP configuration and restart that Agent; the installer does not silently rewrite third-party client settings.
+
+Maintenance uses the same CLI:
+
+```powershell
+memory-device status
+memory-device doctor
+memory-device repair          # preview by default; add --apply to repair
+memory-device upgrade --package <verified source directory or wheel> --release-id v0.2.0
+memory-device rollback        # preview by default; add --yes to roll back
+memory-device uninstall       # preview by default; add --yes to uninstall
+```
+
+The installer uses the latest stable GitHub Release manifest by default and verifies the source archive SHA-256. If no stable release exists, an interactive run asks before using development `main`; declining or running non-interactively stops the install, so fallback is never silent. Development testing can explicitly use `-Channel development` on Windows or `MEMORY_DEVICE_CHANNEL=development` on Linux/macOS. A pinned release in the installation profile still takes precedence.
+
+Upgrade installs into a separate versioned runtime, switches the service and MCP configuration only after staging succeeds, then checks Sidecar health. A failed health check automatically reactivates the previous runtime. `rollback --yes` returns to that retained version. Uninstall keeps credentials and local memory unless `--purge-credentials` or `--purge-data` is explicitly selected.
+
+On Linux or macOS, use the installed cross-platform CLI:
+
+```powershell
+memory-device install --profile ./device-install.json
+```
+
+It reads the pairing code through hidden input, stores the refresh credential in an owner-only file, and registers a systemd user service or LaunchAgent. Add `--resume` after an interruption; a conflicting existing file stops the install instead of being overwritten.
 
 ## 🔧 Architecture
 
@@ -71,8 +98,8 @@ flowchart LR
   A["Codex / Hermes / OpenClaw"] -->|MCP or HTTP| S["Memory Sidecar<br/>(127.0.0.1 only)"]
   S -->|HTTPS| P["Caddy<br/>only public entry"]
   P --> APP["memory-app<br/>Gateway · Worker · Admin"]
-  APP --> M[("Metadata & Audit<br/>PostgreSQL / SQLite")]
-  APP --> B[("Long-term Memory<br/>SQLite / GBrain")]
+  APP --> M[("Production Metadata & Audit<br/>PostgreSQL")]
+  APP --> B[("Production Long-term Memory<br/>GBrain / PostgreSQL adapter")]
   L["Local memory<br/>Markdown / JSON / plugins"] -->|"manual or allowlisted proposal"| S
   R["Central Admin UI"] -->|"HTTPS /admin"| P
 ```
@@ -82,7 +109,9 @@ flowchart LR
 | Access | Codex / Hermes / OpenClaw | Request memory via MCP or HTTP |
 | Local | Memory Sidecar | Credentials, encrypted outbox, cache; not exposed to LAN |
 | Service | Memory Gateway | Auth, permissions, event ledger, query and review APIs |
-| Storage | PostgreSQL / SQLite / GBrain | Audit logs, authorization data, retrievable memory |
+| Storage | PostgreSQL + GBrain/adapter | Production audit, authorization, and memory; SQLite is local-demo only |
+
+The default `slim` profile runs Gateway, Worker, admin Sidecar, and console in one application container while filtering sensitive environment variables per child process. This is an operationally compact profile, not container-level isolation; use `split` when stronger failure-domain and filesystem isolation is required.
 
 In production, the admin UI runs beside the Gateway and is reached through a fixed HTTPS `/admin/` address. A browser completes a one-time authorization, then keeps a signed session across `admin-console` restarts until it expires. The device page can update workspace permissions or revoke an untrusted identity, Activity shows the source device and Agent, and every change is confirmed, concurrency-checked, and audited.
 
@@ -93,7 +122,8 @@ In production, the admin UI runs beside the Gateway and is reached through a fix
 | `memory-gateway` | Start HTTP Gateway | `memory-gateway --host 127.0.0.1 --port 8787` |
 | `memory-app` | Start the default integrated service | `memory-app` |
 | `memory-sidecar-mcp` | MCP Sidecar bridge | `memory-sidecar-mcp --transport streamable-http --port 8767` |
-| `memory-sidecar-daemon` | Local Sidecar daemon | `memory-sidecar-daemon --gateway-url "https://..."` |
+| `memory-sidecar-daemon` | Local Sidecar daemon | Run `memory-sidecar-daemon` after setting `MEMORY_DEVICE_RUNTIME_CONFIG` |
+| `memory-device` | Device setup, diagnostics, repair, upgrade, rollback, and uninstall | `memory-device onboard`, `memory-device doctor` |
 | `memory-import` | Import existing memory | `memory-import scan --source ./notes --batch 2026_07` |
 | `memory-admin-check` | Admin health check | `memory-admin-check` |
 | `memory-admin-console` | Start admin web UI | `memory-admin-console --port 18700` |
@@ -143,7 +173,7 @@ memory-gateway --help
 
 | Module | File | Responsibility |
 |--------|------|---------------|
-| MCP Sidecar | `sidecar_mcp.py` | Expose `memory_context`/`memory_write`/`memory_sync_status` tools |
+| MCP Sidecar | `sidecar_mcp.py` | Expose `memory_context`/`memory_remember`/`memory_sync_status` tools |
 | Local Providers | `local_provider.py` | Read local stores and safely propose selected records |
 | Local Daemon | `sidecar_daemon.py` | Single instance, shared via loopback RPC |
 | Review Service | `review_service.py` | Pending observation and approval workflow |
@@ -174,6 +204,7 @@ Stable memories can be compiled into crystal pages (`crystal_service.py`), rebui
 |--------|----------|-----------|
 | Codex MCP | Local Codex sharing project context / preferences | [codex-mcp.json](examples/codex-mcp.json) |
 | Hermes MCP | Multi-agent on the same device | [hermes-mcp.json](examples/hermes-mcp.json) |
+| OpenClaw MCP | Production integration | [openclaw-mcp.json](examples/openclaw-mcp.json) |
 | OpenClaw HTTP | Local prototyping or custom workflow | [openclaw-http.md](examples/openclaw-http.md) |
 | Standard MCP client | Any MCP-compatible agent | [examples README](examples/en/README.md) |
 | Container agent | Docker service + Streamable HTTP MCP | [container sidecar](docs/en/container-sidecar.md) |

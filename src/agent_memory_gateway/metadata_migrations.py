@@ -155,6 +155,18 @@ def migration_specs(schema_path: str | Path | None = None) -> tuple[MigrationSpe
                 schema_directory() / "migrations" / "20260730_1_pairing_workspace_binding.sql",
             )
         )
+        specs.append(
+            MigrationSpec(
+                "2026-08-12.1",
+                schema_directory() / "migrations" / "20260812_1_cross_platform_device_types.sql",
+            )
+        )
+        specs.append(
+            MigrationSpec(
+                "2026-08-12.2",
+                schema_directory() / "migrations" / "20260812_2_openclaw_agent_type.sql",
+            )
+        )
     return tuple(specs)
 
 

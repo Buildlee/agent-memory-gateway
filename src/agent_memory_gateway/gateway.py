@@ -7,8 +7,12 @@ from datetime import datetime, timezone
 import ipaddress
 import json
 import os
+import socket
 import sys
 import re
+import threading
+import traceback
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
@@ -36,6 +40,8 @@ from .sync_service import PostgresSyncService, SyncProtocolError
 
 
 MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 15.0
+DEFAULT_MAX_CONCURRENT_REQUESTS = 64
 
 AUTH_RATE_LIMITS = {
     "/v1/auth/pair": {"client": (5, 600), "global": (50, 600)},
@@ -66,6 +72,101 @@ ROUTE_CAPABILITIES = {
     "/v1/admin/impact": "memory.manage",
     "/v1/admin/sources": "memory.manage",
 }
+
+ROUTE_ADDITIONAL_CAPABILITIES = {
+    "/v1/sync/push": ("memory.sync",),
+    "/v1/sync/pull": ("memory.sync",),
+}
+
+
+def require_route_capabilities(principal: Any, path: str, workspace_id: object | None) -> None:
+    """按工作区检查路由的全部能力；同步需要显式 memory.sync 能力。"""
+
+    capabilities = (ROUTE_CAPABILITIES[path], *ROUTE_ADDITIONAL_CAPABILITIES.get(path, ()))
+    for capability in capabilities:
+        if workspace_id is not None:
+            principal.require_workspace_capability(str(workspace_id), capability)
+        else:
+            principal.require_capability(capability)
+
+
+def _bounded_environment_number(
+    name: str,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float,
+    integer: bool = False,
+) -> float | int:
+    raw = os.environ.get(name)
+    try:
+        value = float(raw) if raw is not None else default
+    except ValueError as exc:
+        raise ValueError(f"{name}_INVALID") from exc
+    if not minimum <= value <= maximum or (integer and not value.is_integer()):
+        raise ValueError(f"{name}_INVALID")
+    return int(value) if integer else value
+
+
+class GatewayHTTPServer(ThreadingHTTPServer):
+    """带连接读取超时和线程上限的 Gateway HTTP 服务。"""
+
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        request_handler_class: type[BaseHTTPRequestHandler],
+        *,
+        request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
+    ) -> None:
+        if not 1 <= request_timeout_seconds <= 300:
+            raise ValueError("MEMORY_HTTP_READ_TIMEOUT_SECONDS_INVALID")
+        if not 1 <= max_concurrent_requests <= 1024:
+            raise ValueError("MEMORY_HTTP_MAX_CONCURRENT_REQUESTS_INVALID")
+        self.request_timeout_seconds = float(request_timeout_seconds)
+        self.max_concurrent_requests = int(max_concurrent_requests)
+        self._request_slots = threading.BoundedSemaphore(self.max_concurrent_requests)
+        super().__init__(server_address, request_handler_class)
+
+    def get_request(self) -> tuple[socket.socket, Any]:
+        request_socket, client_address = super().get_request()
+        request_socket.settimeout(self.request_timeout_seconds)
+        return request_socket, client_address
+
+    def process_request(self, request: socket.socket, client_address: Any) -> None:
+        if not self._request_slots.acquire(blocking=False):
+            self._reject_over_capacity(request)
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request: socket.socket, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
+
+    @staticmethod
+    def _reject_over_capacity(request: socket.socket) -> None:
+        body = b'{"error":"server_busy","retryable":true}'
+        response = (
+            b"HTTP/1.1 503 Service Unavailable\r\n"
+            b"Content-Type: application/json; charset=utf-8\r\n"
+            b"Connection: close\r\n"
+            + f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
+            + body
+        )
+        try:
+            request.sendall(response)
+        except OSError:
+            return
 
 
 class GatewayHandler(BaseHTTPRequestHandler):
@@ -130,10 +231,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self._json({"error": "not_found"}, status=404)
                 return
             workspace_id = payload.get("workspace_id")
-            if workspace_id is not None:
-                principal.require_workspace_capability(str(workspace_id), capability)
-            else:
-                principal.require_capability(capability)
+            require_route_capabilities(principal, path, workspace_id)
             if path == "/v1/memories/feedback" and payload.get("action") == "pin":
                 if workspace_id is not None:
                     principal.require_workspace_capability(str(workspace_id), "memory.manage")
@@ -252,8 +350,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 candidate = str(exc)
                 code = candidate if re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", candidate) else "INVALID_REQUEST"
             self._json({"error": code}, status=400)
-        except Exception:  # noqa: BLE001
-            self._json({"error": "internal_error"}, status=500)
+        except Exception as exc:  # noqa: BLE001
+            trace_id = f"tr_{uuid.uuid4().hex}"
+            self._log_internal_error(exc, trace_id)
+            self._json({"error": "internal_error", "trace_id": trace_id}, status=500)
         finally:
             if store is not None:
                 store.close()
@@ -270,11 +370,40 @@ class GatewayHandler(BaseHTTPRequestHandler):
         try:
             raw = self.rfile.read(length).decode("utf-8")
             payload = json.loads(raw)
+        except (TimeoutError, socket.timeout, OSError) as exc:
+            raise EventValidationError("REQUEST_BODY_TIMEOUT") from exc
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise EventValidationError("REQUEST_BODY_INVALID") from exc
         if not isinstance(payload, dict):
             raise EventValidationError("REQUEST_BODY_OBJECT_REQUIRED")
         return payload
+
+    def _log_internal_error(self, exc: BaseException, trace_id: str) -> None:
+        stack = traceback.extract_tb(exc.__traceback__)
+        request_path = urlparse(str(getattr(self, "path", ""))).path
+        safe_path = (
+            request_path
+            if request_path in ROUTE_CAPABILITIES or request_path in AUTH_RATE_LIMITS
+            else "unmatched"
+        )
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "level": "error",
+            "event": "gateway.request_failed",
+            "trace_id": trace_id,
+            "exception_type": type(exc).__name__,
+            "method": str(getattr(self, "command", ""))[:16],
+            "path": safe_path,
+            "stack": [
+                {
+                    "file": Path(frame.filename).name,
+                    "line": frame.lineno,
+                    "function": frame.name,
+                }
+                for frame in stack[-8:]
+            ],
+        }
+        print(json.dumps(record, ensure_ascii=False, separators=(",", ":")), file=sys.stderr, flush=True)
 
     def _rate_limit_client_ip(self) -> str:
         """仅在受控反向代理明确启用时使用其传递的客户端地址。"""
@@ -497,7 +626,28 @@ def main() -> None:
         if not args.principals_file:
             parser.error("SQLite 原型模式需要 --principals-file")
         GatewayHandler.authenticator = TokenAuthenticator.from_file(args.principals_file)
-    server = ThreadingHTTPServer((args.host, args.port), GatewayHandler)
+    try:
+        request_timeout_seconds = _bounded_environment_number(
+            "MEMORY_HTTP_READ_TIMEOUT_SECONDS",
+            DEFAULT_REQUEST_TIMEOUT_SECONDS,
+            minimum=1,
+            maximum=300,
+        )
+        max_concurrent_requests = _bounded_environment_number(
+            "MEMORY_HTTP_MAX_CONCURRENT_REQUESTS",
+            DEFAULT_MAX_CONCURRENT_REQUESTS,
+            minimum=1,
+            maximum=1024,
+            integer=True,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    server = GatewayHTTPServer(
+        (args.host, args.port),
+        GatewayHandler,
+        request_timeout_seconds=float(request_timeout_seconds),
+        max_concurrent_requests=int(max_concurrent_requests),
+    )
     print(f"Memory Gateway listening on http://{args.host}:{args.port}", flush=True)
     try:
         server.serve_forever()

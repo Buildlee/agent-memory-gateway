@@ -44,7 +44,7 @@ param(
 
     [string]$DeviceName = $env:COMPUTERNAME,
 
-    [ValidateSet("windows", "nas", "other")]
+    [ValidateSet("windows", "linux", "macos", "nas", "other")]
     [string]$DeviceType = "windows",
 
     [string[]]$Agent = @(),
@@ -150,8 +150,8 @@ function ConvertTo-AgentSpec([string]$RawAgent) {
     if ($agentId -notmatch "^[A-Za-z0-9_.@:-]+$") {
         throw "Agent 安装实例 ID 只能使用字母、数字、点、下划线、@、冒号或连字符。"
     }
-    if ($agentType -notin @("codex", "hermes", "other")) {
-        throw "Agent 类型只能是 codex、hermes 或 other。"
+    if ($agentType -notin @("codex", "hermes", "openclaw", "other")) {
+        throw "Agent 类型只能是 codex、hermes、openclaw 或 other。"
     }
     if ([string]::IsNullOrWhiteSpace($agentName) -or $agentName.Length -gt 256) {
         throw "Agent 显示名无效。"

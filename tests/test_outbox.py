@@ -123,9 +123,24 @@ class OutboxEncryptionTests(unittest.TestCase):
                 )
                 outbox.mark_terminal(
                     "evt-v2",
-                    {"status": "applied", "ack_id": "ack-1", "server_revision": 9},
+                    {
+                        "status": "applied",
+                        "ack_id": "ack-1",
+                        "backend_ref": "gbrain:9",
+                        "result": "candidate_confirmed",
+                        "server_revision": 9,
+                    },
                 )
+                self.assertEqual(
+                    outbox.event_receipts(["evt-v2"])[0]["backend_ref"],
+                    "gbrain:9",
+                )
+                self.assertEqual(outbox.event_receipts(["evt-v2"])[0]["status"], "applied")
                 self.assertEqual(outbox.cleanup_acked(), 1)
+                self.assertEqual(
+                    outbox.event_receipts(["evt-v2"])[0]["backend_ref"],
+                    "gbrain:9",
+                )
             finally:
                 outbox.close()
 
@@ -138,6 +153,62 @@ class OutboxEncryptionTests(unittest.TestCase):
                 )
             finally:
                 reopened.close()
+
+    def test_existing_receipt_table_is_upgraded_without_losing_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "outbox.db"
+            connection = sqlite3.connect(path)
+            connection.execute(
+                """
+                CREATE TABLE event_receipts_v1 (
+                  event_id TEXT PRIMARY KEY, ack_id TEXT, backend_ref TEXT,
+                  result_code TEXT, server_revision INTEGER, error_code TEXT,
+                  received_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO event_receipts_v1 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("evt-old", "ack-old", "gbrain:old", "confirmed", 1, None, "2026-08-12T00:00:00Z"),
+            )
+            connection.commit()
+            connection.close()
+
+            outbox = Outbox(path, cipher())
+            try:
+                receipt = outbox.event_receipts(["evt-old"])[0]
+                self.assertEqual(receipt["status"], "acked")
+                self.assertEqual(receipt["backend_ref"], "gbrain:old")
+            finally:
+                outbox.close()
+
+    def test_dead_letter_persists_minimal_rejected_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outbox = Outbox(Path(directory) / "outbox.db", EventCipher(b"k" * 32, "v1"))
+            try:
+                event = outbox.prepare_event(
+                    {
+                        "event_id": "evt-dead-letter",
+                        "content": "不会进入本地回执正文。",
+                        "workspace_id": "workspace-a",
+                    }
+                )
+                outbox.enqueue(event)
+
+                outbox.mark_dead_letter("evt-dead-letter", error_code="CAPABILITY_FORBIDDEN")
+
+                self.assertEqual(
+                    outbox.event_receipts(["evt-dead-letter"]),
+                    [
+                        {
+                            "event_id": "evt-dead-letter",
+                            "status": "rejected",
+                            "error": "CAPABILITY_FORBIDDEN",
+                        }
+                    ],
+                )
+            finally:
+                outbox.close()
 
     def test_in_flight_event_recovers_after_process_restart(self):
         with tempfile.TemporaryDirectory() as directory:

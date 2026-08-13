@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import os
+from pathlib import Path
 import threading
 import time
 import argparse
@@ -98,6 +99,9 @@ class _SidecarRPCHandler(BaseHTTPRequestHandler):
                 "forget": self.client.forget,
                 "cleanup": self.client.cleanup_confirmed,
             }
+            event_receipts = getattr(self.client, "event_receipts", None)
+            if callable(event_receipts):
+                allowed["event_receipts"] = event_receipts
             for review_method in ("list_reviews", "resolve_review", "revert_review", "rebuild_crystal"):
                 method_impl = getattr(self.client, review_method, None)
                 if callable(method_impl):
@@ -265,6 +269,9 @@ class LocalSidecarProxy:
     def forget(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("forget", payload)
 
+    def event_receipts(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("event_receipts", payload)
+
     def list_reviews(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("list_reviews", payload)
 
@@ -422,7 +429,19 @@ def _heartbeat_agent_from_environment() -> str:
 def main() -> None:
     """启动独立、仅回环可访问的本机 Sidecar。"""
 
+    runtime_parser = argparse.ArgumentParser(add_help=False)
+    runtime_parser.add_argument("--runtime-config")
+    runtime_args, _ = runtime_parser.parse_known_args()
+    runtime_config = str(
+        runtime_args.runtime_config
+        or os.environ.get("MEMORY_DEVICE_RUNTIME_CONFIG", "")
+    ).strip()
+    if runtime_config:
+        from .device_runtime import load_runtime_environment
+
+        os.environ.update(load_runtime_environment(Path(runtime_config)))
     parser = argparse.ArgumentParser(description="启动本机共享记忆 Sidecar")
+    parser.add_argument("--runtime-config", help=argparse.SUPPRESS)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=int(os.environ.get("MEMORY_SIDECAR_PORT", "8766")))
     args = parser.parse_args()

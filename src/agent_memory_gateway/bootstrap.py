@@ -11,8 +11,8 @@ from typing import Any, Sequence
 from .metadata_store import MetadataStoreError
 
 
-VALID_DEVICE_TYPES = frozenset({"windows", "nas", "other"})
-VALID_AGENT_TYPES = frozenset({"codex", "hermes", "other"})
+VALID_DEVICE_TYPES = frozenset({"windows", "linux", "macos", "nas", "other"})
+VALID_AGENT_TYPES = frozenset({"codex", "hermes", "openclaw", "other"})
 
 
 @dataclass(frozen=True)

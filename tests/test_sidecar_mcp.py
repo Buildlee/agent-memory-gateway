@@ -1,23 +1,30 @@
-import os
+from __future__ import annotations
+
 import unittest
-from unittest.mock import patch
+from unittest import mock
 
-from agent_memory_gateway.sidecar_mcp import _active_workspace_id
+from agent_memory_gateway.sidecar_mcp import _forget_payload
 
 
-class SidecarMcpWorkspaceTests(unittest.TestCase):
-    def test_uses_explicit_workspace_first(self):
-        with patch.dict(os.environ, {"MEMORY_DEFAULT_WORKSPACE": "team-memory"}, clear=False):
-            self.assertEqual(_active_workspace_id("project-memory"), "project-memory")
+class SidecarMcpContractTests(unittest.TestCase):
+    def test_forget_uses_the_explicit_workspace(self) -> None:
+        self.assertEqual(
+            _forget_payload("memory-1", False, "workspace-a"),
+            {
+                "memory_id": "memory-1",
+                "hard_delete": False,
+                "workspace_id": "workspace-a",
+            },
+        )
 
-    def test_uses_sidecar_workspace_when_tool_argument_is_omitted(self):
-        with patch.dict(os.environ, {"MEMORY_DEFAULT_WORKSPACE": "team-memory"}, clear=False):
-            self.assertEqual(_active_workspace_id(None), "team-memory")
-
-    def test_rejects_missing_workspace_configuration(self):
-        with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(ValueError, "WORKSPACE_ID_REQUIRED"):
-                _active_workspace_id(None)
+    def test_forget_uses_the_configured_default_workspace(self) -> None:
+        with mock.patch.dict(
+            "os.environ", {"MEMORY_DEFAULT_WORKSPACE": "workspace-default"}, clear=True
+        ):
+            self.assertEqual(
+                _forget_payload("memory-1", False, None)["workspace_id"],
+                "workspace-default",
+            )
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@
 
 ## 一条命令安装配置
 
-[device-install-profile.example.json](device-install-profile.example.json) 是管理员交付给 Windows 客户端的非敏感配置示例。它只有 Gateway 示例地址、工作区、设备 ID 前缀和 Agent 模板；不允许放入配对码、刷新凭据、私钥、令牌、密码或数据库连接串。
+[device-install-profile.example.json](device-install-profile.example.json) 是管理员交付给 Windows、Linux 或 macOS 客户端的非敏感配置示例。它只有 Gateway 示例地址、工作区、设备 ID 前缀和 Agent 模板；不允许放入配对码、刷新凭据、私钥、令牌、密码或数据库连接串。
 
 管理员生成自己的配置后，客户端只需运行：
 
@@ -20,14 +20,22 @@
 
 ```powershell
 memory-gateway pairing-code `
-  --tenant-id personal --user-id chlee --device-type windows --agent-types codex,hermes `
+  --tenant-id personal --user-id user-a --device-type windows --agent-types codex,hermes,openclaw `
   --workspace-id agent-memory-gateway `
   --capabilities memory.feedback,memory.forget,memory.read_context,memory.search,memory.sync,memory.write_event
 ```
 
 配对码是短时敏感信息，只通过受控渠道交给对应设备；示例安装配置里不能包含它。
 
-如果客户端只有安装脚本，未配置 `release` 时会默认下载 GitHub 当前 `main` 源码包。日常接入可以直接使用这个默认值；需要稳定、可审核的环境，管理员应额外提供不可变 ZIP 的 HTTPS 地址和本地 ZIP 路径。生成器会计算 SHA-256 并把 `release` 写入配置；客户端会优先使用该固定版本，并在摘要一致后才解压和运行。
+Linux 或 macOS 安装项目后可直接使用同一配置：
+
+```powershell
+memory-device install --profile ./device-install-profile.example.json
+```
+
+Linux 使用 systemd 用户服务，macOS 使用 LaunchAgent；MCP JSON 默认生成到各平台的数据目录。Windows 一键入口可由系统 PowerShell 启动，安装后的 Sidecar 由独立 Python 运行环境直接托管。
+
+如果客户端只有安装脚本且未配置 `release`，安装器默认读取 GitHub 最新稳定 Release 清单并校验源码包 SHA-256。管理员也可以提供内部不可变 ZIP 的 HTTPS 地址和本地 ZIP 路径；生成器会计算 SHA-256 并把 `release` 写入配置，该固定版本优先于公共稳定清单。只有开发测试才显式选择 `development` 通道跟随 `main`。
 
 ---
 
@@ -70,7 +78,7 @@ memory-gateway pairing-code `
    memory-gateway --host 127.0.0.1 --port 8787 --db .\memory.db --principals-file .\principals.local.json
    ```
 
-4. 选择 [OpenClaw HTTP 示例](openclaw-http.md) 验证一次写入和读取，或继续配置 Codex、Hermes 的 MCP 入口。
+4. 正式接入时导入安装器生成的 Codex、Hermes 或 OpenClaw MCP 配置；[OpenClaw HTTP 示例](openclaw-http.md)只用于本地原型或自定义工作流。
 
 `principals.local.json`、`memory.db` 和测试令牌都不能提交到 Git。
 
@@ -89,26 +97,28 @@ memory-gateway pairing-code `
   -Agent @(
     "codex-desktop|codex|Codex Desktop"
     "hermes-desktop|hermes|Hermes Desktop"
+    "openclaw-desktop|openclaw|OpenClaw"
   ) `
   -InstallAutostart
 ```
 
 `-Agent` 的三个字段依次是 Agent 安装实例 ID、类型和显示名。向导隐藏输入配对码，生成本机私钥与 Sidecar key，保存刷新凭据并启动只监听回环地址的 Sidecar。还会生成完成替换的 MCP JSON 文件；已有 key、计划任务或 JSON 文件时停止，不会覆盖。
 
-如果配对已成功但电脑在后续步骤中断，用同一条命令加 `-UseExistingCredential` 继续。该开关要求原设备私钥仍在，只复用已有的 Windows 凭据；不会把凭据写回终端或配置文件。
+如果 Windows 配对已成功但电脑在后续步骤中断，用同一条命令加 `-UseExistingCredential` 继续。Linux/macOS 使用相同的 `memory-device install` 参数加 `--resume`。恢复都要求原设备身份和配置一致，不会把凭据写回终端或配置文件。
 
 若 Gateway 使用内部 CA，把 CA 证书放在受保护的本机位置，再增加 `-GatewayCaCertificate "<本机 CA 证书路径>"`。不要关闭证书校验来绕过配置问题。
 
 ---
 
-## Codex 和 Hermes 的 MCP 配置
+## Codex、Hermes 和 OpenClaw 的 MCP 配置
 
 | 使用者 | 复制的文件 | 需要改的两项 |
 |---|---|---|
 | Codex | 安装向导生成的 `%LOCALAPPDATA%\memory-gateway\mcp\codex-desktop-mcp.json` | 直接导入或复制其中内容，不需要填写凭据。 |
 | Hermes | 安装向导生成的 `%LOCALAPPDATA%\memory-gateway\mcp\hermes-desktop-mcp.json` | 直接导入或复制其中内容，不需要填写凭据。 |
+| OpenClaw | 安装向导生成的 `%LOCALAPPDATA%\memory-gateway\mcp\openclaw-desktop-mcp.json` | 合并其中的 `mcp.servers.shared-memory`，不需要填写凭据。 |
 
-需要手动配置或研究字段时，仍可参考 [Codex 示例](codex-mcp.json) 和 [Hermes 示例](hermes-mcp.json)。两份 JSON 都只描述怎样启动 MCP 桥接进程。导入后重启对应 Agent，并调用 `memory_sync_status`。如果 Sidecar 没有运行、密钥文件缺失或 Agent 安装实例 ID 未登记，MCP 会明确报错；先修正这些前置条件，不要把密钥加到 JSON 里。
+需要手动配置或研究字段时，可参考 [Codex 示例](codex-mcp.json)、[Hermes 示例](hermes-mcp.json) 和 [OpenClaw 示例](openclaw-mcp.json)。这些 JSON 只描述怎样启动 MCP 桥接进程。导入后重启对应 Agent，并调用 `memory_sync_status`。如果 Sidecar 没有运行、密钥文件缺失或 Agent 安装实例 ID 未登记，MCP 会明确报错；先修正这些前置条件，不要把密钥加到 JSON 里。
 
 `DefaultWorkspace` 要和启动 Sidecar 时使用的值完全一致。工具没有传 `workspace_id` 时，这个值就是请求使用的工作区；不能写成 `default` 之类的占位文本。
 
@@ -116,7 +126,7 @@ memory-gateway pairing-code `
 
 ---
 
-## OpenClaw 的 HTTP 接入
+## OpenClaw 的 HTTP 原型接入
 
 [openclaw-http.md](openclaw-http.md) 给出了完整的本地原型请求、所需字段以及常见错误的排查方法。生产环境中，OpenClaw 的路由层应把凭据留在受保护的本机配置或 Sidecar 中，不能把固定 `Authorization` 值写进工作流定义。
 

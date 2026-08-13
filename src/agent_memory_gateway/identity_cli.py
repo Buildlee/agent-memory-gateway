@@ -15,7 +15,9 @@ from .windows_credential import read_generic_credential, write_generic_credentia
 def _agent_types(raw: str) -> tuple[str, ...]:
     values = tuple(sorted({value.strip() for value in raw.split(",") if value.strip()}))
     if not values or any(value not in VALID_AGENT_TYPES for value in values):
-        raise argparse.ArgumentTypeError("Agent 类型必须是 codex、hermes、other 中的一个或多个")
+        raise argparse.ArgumentTypeError(
+            "Agent 类型必须是 codex、hermes、openclaw、other 中的一个或多个"
+        )
     return values
 
 
