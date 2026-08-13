@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from agent_memory_gateway.memory_app import (
     MemoryAppError,
     build_child_commands,
+    build_child_environments,
     load_sidecar_environment,
     run_supervisor,
 )
@@ -76,6 +77,35 @@ class MemoryAppTests(unittest.TestCase):
         self.assertNotIn("  admin-sidecar:\n", text)
         self.assertNotIn("  admin-console:\n", text)
 
+    def test_child_environments_do_not_expose_gateway_secrets_to_admin(self):
+        environments = build_child_environments(
+            {
+                "PATH": "test-path",
+                "DATABASE_PASSWORD": "unrelated-secret",
+                "MEMORY_METADATA_RUNTIME_DSN": "postgres://runtime-secret",
+                "MEMORY_GBRAIN_BACKEND_DSN": "postgres://gbrain-secret",
+                "MEMORY_ACCESS_TOKEN_SIGNING_KEY": "signing-secret",
+                "MEMORY_DEFAULT_WORKSPACE": "workspace-a",
+                "MEMORY_GATEWAY_URL": "http://127.0.0.1:8787",
+                "MEMORY_REFRESH_CREDENTIAL_FILE": "/state/refresh-credential.json",
+                "MEMORY_AGENT_INSTALLATION_ID": "admin-agent",
+            },
+            {"MEMORY_OUTBOX_KEY": "outbox-secret", "MEMORY_OUTBOX_KEY_VERSION": "v1"},
+        )
+        gateway, worker, sidecar, admin = environments
+
+        self.assertEqual(gateway["MEMORY_METADATA_RUNTIME_DSN"], "postgres://runtime-secret")
+        self.assertEqual(worker["MEMORY_GBRAIN_BACKEND_DSN"], "postgres://gbrain-secret")
+        self.assertEqual(sidecar["MEMORY_REFRESH_CREDENTIAL_FILE"], "/state/refresh-credential.json")
+        self.assertNotIn("MEMORY_METADATA_RUNTIME_DSN", sidecar)
+        self.assertNotIn("MEMORY_METADATA_RUNTIME_DSN", admin)
+        self.assertNotIn("MEMORY_REFRESH_CREDENTIAL_FILE", admin)
+        self.assertNotIn("MEMORY_ACCESS_TOKEN_SIGNING_KEY", admin)
+        for child in environments:
+            self.assertNotIn("DATABASE_PASSWORD", child)
+        self.assertEqual(admin["MEMORY_OUTBOX_KEY"], "outbox-secret")
+        self.assertEqual(admin["PATH"], "test-path")
+
     def test_supervisor_retries_one_child_before_stopping_healthy_siblings(self):
         events: list[str] = []
 
@@ -110,7 +140,7 @@ class MemoryAppTests(unittest.TestCase):
 
         result = run_supervisor(
             (("gateway",), ("sidecar",)),
-            environment={},
+            child_environments=({}, {}),
             poll_seconds=0,
             process_factory=factory,
             sleep=lambda _seconds: None,
@@ -124,7 +154,11 @@ class MemoryAppTests(unittest.TestCase):
 
     def test_supervisor_rejects_an_invalid_restart_policy(self):
         with self.assertRaisesRegex(ValueError, "MEMORY_APP_RESTART_POLICY_INVALID"):
-            run_supervisor((), environment={}, max_child_restarts=0)
+            run_supervisor((), child_environments=(), max_child_restarts=0)
+
+    def test_supervisor_rejects_mismatched_child_environments(self):
+        with self.assertRaisesRegex(ValueError, "MEMORY_APP_CHILD_ENVIRONMENTS_INVALID"):
+            run_supervisor((("gateway",),), child_environments=())
 
 
 if __name__ == "__main__":

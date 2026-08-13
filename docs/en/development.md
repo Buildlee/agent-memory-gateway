@@ -18,7 +18,7 @@ Confirm both tests and compilation pass before modifying functionality. After mo
 
 ## CI Validation
 
-GitHub Actions runs on feature branches and PRs: full tests, Python compilation, PowerShell syntax checks, sensitive information scanning, and patch format checks. It does not read environment files, certificates, databases, Windows credentials, or field operation scripts.
+GitHub Actions runs on every push and pull request. Windows covers Python 3.10 through 3.13 and runs the full test suite, Python compilation, PowerShell syntax, sensitive-information, and patch-format checks. Linux and macOS cover Python 3.10 and 3.13. A separate package job builds the wheel and smoke-tests every public CLI from a clean virtual environment. CI does not read environment files, certificates, databases, OS credentials, or field operation scripts.
 
 The security classifier's dedicated corpus includes deliberately invalid private keys, tokens, and connection strings to prove that the detection rules work. CI literal scanning only excludes this fixed test corpus; the corresponding unit tests confirm that these samples carry an explicit invalid marker.
 
@@ -57,22 +57,30 @@ Migration SQL is maintained in the root `schema/` directory and is also shipped 
 
 ## Setup Wizard Regression Points
 
-`scripts/setup-shared-memory.ps1` is the actual integration entry point, not an alias for the demo script. When modifying it or the device pairing client, run at least:
+`memory-device onboard` is the normal user entry. `scripts/memory-device-install.ps1` and `scripts/memory-device-install.sh` lead into the same Python installation core, while `scripts/setup-shared-memory.ps1` remains available for advanced Windows, server, and container workflows. When changing installation, pairing, or lifecycle code, run at least:
 
 ```powershell
-python -m unittest tests.test_device_pair tests.test_setup_installer tests.test_release_safety
+python -m unittest tests.test_device_pair tests.test_device_runtime tests.test_device_lifecycle tests.test_device_install tests.test_setup_installer tests.test_release_safety
 python -m compileall -q src tests
 ```
 
 The wizard must maintain the following behaviors:
 
 - Pairing codes are only read from stdin via `Read-Host -AsSecureString`.
-- Refreshed credentials are only written to the Windows Credential Manager (`write_generic_credential`).
-- The MCP JSON contains only the command and arguments, not the Gateway token, refresh credentials, or private keys.
+- Windows refresh credentials are written only to Credential Manager; Linux/macOS write only owner-readable (`0600`) credential files.
+- The MCP JSON contains only the command, arguments, and local key-file path, not the Gateway token, refresh credentials, or private keys. OpenClaw uses `mcp.servers`; the other current clients use `mcp_servers`.
 - Existing local keys, runtime environments, and MCP JSON are never overwritten. Scheduled tasks are also refused in normal mode; recovery refreshes only a managed Sidecar task whose marker and start command both match.
 - Recovery after pairing only allows `-UseExistingCredential` and requires the original device private key to exist.
+- `status`, `doctor`, `repair`, and `uninstall` only operate on default managed paths. Repair and uninstall preview by default; out-of-scope paths, symbolic links, and unmanaged same-name services must fail closed.
+- `upgrade` and `rollback` preview by default. Upgrade installs into a separate `runtimes/<release-id>` directory, completes import checks before switching, and requires a Sidecar health check after activation. A failure restores the previous service, runtime configuration, and MCP files.
 - Server mode does not connect to the remote endpoint or create a release directory without `-Apply`.
 - Publicly trusted HTTPS addresses should not fail due to a CA that does not exist by default; internal CAs must be explicitly provided by the user and validated.
+
+## Stable Releases
+
+A pushed `v*` tag drives a stable release. Its version must match `pyproject.toml`, and the tagged commit must be on `main`. The workflow runs the full suite, then publishes a wheel, immutable source ZIP, both installers, `release-manifest.json`, and `SHA256SUMS`. Release builds reject dirty worktrees and existing same-name assets.
+
+The default installer consumes only the latest stable Release manifest. Following `main` requires an explicit development channel and must not be used as a production fallback.
 
 ---
 

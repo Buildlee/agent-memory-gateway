@@ -27,7 +27,7 @@ Local material
   → Write to shared library
 ```
 
-Each item should retain its source path, content hash, and batch number. Review records must show "where this came from, who confirmed it, and whether it was later superseded".
+The local preview retains a relative source path, content hash, and batch number. The central event receives only a stable source-record ID, content hash, and batch number; local paths are never uploaded. A local state file keeps event IDs and backend references for resume and rollback.
 
 ## Generate a preview
 
@@ -39,6 +39,37 @@ memory-import scan --source .\memory-folder --batch import_2026_07_03
 
 Keep the preview file in a local protected directory. Check for passwords, tokens, private keys, connection strings, internal addresses, irrelevant session content, or stale status before proceeding to review.
 
+Sensitive chunks are marked `blocked_sensitive`, instruction-like chunks `blocked_instruction_like`, and oversized chunks `blocked_too_large`; only `imported_candidate` records can be applied.
+
+## Apply and resume
+
+After reviewing the JSONL, submit accepted candidates through the running loopback Sidecar:
+
+```powershell
+memory-import apply `
+  --preview .\import-preview-import_2026_07_03.jsonl `
+  --workspace-id shared-workspace `
+  --agent-installation-id codex-desktop `
+  --confirmed-by-user
+```
+
+`apply` processes only `imported_candidate` records and uses the normal authorization, sensitive-content, outbox, and sync paths. It never connects directly to the database. State is written beside the preview as `.state.json`; after interruption, rerun with the same preview and workspace plus `--resume`. Stable event IDs prevent duplicate imports. `sync_pending` means connectivity must recover before retrying; `review_pending` means records entered the normal review queue; `completed` is returned only after durable backend references are available without errors.
+
+Pass `--sidecar-key-file` or `--sidecar-port` when the local installation does not use defaults. The importing Agent needs the target workspace's write and sync capabilities.
+
+## Roll back a batch
+
+Rollback archives imported memories through the normal `memory.forget` path; it does not hard-delete them:
+
+```powershell
+memory-import rollback `
+  --state .\import-preview-import_2026_07_03.jsonl.state.json `
+  --agent-installation-id codex-desktop `
+  --confirmed-by-user
+```
+
+Already archived entries are skipped. Events without a backend reference appear in `pending_event_ids`, while archive operations that did not complete appear in `failed`. Restore sync or resolve the reported error, then run rollback again. Rollback accepts backend references only from the Sidecar's durable local receipts and does not trust editable reference fields in the state file. Keep the state file until acceptance or rollback is complete.
+
 ## Review checklist
 
 - Is the content confirmed by the user, project docs, or a trusted source?
@@ -47,7 +78,7 @@ Keep the preview file in a local protected directory. Check for passwords, token
 - Does it contain recognizable credentials, private paths, or instruction-like content?
 - Does it need an expiry date, archive status, or scheduled re-check?
 
-Batch import's write, rollback, and crystal rebuild will continue building on the preview and review workflow, preventing old material from affecting new collaboration unchecked.
+Imported evidence is marked as explicitly confirmed by the user. Conflicts can still enter the normal review and supersession workflow; crystal rebuild remains an explicit administrative action.
 
 ## Ongoing local memory sharing
 

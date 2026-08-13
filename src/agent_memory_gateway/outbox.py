@@ -146,6 +146,17 @@ class Outbox:
             CREATE INDEX IF NOT EXISTS idx_outbox_events_v3_state
               ON outbox_events_v3 (state, next_attempt_at, device_seq);
 
+            CREATE TABLE IF NOT EXISTS event_receipts_v1 (
+              event_id TEXT PRIMARY KEY,
+              result_status TEXT,
+              ack_id TEXT,
+              backend_ref TEXT,
+              result_code TEXT,
+              server_revision INTEGER,
+              error_code TEXT,
+              received_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS sidecar_cache_v2 (
               cache_id TEXT NOT NULL,
               workspace_id TEXT NOT NULL,
@@ -170,6 +181,11 @@ class Outbox:
             );
             """
         )
+        receipt_columns = {
+            str(row[1]) for row in self.conn.execute("PRAGMA table_info(event_receipts_v1)")
+        }
+        if "result_status" not in receipt_columns:
+            self.conn.execute("ALTER TABLE event_receipts_v1 ADD COLUMN result_status TEXT")
         migrated = self.conn.execute(
             "SELECT 1 FROM outbox_state WHERE state_key = 'outbox_v3_migrated'"
         ).fetchone()
@@ -471,11 +487,69 @@ class Outbox:
                         event_id,
                     ),
                 )
+                self.conn.execute(
+                    """
+                    INSERT INTO event_receipts_v1 (
+                      event_id, result_status, ack_id, backend_ref, result_code,
+                      server_revision, error_code, received_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (event_id) DO UPDATE SET
+                      result_status = excluded.result_status,
+                      ack_id = excluded.ack_id,
+                      backend_ref = excluded.backend_ref,
+                      result_code = excluded.result_code,
+                      server_revision = excluded.server_revision,
+                      error_code = excluded.error_code,
+                      received_at = excluded.received_at
+                    """,
+                    (
+                        event_id,
+                        status,
+                        str(result.get("ack_id") or "")[:128] or None,
+                        str(result.get("backend_ref") or "")[:256] or None,
+                        str(result.get("result") or "")[:128] or None,
+                        int(revision) if revision is not None else None,
+                        str(result.get("error") or "")[:64] or None,
+                        utc_now(),
+                    ),
+                )
+
+    def event_receipts(self, event_ids: list[str]) -> list[dict[str, Any]]:
+        """返回本机已经确认的最小回执，不读取或返回事件正文。"""
+
+        normalized = tuple(dict.fromkeys(str(value) for value in event_ids if str(value)))
+        if not normalized:
+            return []
+        if len(normalized) > 500:
+            raise OutboxError("EVENT_RECEIPT_LIMIT_EXCEEDED")
+        placeholders = ",".join("?" for _ in normalized)
+        with self._thread_lock:
+            rows = self.conn.execute(
+                f"""
+                SELECT event_id, COALESCE(result_status, 'acked'), ack_id, backend_ref, result_code,
+                       server_revision, error_code
+                FROM event_receipts_v1
+                WHERE event_id IN ({placeholders})
+                """,
+                normalized,
+            ).fetchall()
+        return [
+            {
+                "event_id": str(row[0]),
+                "status": str(row[1]),
+                **({"ack_id": str(row[2])} if row[2] else {}),
+                **({"backend_ref": str(row[3])} if row[3] else {}),
+                **({"result": str(row[4])} if row[4] else {}),
+                **({"server_revision": int(row[5])} if row[5] is not None else {}),
+                **({"error": str(row[6])} if row[6] else {}),
+            }
+            for row in rows
+        ]
 
     def mark_dead_letter(self, event_id: str, *, error_code: str, trace_id: str | None = None) -> None:
         with self._thread_lock:
             with self.conn:
-                self.conn.execute(
+                changed = self.conn.execute(
                     """
                     UPDATE outbox_events_v3
                     SET state = 'dead_letter', last_error_code = ?, last_trace_id = ?,
@@ -483,7 +557,20 @@ class Outbox:
                     WHERE id = ?
                     """,
                     (str(error_code)[:64], str(trace_id)[:128] if trace_id else None, utc_now(), event_id),
-                )
+                ).rowcount
+                if changed:
+                    self.conn.execute(
+                        """
+                        INSERT INTO event_receipts_v1 (
+                          event_id, result_status, error_code, received_at
+                        ) VALUES (?, 'rejected', ?, ?)
+                        ON CONFLICT (event_id) DO UPDATE SET
+                          result_status = excluded.result_status,
+                          error_code = excluded.error_code,
+                          received_at = excluded.received_at
+                        """,
+                        (event_id, str(error_code)[:64], utc_now()),
+                    )
 
     def cleanup_acked(self) -> int:
         """只清理已获得固定终态回执的本地密文事件。"""

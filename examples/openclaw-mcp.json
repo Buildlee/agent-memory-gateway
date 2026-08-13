@@ -1,0 +1,20 @@
+{
+  "mcp": {
+    "servers": {
+      "shared-memory": {
+        "command": "pwsh",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "C:\\work\\agent-memory-gateway\\scripts\\start-sidecar-mcp.ps1",
+          "-AgentInstallationId",
+          "openclaw-desktop",
+          "-DefaultWorkspace",
+          "shared-workspace"
+        ]
+      }
+    }
+  }
+}

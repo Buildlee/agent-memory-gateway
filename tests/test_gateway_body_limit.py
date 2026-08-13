@@ -1,4 +1,5 @@
 import io
+import socket
 import unittest
 from http.server import BaseHTTPRequestHandler
 from unittest import mock
@@ -59,6 +60,19 @@ class GatewayBodyLimitTests(unittest.TestCase):
             handler._read_json()
 
         self.assertEqual(raised.exception.code, "REQUEST_BODY_INVALID")
+
+    def test_slow_body_timeout_uses_a_stable_error_code(self):
+        class TimeoutStream:
+            def read(self, _length):
+                raise socket.timeout()
+
+        handler = _handler({"Content-Length": "10"})
+        handler.rfile = TimeoutStream()
+
+        with self.assertRaises(EventValidationError) as raised:
+            handler._read_json()
+
+        self.assertEqual(raised.exception.code, "REQUEST_BODY_TIMEOUT")
 
     def test_json_response_ignores_a_client_disconnect(self):
         class BrokenPipeStream:

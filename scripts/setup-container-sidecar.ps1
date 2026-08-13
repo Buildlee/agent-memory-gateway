@@ -29,7 +29,7 @@ param(
     [Parameter(Mandatory)]
     [string]$AgentInstallationId,
 
-    [ValidateSet("codex", "hermes", "other")]
+    [ValidateSet("codex", "hermes", "openclaw", "other")]
     [string]$AgentType,
 
     [string]$AgentDisplayName = $AgentInstallationId,

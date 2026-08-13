@@ -7,7 +7,18 @@ import json
 import os
 import uuid
 
+from .memory_app import load_sidecar_environment
 from .sidecar_daemon import get_shared_sidecar
+
+
+def _load_explicit_sidecar_key_file() -> None:
+    """跨平台 MCP 配置只引用受保护 key 文件，不把密钥写进 JSON。"""
+
+    path = str(os.environ.get("MEMORY_SIDECAR_KEY_FILE") or "").strip()
+    if not path:
+        return
+    values = load_sidecar_environment(__import__("pathlib").Path(path), require_private_permissions=os.name != "nt")
+    os.environ.update(values)
 
 
 def _active_workspace_id(workspace_id: str | None) -> str:
@@ -19,7 +30,18 @@ def _active_workspace_id(workspace_id: str | None) -> str:
     return selected
 
 
+def _forget_payload(
+    memory_id: str, hard_delete: bool, workspace_id: str | None
+) -> dict[str, object]:
+    return {
+        "memory_id": memory_id,
+        "hard_delete": hard_delete,
+        "workspace_id": _active_workspace_id(workspace_id),
+    }
+
+
 def main() -> None:
+    _load_explicit_sidecar_key_file()
     parser = argparse.ArgumentParser(description="共享记忆 MCP Sidecar 桥接")
     parser.add_argument("--transport", choices=("stdio", "streamable-http"), default="stdio")
     parser.add_argument("--host", default="127.0.0.1")
@@ -200,10 +222,17 @@ def main() -> None:
         )
 
     @mcp.tool()
-    def memory_forget(memory_id: str, hard_delete: bool = False) -> str:
-        """归档或删除一条记忆。"""
+    def memory_forget(
+        memory_id: str,
+        hard_delete: bool = False,
+        workspace_id: str | None = None,
+    ) -> str:
+        """归档一条记忆；当前版本不支持永久删除。"""
 
-        return json.dumps(client.forget({"memory_id": memory_id, "hard_delete": hard_delete}), ensure_ascii=False)
+        return json.dumps(
+            client.forget(_forget_payload(memory_id, hard_delete, workspace_id)),
+            ensure_ascii=False,
+        )
 
     @mcp.tool()
     def memory_sync_status(workspace_id: str | None = None) -> str:

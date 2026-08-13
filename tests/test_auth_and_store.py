@@ -185,6 +185,8 @@ class StoreSecurityTests(unittest.TestCase):
                 context = store.context({"query": "Gateway", "workspace_id": "workspace-a"}, principal())
                 self.assertEqual(context["memory_references"][0]["content_role"], "reference_data")
                 self.assertFalse(context["memory_references"][0]["instruction_like"])
+                self.assertTrue(context["recall_id"].startswith("local_"))
+                self.assertEqual(json.loads(context["context_pack"])["recall"]["id"], context["recall_id"])
             finally:
                 store.close()
 

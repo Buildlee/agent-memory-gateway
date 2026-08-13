@@ -115,10 +115,11 @@ if (-not [string]::IsNullOrWhiteSpace($GatewayCaCertificate) -and -not (Test-Pat
     throw "找不到 Gateway CA 证书文件：$GatewayCaCertificate"
 }
 
-$taskHost = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\pwsh.exe"
-if (-not (Test-Path -LiteralPath $taskHost -PathType Leaf)) {
-    throw "找不到当前用户的 PowerShell 启动程序：$taskHost"
+$pwshCommand = Get-Command -Name "pwsh" -ErrorAction SilentlyContinue
+if (-not $pwshCommand -or -not (Test-Path -LiteralPath $pwshCommand.Source -PathType Leaf)) {
+    throw "找不到 PowerShell 7（pwsh）。请先安装 PowerShell 7，或将 pwsh 加入 PATH。"
 }
+$taskHost = $pwshCommand.Source
 $taskUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 if ([string]::IsNullOrWhiteSpace($taskUser)) {
     throw "无法识别当前 Windows 用户"

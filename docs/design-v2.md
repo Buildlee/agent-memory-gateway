@@ -29,6 +29,12 @@
 
 `device` 模式从隐藏输入读取一次性配对码，创建设备私钥和 Sidecar key，刷新凭据存入 Windows Credential Manager。配对码可由管理员预先携带一个工作区及最小能力集合，Gateway 会在同一事务中仅绑定本次登记的 Agent，端侧没有自行授权能力。默认建立独立 Python 运行环境，启动后只生成不含凭据的 MCP JSON。已有私钥、key、计划任务或 MCP 配置时停止，不会覆盖。配对成功但本机后续步骤被打断时，用户可传 `-UseExistingCredential` 继续；脚本只复用受保护存储中的现有凭据。恢复时仅刷新由本安装器识别的 Sidecar 计划任务，未知任务和已有 MCP 配置仍不会覆盖。
 
+Linux 与 macOS 不复制 PowerShell 计划任务逻辑，而是使用 `memory-device install` 的同一安装核心：Linux 写入 systemd 用户单元，macOS 写入 LaunchAgent，刷新凭据和设备密钥使用 `0600` 文件。三种桌面平台都使用 `windows`、`linux`、`macos` 的真实设备类型；中断恢复要求配置完全一致，避免静默覆盖已有身份。
+
+普通用户从 `memory-device onboard` 进入同一安装核心；Windows 网页入口可由系统 PowerShell 启动，安装后的任务直接运行独立 Python 环境，不要求 Sidecar 继续依赖 PowerShell。向导自动发现 Codex、Hermes、OpenClaw，并为 OpenClaw 生成 `mcp.servers` 结构。第三方客户端配置不由安装器直接改写，用户按结果中的 `client_configuration` 导入后再重启对应 Agent。
+
+安装后的 `status` 和 `doctor` 只读；`repair`、`uninstall` 默认输出计划，分别使用 `--apply`、`--yes` 才修改受管文件和服务。卸载默认保留设备身份与本地记忆，并在删除运行配置和 MCP 配置前备份；凭据和本地数据只在显式清理参数存在时删除。同名但不符合受管标识的服务、越界路径和符号链接都会被拒绝。
+
 `server` 模式不带 `-Apply` 时只回显经校验的发布信息。加 `-Apply` 才会创建发布目录、上传公开代码、启动容器。密钥、证书、数据库迁移和备份不属于自动化范围：这些动作需要管理员在维护窗口确认。
 
 ---
@@ -86,7 +92,7 @@ Sidecar 启动时写明默认工作区。MCP 工具没有 `workspace_id` 时使�
 设备接入分两层：
 
 - **协议层**：配对、设备私钥、刷新凭据轮换、工作区绑定、离线队列、MCP 工具。行为不因设备品牌或 Agent 厂商变化。
-- **运行层**：本机凭据保存和进程生命周期。Windows 用 Credential Manager + 计划任务；容器用权限 `0600` 的状态目录 + 回环 MCP Bridge。
+- **运行层**：本机凭据保存和进程生命周期。Windows 用 Credential Manager + 计划任务；Linux 用 `0600` 文件 + systemd 用户服务；macOS 用 `0600` 文件 + LaunchAgent；容器用权限 `0600` 的状态目录 + 回环 MCP Bridge。
 
 容器 Bridge 与目标服务共用网络命名空间，标准地址固定为 `http://127.0.0.1:8767/mcp`。需要适配的只是 Agent 官方 MCP 设置入口，不需要重新实现记忆服务。配置连接器不能保存刷新凭据、操作数据库或扩大工作区权限。
 

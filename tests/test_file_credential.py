@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from agent_memory_gateway.file_credential import (
     FileCredentialError,
@@ -11,6 +12,16 @@ from agent_memory_gateway.file_credential import (
     replace_file_credential,
     write_file_credential,
 )
+
+
+class CrossPlatformFileCredentialTests(unittest.TestCase):
+    def test_write_succeeds_when_fchmod_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "refresh.json"
+            with mock.patch("agent_memory_gateway.file_credential.os.fchmod", None, create=True):
+                write_file_credential(path, "test-user", "refresh-value")
+
+            self.assertEqual(read_file_credential(path), ("test-user", "refresh-value"))
 
 
 @unittest.skipIf(os.name == "nt", "受限文件权限仅在 Linux/NAS 上启用")

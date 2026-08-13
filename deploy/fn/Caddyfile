@@ -7,13 +7,25 @@
 
 https://{$MEMORY_GATEWAY_PUBLIC_NAME}:8443 {
   tls internal
+  request_body {
+    max_size 2MB
+  }
   @admin_console path /admin /admin/*
   handle @admin_console {
-    reverse_proxy admin-sidecar:8767
+    reverse_proxy admin-sidecar:8767 {
+      transport http {
+        dial_timeout 5s
+        response_header_timeout 30s
+      }
+    }
   }
   handle {
     reverse_proxy gateway:8787 {
       header_up X-Forwarded-For {remote_host}
+      transport http {
+        dial_timeout 5s
+        response_header_timeout 30s
+      }
     }
   }
 }

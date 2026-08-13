@@ -51,6 +51,8 @@ def _advapi32():
     library.CredReadW.restype = wintypes.BOOL
     library.CredWriteW.argtypes = [ctypes.POINTER(CREDENTIALW), wintypes.DWORD]
     library.CredWriteW.restype = wintypes.BOOL
+    library.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
+    library.CredDeleteW.restype = wintypes.BOOL
     library.CredFree.argtypes = [ctypes.c_void_p]
     library.CredFree.restype = None
     return library
@@ -108,6 +110,20 @@ def write_generic_credential(target: str, username: str, secret: str) -> None:
     if read_generic_credential(target) is not None:
         raise FileExistsError(f"拒绝覆盖已有 Windows 凭据：{target}")
     _write_generic_credential(target, username, secret)
+
+
+def delete_generic_credential(target: str) -> bool:
+    """删除明确的通用凭据；凭据本就不存在时视为成功。"""
+
+    if not target or len(target) > 256:
+        raise WindowsCredentialError("Credential Manager target 无效")
+    library = _advapi32()
+    if library.CredDeleteW(target, CRED_TYPE_GENERIC, 0):
+        return True
+    error = ctypes.get_last_error()
+    if error == ERROR_NOT_FOUND:
+        return False
+    raise WindowsCredentialError(f"删除 Windows 凭据失败，错误码：{error}")
 
 
 def replace_generic_credential(
