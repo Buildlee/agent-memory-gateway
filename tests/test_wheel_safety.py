@@ -21,6 +21,7 @@ def _write_wheel(path: Path, extra: dict[str, str] | None = None) -> None:
         "agent_memory_gateway/device_lifecycle.py": "# lifecycle\n",
         "agent_memory_gateway/_schema/migrations/20260812_1_cross_platform_device_types.sql": "SELECT 1;\n",
         "agent_memory_gateway/_schema/migrations/20260812_2_openclaw_agent_type.sql": "SELECT 1;\n",
+        "agent_memory_gateway/_schema/migrations/20260813_1_crystal_candidates.sql": "SELECT 1;\n",
         "agent_memory_gateway-0.1.0.dist-info/entry_points.txt": (
             "[console_scripts]\n"
             "memory-device = agent_memory_gateway.device_runtime:main\n"

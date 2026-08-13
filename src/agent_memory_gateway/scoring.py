@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timezone
+from typing import Any
 
 
 DEFAULT_HALF_LIFE_DAYS: dict[str, float] = {
@@ -14,6 +15,59 @@ DEFAULT_HALF_LIFE_DAYS: dict[str, float] = {
     "procedure": 365,
     "device_fact": 120,
 }
+
+
+def decay_shadow(
+    *,
+    kind: str,
+    created_at: Any,
+    last_useful_at: Any = None,
+    pinned: bool = False,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """只计算遗忘曲线观察值；调用方不得把它用于正式排序。"""
+
+    current = normalize_time(now or datetime.now(timezone.utc))
+    created = parse_time_value(created_at, fallback=current)
+    useful = parse_time_value(last_useful_at, fallback=created)
+    anchor = max(created, useful)
+    age_days = max(0.0, (current - anchor).total_seconds() / 86400)
+    normalized_kind = str(kind or "fact").strip().lower()
+    half_life = DEFAULT_HALF_LIFE_DAYS.get(normalized_kind, 90.0)
+    multiplier = math.exp(-age_days / max(1.0, half_life))
+    if pinned:
+        multiplier = max(multiplier, 0.85)
+    band = "hot" if multiplier >= 0.75 else "warm" if multiplier >= 0.40 else "cold" if multiplier >= 0.15 else "dead"
+    return {
+        "applied": False,
+        "band": band,
+        "multiplier": round(multiplier, 6),
+        "age_days": round(age_days, 3),
+        "half_life_days": half_life,
+        "pinned_floor": bool(pinned),
+    }
+
+
+def parse_time_value(value: Any, *, fallback: datetime) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            return fallback
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return fallback
+    return normalize_time(parsed)
+
+
+def normalize_time(value: datetime) -> datetime:
+    return (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
+    )
 
 
 def parse_time(value: str | None) -> datetime:

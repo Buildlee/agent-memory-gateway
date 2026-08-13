@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import sqlite3
 import threading
 import uuid
@@ -24,6 +25,10 @@ class LegacyOutboxError(OutboxError):
 
 class OutboxInUseError(OutboxError):
     """另一个 Sidecar 进程已经持有该 outbox。"""
+
+
+_CHECKPOINT_ID = re.compile(r"[A-Za-z0-9_.@:-]{1,128}\Z")
+_CHECKPOINT_DETAILS_MAX_BYTES = 64 * 1024
 
 
 def utc_now() -> str:
@@ -179,6 +184,24 @@ class Outbox:
               shared_at TEXT NOT NULL,
               PRIMARY KEY (provider_id, record_id, source_revision)
             );
+
+            CREATE TABLE IF NOT EXISTS local_checkpoints_v1 (
+              checkpoint_id TEXT NOT NULL,
+              workspace_id TEXT NOT NULL,
+              session_id TEXT,
+              status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'blocked')),
+              summary_ciphertext BLOB NOT NULL,
+              summary_nonce BLOB NOT NULL,
+              summary_key_version TEXT NOT NULL,
+              details_ciphertext BLOB NOT NULL,
+              details_nonce BLOB NOT NULL,
+              details_key_version TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY (workspace_id, checkpoint_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_local_checkpoints_v1_workspace_updated
+              ON local_checkpoints_v1 (workspace_id, updated_at DESC);
             """
         )
         receipt_columns = {
@@ -374,6 +397,246 @@ class Outbox:
                     """,
                     (provider_id, record_id, source_revision, event_id, capture_mode, utc_now()),
                 )
+
+    def save_checkpoint(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """把通用 MCP 会话状态以骨架和详情两层加密保存到本机。"""
+
+        checkpoint_id = str(payload.get("checkpoint_id") or f"cp_{uuid.uuid4().hex}").strip()
+        if _CHECKPOINT_ID.fullmatch(checkpoint_id) is None:
+            raise OutboxError("CHECKPOINT_ID_INVALID")
+        workspace_id = str(payload.get("workspace_id") or "").strip()
+        if not workspace_id or len(workspace_id) > 256:
+            raise OutboxError("WORKSPACE_ID_INVALID")
+        session_id = str(payload.get("session_id") or "").strip() or None
+        if session_id is not None and len(session_id) > 256:
+            raise OutboxError("SESSION_ID_INVALID")
+        status = str(payload.get("status") or "active").strip()
+        if status not in {"active", "completed", "blocked"}:
+            raise OutboxError("CHECKPOINT_STATUS_INVALID")
+        summary = self._checkpoint_summary(payload)
+        details = self._checkpoint_details(payload)
+        encoded_details = json.dumps(
+            details, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        if len(encoded_details) > _CHECKPOINT_DETAILS_MAX_BYTES:
+            raise OutboxError("CHECKPOINT_TOO_LARGE")
+        summary_encrypted = self._cipher.encrypt_json(
+            summary, aad=self._checkpoint_aad(workspace_id, checkpoint_id, "summary")
+        )
+        details_encrypted = self._cipher.encrypt_json(
+            details, aad=self._checkpoint_aad(workspace_id, checkpoint_id, "details")
+        )
+        now = utc_now()
+        with self._thread_lock:
+            with self.conn:
+                self.conn.execute(
+                    """
+                    INSERT INTO local_checkpoints_v1 (
+                      checkpoint_id, workspace_id, session_id, status,
+                      summary_ciphertext, summary_nonce, summary_key_version,
+                      details_ciphertext, details_nonce, details_key_version,
+                      created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (workspace_id, checkpoint_id) DO UPDATE SET
+                      session_id = excluded.session_id,
+                      status = excluded.status,
+                      summary_ciphertext = excluded.summary_ciphertext,
+                      summary_nonce = excluded.summary_nonce,
+                      summary_key_version = excluded.summary_key_version,
+                      details_ciphertext = excluded.details_ciphertext,
+                      details_nonce = excluded.details_nonce,
+                      details_key_version = excluded.details_key_version,
+                      updated_at = excluded.updated_at
+                    """,
+                    (
+                        checkpoint_id, workspace_id, session_id, status,
+                        summary_encrypted.ciphertext, summary_encrypted.nonce,
+                        summary_encrypted.key_version, details_encrypted.ciphertext,
+                        details_encrypted.nonce, details_encrypted.key_version, now, now,
+                    ),
+                )
+        return {
+            "status": "saved",
+            "checkpoint_id": checkpoint_id,
+            "workspace_id": workspace_id,
+            "checkpoint_status": status,
+            "updated_at": now,
+        }
+
+    def resume_checkpoint(
+        self,
+        *,
+        workspace_id: str,
+        checkpoint_id: str | None = None,
+        include_details: bool = False,
+    ) -> dict[str, Any]:
+        """默认只返回最近检查点骨架；显式请求时再解密详情。"""
+
+        selected_workspace = str(workspace_id or "").strip()
+        if not selected_workspace or len(selected_workspace) > 256:
+            raise OutboxError("WORKSPACE_ID_INVALID")
+        selected_id = str(checkpoint_id or "").strip()
+        if selected_id and _CHECKPOINT_ID.fullmatch(selected_id) is None:
+            raise OutboxError("CHECKPOINT_ID_INVALID")
+        query = """
+            SELECT checkpoint_id, workspace_id, session_id, status,
+                   summary_ciphertext, summary_nonce, summary_key_version,
+                   details_ciphertext, details_nonce, details_key_version,
+                   created_at, updated_at
+            FROM local_checkpoints_v1
+            WHERE workspace_id = ?
+        """
+        parameters: tuple[Any, ...] = (selected_workspace,)
+        if selected_id:
+            query += " AND checkpoint_id = ?"
+            parameters = (selected_workspace, selected_id)
+        query += " ORDER BY updated_at DESC LIMIT 1"
+        with self._thread_lock:
+            row = self.conn.execute(query, parameters).fetchone()
+        if row is None:
+            return {
+                "status": "not_found",
+                "workspace_id": selected_workspace,
+                "checkpoint_id": selected_id or None,
+            }
+        checkpoint_id_value = str(row[0])
+        summary = self._decrypt_checkpoint_payload(
+            selected_workspace, checkpoint_id_value, "summary", row[4], row[5], row[6]
+        )
+        result: dict[str, Any] = {
+            "status": "ready",
+            "checkpoint_id": checkpoint_id_value,
+            "workspace_id": str(row[1]),
+            "session_id": str(row[2]) if row[2] else None,
+            "checkpoint_status": str(row[3]),
+            "summary": summary,
+            "details_available": True,
+            "created_at": str(row[10]),
+            "updated_at": str(row[11]),
+        }
+        if include_details:
+            result["details"] = self._decrypt_checkpoint_payload(
+                selected_workspace, checkpoint_id_value, "details", row[7], row[8], row[9]
+            )
+        return result
+
+    def integrity_report(self) -> dict[str, Any]:
+        """只读检查本机 SQLite、加密样本、队列状态和索引。"""
+
+        required_tables = {
+            "outbox_state",
+            "outbox_events_v3",
+            "event_receipts_v1",
+            "sidecar_cache_v2",
+            "local_provider_shares",
+            "local_checkpoints_v1",
+        }
+        with self._thread_lock:
+            quick_check = str(self.conn.execute("PRAGMA quick_check").fetchone()[0])
+            tables = {
+                str(row[0])
+                for row in self.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            counts = self.status_counts()
+            encrypted_samples = 0
+            for row in self.conn.execute(
+                """
+                SELECT id, payload_ciphertext, payload_nonce, payload_key_version
+                FROM outbox_events_v3 ORDER BY device_seq DESC LIMIT 5
+                """
+            ).fetchall():
+                self._cipher.decrypt_json(
+                    EncryptedPayload(bytes(row[1]), bytes(row[2]), str(row[3])),
+                    aad=self._aad(str(row[0])),
+                )
+                encrypted_samples += 1
+            checkpoint_samples = 0
+            for row in self.conn.execute(
+                """
+                SELECT workspace_id, checkpoint_id,
+                       summary_ciphertext, summary_nonce, summary_key_version,
+                       details_ciphertext, details_nonce, details_key_version
+                FROM local_checkpoints_v1 ORDER BY updated_at DESC LIMIT 5
+                """
+            ).fetchall():
+                workspace_id = str(row[0])
+                checkpoint_id = str(row[1])
+                self._decrypt_checkpoint_payload(
+                    workspace_id, checkpoint_id, "summary", row[2], row[3], row[4]
+                )
+                self._decrypt_checkpoint_payload(
+                    workspace_id, checkpoint_id, "details", row[5], row[6], row[7]
+                )
+                checkpoint_samples += 1
+        missing_tables = sorted(required_tables - tables)
+        ok = quick_check == "ok" and not missing_tables
+        return {
+            "status": "ok" if ok else "error",
+            "quick_check": quick_check,
+            "missing_tables": missing_tables,
+            "outbox_states": counts,
+            "encrypted_samples_checked": encrypted_samples,
+            "checkpoint_samples_checked": checkpoint_samples,
+        }
+
+    @staticmethod
+    def _checkpoint_summary(payload: dict[str, Any]) -> dict[str, Any]:
+        summary = str(payload.get("summary") or "").strip()
+        if not summary or len(summary) > 4_000:
+            raise OutboxError("CHECKPOINT_SUMMARY_INVALID")
+        next_steps = Outbox._checkpoint_text_list(payload.get("next_steps"), "NEXT_STEPS_INVALID")
+        blockers = Outbox._checkpoint_text_list(payload.get("blockers"), "BLOCKERS_INVALID")
+        return {"summary": summary, "next_steps": next_steps, "blockers": blockers}
+
+    @staticmethod
+    def _checkpoint_details(payload: dict[str, Any]) -> dict[str, Any]:
+        decisions = Outbox._checkpoint_text_list(payload.get("decisions"), "DECISIONS_INVALID")
+        references = Outbox._checkpoint_text_list(payload.get("references"), "REFERENCES_INVALID")
+        metadata = payload.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            raise OutboxError("CHECKPOINT_METADATA_INVALID")
+        try:
+            json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError) as exc:
+            raise OutboxError("CHECKPOINT_METADATA_INVALID") from exc
+        return {
+            **Outbox._checkpoint_summary(payload),
+            "decisions": decisions,
+            "references": references,
+            "metadata": metadata,
+        }
+
+    @staticmethod
+    def _checkpoint_text_list(value: Any, error_code: str) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list) or len(value) > 50:
+            raise OutboxError(error_code)
+        if any(not isinstance(item, str) for item in value):
+            raise OutboxError(error_code)
+        normalized = [item.strip() for item in value]
+        if any(not item or len(item) > 2_000 for item in normalized):
+            raise OutboxError(error_code)
+        return normalized
+
+    def _decrypt_checkpoint_payload(
+        self,
+        workspace_id: str,
+        checkpoint_id: str,
+        layer: str,
+        ciphertext: Any,
+        nonce: Any,
+        key_version: Any,
+    ) -> dict[str, Any]:
+        try:
+            return self._cipher.decrypt_json(
+                EncryptedPayload(bytes(ciphertext), bytes(nonce), str(key_version)),
+                aad=self._checkpoint_aad(workspace_id, checkpoint_id, layer),
+            )
+        except EncryptionError as exc:
+            raise OutboxError("CHECKPOINT_DECRYPT_FAILED") from exc
 
     def list_events(self) -> list[dict[str, Any]]:
         with self._thread_lock:
@@ -825,6 +1088,10 @@ class Outbox:
     @staticmethod
     def _cache_aad(workspace_id: str, cache_id: str) -> bytes:
         return f"memory-sidecar-cache:{workspace_id}:{cache_id}".encode("utf-8")
+
+    @staticmethod
+    def _checkpoint_aad(workspace_id: str, checkpoint_id: str, layer: str) -> bytes:
+        return f"memory-sidecar-checkpoint:{workspace_id}:{checkpoint_id}:{layer}".encode("utf-8")
 
     @staticmethod
     def _aad(event_id: str) -> bytes:

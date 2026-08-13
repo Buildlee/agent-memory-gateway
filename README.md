@@ -123,7 +123,7 @@ flowchart LR
 | 接入层 | Codex / Hermes / OpenClaw | MCP 或 HTTP 请求记忆 |
 | 本机层 | Memory Sidecar | 凭据、加密 outbox、缓存，不暴露到局域网 |
 | 服务层 | Memory Gateway | 身份验证、权限判断、事件账本、查询和审核 |
-| 存储层 | PostgreSQL + GBrain/适配器 | 生产审计、授权和可检索记忆；SQLite 仅供本地演示 |
+| 存储层 | PostgreSQL + GBrain/适配器；Sidecar 加密 SQLite | 中枢保存审计、授权和共享记忆；本机保存 outbox、缓存和检查点；Gateway 的 SQLite 共享库仅供演示 |
 
 默认 `slim` 布局把 Gateway、Worker、管理 Sidecar 和管理页放在同一应用容器，但每个子进程只继承自身所需的敏感环境变量。这是运维精简布局，不等同于容器级隔离；需要更强故障域和文件系统隔离时使用 `split` 布局。
 
@@ -155,7 +155,7 @@ memory-gateway --help
 |------|------|------|
 | HTTP 服务 | `gateway.py` | 健康检查、事件读写、同步 push/pull、审核、管理页 |
 | 身份与权限 | `auth.py` | O(1) token hash 认证 + 工作区/能力集权限判断 |
-| 加密 Outbox | `outbox.py` | 离线写入加密入列，恢复后按序同步 |
+| 加密 Outbox 与本机检查点 | `outbox.py` | 离线写入按序同步；任务摘要与详情分层加密保存 |
 | 同步协议 | `sync_service.py` | push/pull：事件回执、游标增量、墓碑标记 |
 | 限流 | `rate_limit.py` | 认证入口滑动窗口限流 |
 | 数据库连接池 | `db_pool.py` | PostgreSQL 连接池，支持忙碌回退 |
@@ -170,9 +170,9 @@ memory-gateway --help
 | 查询服务 | `query_service.py` | 授权过滤后检索 |
 | 反馈服务 | `feedback_service.py` | 记录召回反馈并提供有界排序信号 |
 | 混合检索 | `hybrid_retrieval.py` | 关键词 + CJK n-gram + 去重 + 预算裁剪 + MMR 多样性 |
-| 评分衰减 | `scoring.py` | 记忆按半衰期衰减（preference 180d / fact 90d / temporary 3d） |
+| 衰减观察 | `scoring.py` | 计算 hot/warm/cold/dead 影子结果，暂不改变正式排序 |
 | 向量索引 | `gbrain_backend.py`, `gbrain.py` | 长期记忆的向量检索后端 |
-| 结晶记忆 | `crystal_service.py` | 稳定记忆整理为结晶页面，可审计重建 |
+| 结晶记忆 | `crystal_service.py` | Worker 发现重建候选，管理员显式执行可审计重建 |
 
 ### 安全与凭据
 
@@ -187,7 +187,7 @@ memory-gateway --help
 
 | 模块 | 文件 | 职责 |
 |------|------|------|
-| MCP Sidecar | `sidecar_mcp.py` | 暴露 `memory_context`/`memory_remember`/`memory_sync_status` |
+| MCP Sidecar | `sidecar_mcp.py` | 暴露上下文、长期记忆、任务检查点和恢复等标准 MCP 工具 |
 | 端侧 Provider | `local_provider.py` | 读取本机记忆并安全提议到共享库 |
 | 本机 Daemon | `sidecar_daemon.py` | 单实例，多 Agent 通过回环 RPC 共用 |
 | 审核服务 | `review_service.py` | 待审核观察与审批工作流 |
@@ -203,6 +203,12 @@ memory-gateway --help
 
 稳定记忆可整理为结晶页（`crystal_service.py`），来源变化后需显式重建。
 
+长任务不需要读取 Agent 的私有会话文件。任何支持标准 MCP 的客户端都可以调用 `memory_checkpoint`，把当前结论、下一步、阻塞项和引用保存到本机加密库；之后用 `memory_resume` 恢复。默认只返回简短骨架，明确传入 `include_details=true` 才读取详情。检查点不会自动上传到 Gateway，也不会变成共享长期记忆。
+
+日常核心工具是 `memory_context`、`memory_remember`、`memory_checkpoint`、`memory_resume` 和 `memory_sync_status`。它们在所有 MCP 客户端中使用同一份参数和行为约定。
+
+Worker 会根据已确认来源生成结晶重建候选，`memory_list_crystal_candidates` 只返回范围、来源引用和修订号。真正重建仍由 `memory_rebuild_crystal` 显式触发。正式召回结果中的 `shadow_decay.applied` 固定为 `false`；它用于观察衰减效果，不参与当前排序。
+
 ## 🔒 安全边界
 
 - Agent 配置不保存 Gateway 刷新凭据、数据库连接串或私钥
@@ -216,11 +222,11 @@ memory-gateway --help
 
 | 方式 | 场景 | 参考 |
 |------|------|------|
-| Codex MCP | 本机 Codex 共享项目/偏好 | [codex-mcp.json](examples/codex-mcp.json) |
-| Hermes MCP | 同设备多 Agent 共用 | [hermes-mcp.json](examples/hermes-mcp.json) |
-| OpenClaw MCP | 正式接入 | [openclaw-mcp.json](examples/openclaw-mcp.json) |
+| 标准 MCP 客户端 | 所有核心能力；不要求 Agent 专属插件或 hook | [示例说明](examples/README.md) |
+| Codex MCP 配置模板 | 本机 Codex 连接同一 MCP 服务 | [codex-mcp.json](examples/codex-mcp.json) |
+| Hermes MCP 配置模板 | Hermes 连接同一 MCP 服务 | [hermes-mcp.json](examples/hermes-mcp.json) |
+| OpenClaw MCP 配置模板 | OpenClaw 连接同一 MCP 服务 | [openclaw-mcp.json](examples/openclaw-mcp.json) |
 | OpenClaw HTTP | 本地原型或自定义工作流 | [openclaw-http.md](examples/openclaw-http.md) |
-| 标准 MCP 客户端 | 支持 MCP 的 Agent | [示例说明](examples/README.md) |
 | 容器内 Agent | Docker + Streamable HTTP MCP | [容器 Sidecar](docs/container-sidecar.md) |
 
 ## 📖 文档

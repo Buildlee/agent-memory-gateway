@@ -177,6 +177,8 @@ Docker 中的 Agent 使用同一套身份和工作区协议，但不需要复制
 3. 用另一个已授权 Agent 调用 `memory_search` 或 `memory_context` 搜索这条信息。
 4. 检查 Gateway 审计记录，确认它们属于预期工作区。
 
+再验证本机任务恢复：调用 `memory_checkpoint` 保存一段不含凭据的任务摘要和下一步，然后调用 `memory_resume`。默认结果只包含摘要骨架；传入 `include_details=true` 才返回决定、引用和元数据。检查点保存在本机加密库，不会自动上传或进入共享长期记忆。
+
 MCP 调用没带 `workspace_id` 时，系统用 `DefaultWorkspace`。没有配置时返回 `WORKSPACE_ID_REQUIRED`；设备或 Agent 不属于该工作区时返回 `WORKSPACE_FORBIDDEN`。这两个错误说明需要补齐或核对授权信息，而不是把工作区名称改成占位文本。
 
 ### 单独检查本机 Sidecar
@@ -204,6 +206,8 @@ $env:MEMORY_LOCAL_PROVIDER_CONFIG = '{"providers":[{"id":"personal-notes","type"
 在 Agent 中先调用 `memory_local_sources` 查看来源，再用 `memory_local_preview` 预览。`memory_share_selected` 只提交人工选中的记录；`memory_propose_local_candidates` 只会自动提议用户偏好、项目决定、稳定事实和长期约定四类内容。敏感信息、命令式内容和超长内容会被本机拦截，端侧路径不会上传。
 
 日常使用时先调用 `memory_context`。它返回的 `recall_id` 可交给 `memory_feedback`，标记 `useful`、`pin`、`outdated` 或 `incorrect`。反馈只影响后续排序，不会直接删除或改写记忆。
+
+`memory-device doctor` 还会通过正在运行的 Sidecar 检查本机 SQLite 完整性、必需表和少量密文样本。该检查不返回记忆正文，也不执行修复。拥有 `memory.manage` 的 Agent 可用 `memory_list_crystal_candidates` 查看 Worker 发现的结晶候选；重建仍需显式调用 `memory_rebuild_crystal`。
 
 ---
 

@@ -37,7 +37,7 @@ class MetadataSchemaContractTests(unittest.TestCase):
             metadata_migrations, "repository_root", return_value=Path(directory)
         ):
             self.assertEqual(schema_directory(), bundled)
-            self.assertEqual(len(expected_checksums()), 12)
+            self.assertEqual(len(expected_checksums()), 13)
 
     def test_schema_declares_every_required_metadata_table(self):
         sql = "\n".join(read_schema(spec.path) for spec in migration_specs())
@@ -170,6 +170,16 @@ class MetadataSchemaContractTests(unittest.TestCase):
         self.assertIn("DROP CONSTRAINT IF EXISTS agent_installations_agent_type_check", sql)
         normalized = sql.upper()
         for statement in ("DROP TABLE", "DELETE ", "TRUNCATE "):
+            self.assertNotIn(statement, normalized)
+
+    def test_crystal_candidate_migration_stores_references_without_memory_content(self):
+        sql = read_schema(migration_specs()[12].path)
+        self.assertIn("CREATE TABLE IF NOT EXISTS crystal_rebuild_candidates", sql)
+        self.assertIn("source_refs JSONB", sql)
+        self.assertIn("source_revision BIGINT", sql)
+        self.assertNotIn("content TEXT", sql)
+        normalized = sql.upper()
+        for statement in ("DROP ", "DELETE ", "TRUNCATE "):
             self.assertNotIn(statement, normalized)
 
     def test_migration_registry_uses_packaged_schema_files(self):

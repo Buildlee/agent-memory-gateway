@@ -70,8 +70,13 @@ Agents with the `memory.manage` permission can use the following read-only MCP t
 - `memory_admin_dead_letters` — unprocessed dead letter IDs, error codes, error categories, and creation times
 - `memory_admin_audit` — recent operation timestamps, operators, result codes, and trace IDs
 - `memory_admin_devices` — device, Agent, workspace bindings, and permission status
+- `memory_list_crystal_candidates` — pending crystal rebuild plans with scope, source references, reason, and revision only
 
 These tools do not return device public keys, credentials, `details_json`, event body content, or ciphertext. When troubleshooting, first correlate trace IDs and error codes with service logs in the protected environment; do not copy tokens, connection strings, or user content from logs into issues, chat records, or Git.
+
+When the Sidecar is healthy, `memory-device doctor` adds a `local_memory_integrity` check. It validates SQLite `quick_check`, required tables, queue states, and a small decryptable ciphertext sample without printing memory content. If it fails, preserve and back up the local state directory before attempting any repair; do not delete the database or lock file directly.
+
+The worker plans crystal rebuild candidates once at startup and every 300 seconds thereafter, but never rebuilds automatically. Set `--crystal-plan-interval-seconds` between 30 and 86400 seconds to change that interval. Review the candidate and its source references first, then call `memory_rebuild_crystal`. A successful rebuild marks the candidate as `rebuilt` and keeps source history intact.
 
 ---
 

@@ -61,6 +61,7 @@ def main() -> None:
         json_response=network_transport,
         instructions=(
             "处理涉及项目、设备、用户偏好或既有决定的任务前，先调用 memory_context。"
+            "继续中断任务前调用 memory_resume；任务形成可复用的阶段状态时调用 memory_checkpoint。"
             "任务完成后，只把有长期价值的内容写入共享记忆；端侧自动提议仅使用白名单类别。"
             "完整会话、临时过程、凭据和命令式内容不得进入共享记忆。"
         ),
@@ -160,6 +161,57 @@ def main() -> None:
             }
         )
         return result.get("context_pack", json.dumps(result, ensure_ascii=False))
+
+    @mcp.tool()
+    def memory_checkpoint(
+        summary: str,
+        workspace_id: str | None = None,
+        checkpoint_id: str = "",
+        session_id: str = "",
+        status: str = "active",
+        next_steps: list[str] | None = None,
+        blockers: list[str] | None = None,
+        decisions: list[str] | None = None,
+        references: list[str] | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> str:
+        """保存本机加密任务检查点；不会读取客户端私有会话，也不会自动共享到 Gateway。"""
+
+        result = client.checkpoint(
+            {
+                "summary": summary,
+                "workspace_id": _active_workspace_id(workspace_id),
+                "checkpoint_id": checkpoint_id,
+                "session_id": session_id,
+                "status": status,
+                "next_steps": next_steps or [],
+                "blockers": blockers or [],
+                "decisions": decisions or [],
+                "references": references or [],
+                "metadata": metadata or {},
+            }
+        )
+        return json.dumps(result, ensure_ascii=False, indent=2)
+
+    @mcp.tool()
+    def memory_resume(
+        workspace_id: str | None = None,
+        checkpoint_id: str = "",
+        include_details: bool = False,
+    ) -> str:
+        """恢复最近或指定的本机检查点；默认只返回摘要，明确需要时再读取详情。"""
+
+        return json.dumps(
+            client.resume(
+                {
+                    "workspace_id": _active_workspace_id(workspace_id),
+                    "checkpoint_id": checkpoint_id,
+                    "include_details": include_details,
+                }
+            ),
+            ensure_ascii=False,
+            indent=2,
+        )
 
     @mcp.tool()
     def memory_remember(
@@ -328,6 +380,21 @@ def main() -> None:
                     "workspace_id": _active_workspace_id(workspace_id),
                     "idempotency_key": idempotency_key or f"mcp_crystal_{uuid.uuid4().hex}",
                 }
+            ),
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.tool()
+    def memory_list_crystal_candidates(
+        workspace_id: str | None = None,
+        limit: int = 30,
+    ) -> str:
+        """列出后台发现的结晶重建候选；只读且不返回记忆正文。"""
+
+        return json.dumps(
+            client.list_crystal_candidates(
+                {"workspace_id": _active_workspace_id(workspace_id), "limit": limit}
             ),
             ensure_ascii=False,
             indent=2,

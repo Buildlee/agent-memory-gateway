@@ -2,6 +2,7 @@ import base64
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from agent_memory_gateway.crypto import EventCipher
 from agent_memory_gateway.outbox import Outbox
@@ -22,10 +23,47 @@ def client_with_outbox(path: Path) -> SidecarClient:
     client.profile = "lee"
     client.default_workspace = "workspace-a"
     client.token = "test"
+    from agent_memory_gateway.security import SensitiveContentScanner
+    client.security_scanner = SensitiveContentScanner()
     return client
 
 
 class SidecarSyncTests(unittest.TestCase):
+    def test_resume_marks_checkpoint_as_reference_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = client_with_outbox(Path(directory) / "outbox.db")
+            try:
+                client.checkpoint(
+                    {"workspace_id": "workspace-a", "summary": "继续完成全量测试"}
+                )
+                result = client.resume({"workspace_id": "workspace-a"})
+                self.assertEqual(result["content_role"], "reference_data")
+                self.assertIn("当前用户指令优先", result["policy"])
+            finally:
+                client.outbox.close()
+
+    def test_checkpoint_rejects_sensitive_content_before_local_storage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = client_with_outbox(Path(directory) / "outbox.db")
+            try:
+                fake_secret = "api_" + "key = " + "sk-" + ("a" * 32)
+                result = client.checkpoint(
+                    {
+                        "workspace_id": "workspace-a",
+                        "summary": fake_secret,
+                    }
+                )
+                self.assertEqual(result["status"], "rejected")
+                self.assertEqual(result["error"], "SENSITIVE_CONTENT")
+                self.assertEqual(
+                    client.outbox.conn.execute(
+                        "SELECT COUNT(*) FROM local_checkpoints_v1"
+                    ).fetchone()[0],
+                    0,
+                )
+            finally:
+                client.outbox.close()
+
     def test_retryable_push_honors_retry_after_without_dead_letter(self):
         with tempfile.TemporaryDirectory() as directory:
             client = client_with_outbox(Path(directory) / "outbox.db")

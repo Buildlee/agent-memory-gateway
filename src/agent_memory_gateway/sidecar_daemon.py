@@ -102,7 +102,13 @@ class _SidecarRPCHandler(BaseHTTPRequestHandler):
             event_receipts = getattr(self.client, "event_receipts", None)
             if callable(event_receipts):
                 allowed["event_receipts"] = event_receipts
-            for review_method in ("list_reviews", "resolve_review", "revert_review", "rebuild_crystal"):
+            for review_method in (
+                "list_reviews",
+                "resolve_review",
+                "revert_review",
+                "rebuild_crystal",
+                "list_crystal_candidates",
+            ):
                 method_impl = getattr(self.client, review_method, None)
                 if callable(method_impl):
                     allowed[review_method] = method_impl
@@ -127,6 +133,9 @@ class _SidecarRPCHandler(BaseHTTPRequestHandler):
                 "local_preview",
                 "local_share_selected",
                 "local_propose_eligible",
+                "checkpoint",
+                "resume",
+                "local_integrity",
             ):
                 method_impl = getattr(self.client, local_method, None)
                 if callable(method_impl):
@@ -266,6 +275,15 @@ class LocalSidecarProxy:
     def local_propose_eligible(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("local_propose_eligible", payload)
 
+    def checkpoint(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("checkpoint", payload)
+
+    def resume(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("resume", payload)
+
+    def local_integrity(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._call("local_integrity", payload or {})
+
     def forget(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("forget", payload)
 
@@ -283,6 +301,9 @@ class LocalSidecarProxy:
 
     def rebuild_crystal(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("rebuild_crystal", payload)
+
+    def list_crystal_candidates(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._call("list_crystal_candidates", payload)
 
     def admin_overview(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("admin_overview", payload)

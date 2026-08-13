@@ -148,7 +148,7 @@ The system compares scope, semantic key, time boundaries, and source; when a pot
 
 ### Crystalized Memories
 
-A crystallized memory is a reconstructable summary page that compresses multiple stable facts into high-value context. Each page has its own input references and version. When any input changes, it is marked as stale; a new version is generated only through explicit rebuild.
+A crystallized memory is a reconstructable summary page that compresses multiple stable facts into high-value context. Each page has its own input references and version. When any input changes, it is marked as stale and the worker creates a rebuild candidate containing references but no memory content; a new version is generated only through explicit rebuild.
 
 Implementation is in `crystal_service.py`: `rebuild()` collects active facts corresponding to the `scope_binding_hash`, calling `gbrain.rebuild_crystal()` to generate a new summary page.
 
@@ -204,19 +204,15 @@ Every context recall also receives a `recall_id`. The central service stores onl
 
 ### Forgetting and Scoring
 
-Forgetting is not simple deletion by time. The system scores based on the combined signals (`scoring.py:51-67`):
+Production retrieval currently uses lexical features, local hashed vectors, confidence, bounded feedback adjustment, MMR, and token budgets. Time decay does not affect production ranking yet.
+
+`scoring.py` computes an observation-only value for every production result:
 
 ```
-score = relevance × confidence × importance × fresh × reinforcement × scope_match
+shadow_multiplier = exp(-age_days / half_life_days)
 ```
 
-Where `fresh` decays by half-life (`scoring.py:31-37`):
-
-```
-fresh = exp(-age_days / half_life_days)
-```
-
-**Half-life defined by memory type** (`scoring.py:9-16`):
+Half-life is defined by memory type:
 
 | Type        | Half-life (days) |
 |-------------|------------------|
@@ -227,7 +223,17 @@ fresh = exp(-age_days / half_life_days)
 | procedure   | 365              |
 | device_fact | 120              |
 
+The result is classified as `hot`, `warm`, `cold`, or `dead` and explicitly reports `shadow_decay.applied: false`. Pinned memories have a shadow floor of `0.85`. These values are for evaluation only; they do not reorder, archive, or delete production memories.
+
 Deletion or archival produces a tombstone and a sync epoch; offline old devices cannot re-upload forgotten content.
+
+---
+
+### Local Task Checkpoints
+
+Any standard MCP client can use `memory_checkpoint` and `memory_resume` without Agent-specific hooks or access to private session files.
+
+The Sidecar stores checkpoints in its existing AES-GCM local database. The short skeleton and full details are encrypted separately. `memory_resume` decrypts only the summary, next steps, and blockers by default; `include_details=true` additionally returns decisions, references, and metadata. A checkpoint remains device-local unless the caller separately creates a shared long-term memory.
 
 ---
 

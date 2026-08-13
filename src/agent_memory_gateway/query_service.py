@@ -17,6 +17,7 @@ from .hybrid_retrieval import (
     select_hybrid_memories,
 )
 from .metadata_store import MetadataStoreError, PostgresEventLedger
+from .scoring import decay_shadow
 
 
 BACKEND_REF_BATCH_SIZE = 500
@@ -196,7 +197,18 @@ class PostgresQueryService:
                            AND feedback.user_id = event.user_id
                            AND feedback.workspace_id = %s
                            AND feedback.memory_id = event.backend_ref
-                       ), 0) AS feedback_score
+                       ), 0) AS feedback_score,
+                       lifecycle.created_at,
+                       lifecycle.pinned,
+                       (
+                         SELECT MAX(feedback.created_at)
+                         FROM memory_feedback_events AS feedback
+                         WHERE feedback.tenant_id = event.tenant_id
+                           AND feedback.user_id = event.user_id
+                           AND feedback.workspace_id = %s
+                           AND feedback.memory_id = event.backend_ref
+                           AND feedback.action IN ('useful', 'pin')
+                       ) AS last_useful_at
                 FROM gateway_events AS event
                 LEFT JOIN memory_lifecycle AS lifecycle
                   ON lifecycle.backend_ref = event.backend_ref
@@ -217,6 +229,7 @@ class PostgresQueryService:
                 """,
                 (
                     workspace_id,
+                    workspace_id,
                     principal.tenant_id,
                     principal.user_id,
                     workspace_id,
@@ -232,6 +245,9 @@ class PostgresQueryService:
                 "event_id": str(row[1]),
                 "scope": str(row[2]),
                 "feedback_adjustment": max(-0.24, min(0.09, float(row[3] or 0.0))),
+                "created_at": row[4],
+                "pinned": bool(row[5]),
+                "last_useful_at": row[6],
             }
             for row in rows
         ]
@@ -250,4 +266,10 @@ class PostgresQueryService:
             "source_event_id": source["event_id"],
             "status": "confirmed",
             "instruction_like": False,
+            "shadow_decay": decay_shadow(
+                kind=fact.kind,
+                created_at=source.get("created_at"),
+                last_useful_at=source.get("last_useful_at"),
+                pinned=bool(source.get("pinned")),
+            ),
         }

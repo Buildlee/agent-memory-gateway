@@ -119,6 +119,8 @@ After configuration, check these steps in order inside an Agent:
 3. Call `memory_search` or `memory_context` from another authorized Agent to look up that message.
 4. Check the Gateway audit log to confirm the operations belong to the expected workspace.
 
+Then verify local task recovery: call `memory_checkpoint` with a task summary and next steps that contain no credentials, followed by `memory_resume`. Resume returns only the short skeleton by default and includes decisions, references, and metadata only with `include_details=true`. Checkpoints stay in the encrypted local store and are not uploaded or converted into shared long-term memories automatically.
+
 When an MCP call omits `workspace_id`, the system uses `DefaultWorkspace`. If no default is configured, it returns `WORKSPACE_ID_REQUIRED`; if the device or agent does not belong to that workspace, it returns `WORKSPACE_FORBIDDEN`. Both errors mean you need to fill in or verify authorization information — not change the workspace name to placeholder text.
 
 ### Verify the local Sidecar separately
@@ -146,6 +148,8 @@ The built-in file Provider supports Markdown, JSON, and JSONL. Third-party syste
 Call `memory_local_sources`, then `memory_local_preview`. Use `memory_share_selected` for manual selection. `memory_propose_local_candidates` only auto-proposes user preferences, project decisions, stable facts, and long-term conventions. Sensitive, instruction-like, and oversized records are blocked locally, and local paths are never uploaded.
 
 For normal work, call `memory_context` before answering. Pass its `recall_id` to `memory_feedback` with `useful`, `pin`, `outdated`, or `incorrect`. Feedback adjusts future ranking within a fixed bound; it never directly deletes or rewrites a memory.
+
+`memory-device doctor` also asks the running Sidecar to check local SQLite integrity, required tables, and a small ciphertext sample. This check returns no memory content and performs no repair. An Agent with `memory.manage` can call `memory_list_crystal_candidates` to inspect plans created by the worker; rebuilding remains an explicit `memory_rebuild_crystal` action.
 
 ---
 

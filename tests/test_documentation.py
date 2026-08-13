@@ -40,6 +40,8 @@ class DocumentationContractTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn("memory-device install --profile", text)
                 self.assertIn("memory_remember", text)
+                self.assertIn("memory_checkpoint", text)
+                self.assertIn("memory_resume", text)
                 self.assertNotIn("memory_write", text)
                 self.assertNotIn("memory-sidecar-daemon --gateway-url", text)
 

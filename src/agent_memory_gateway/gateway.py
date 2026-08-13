@@ -60,6 +60,7 @@ ROUTE_CAPABILITIES = {
     "/v1/reviews/resolve": "memory.manage",
     "/v1/reviews/revert": "memory.manage",
     "/v1/crystals/rebuild": "memory.manage",
+    "/v1/crystals/candidates": "memory.manage",
     "/v1/admin/overview": "memory.manage",
     "/v1/admin/devices/list": "memory.manage",
     "/v1/admin/bindings/update": "memory.manage",
@@ -293,6 +294,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 if self.crystal_service is None:
                     raise ValueError("NOT_IMPLEMENTED")
                 self._json(self.crystal_service.rebuild(payload, principal))
+            elif path == "/v1/crystals/candidates":
+                if self.crystal_service is None:
+                    raise ValueError("NOT_IMPLEMENTED")
+                self._json(self.crystal_service.list_candidates(payload, principal))
             elif path == "/v1/admin/overview":
                 if self.admin_service is None:
                     raise ValueError("NOT_IMPLEMENTED")

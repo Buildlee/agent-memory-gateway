@@ -12,6 +12,7 @@ REQUIRED_FILES = {
     "agent_memory_gateway/device_lifecycle.py",
     "agent_memory_gateway/_schema/migrations/20260812_1_cross_platform_device_types.sql",
     "agent_memory_gateway/_schema/migrations/20260812_2_openclaw_agent_type.sql",
+    "agent_memory_gateway/_schema/migrations/20260813_1_crystal_candidates.sql",
 }
 FORBIDDEN_NAME = re.compile(
     r"(?:^|/)(?:__pycache__|\.pytest_cache|\.mypy_cache)(?:/|$)|"

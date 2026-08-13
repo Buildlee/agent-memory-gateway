@@ -148,7 +148,7 @@ Sidecar 启动时写明默认工作区。MCP 工具没有 `workspace_id` 时使�
 
 ### 结晶记忆
 
-结晶记忆是一页可重建的摘要，把多条稳定事实压缩为高价值上下文。每页有自己的输入引用和版本。任一输入变更后标记为失效，只有显式重建才生成新版本。
+结晶记忆是一页可重建的摘要，把多条稳定事实压缩为高价值上下文。每页有自己的输入引用和版本。任一输入变更后会标记失效，Worker 同时创建不含正文的重建候选；只有显式调用重建工具才生成新版本。
 
 实现见 `crystal_service.py`：`rebuild()` 收集 `scope_binding_hash` 对应的 active 事实，调用 `gbrain.rebuild_crystal()` 生成新摘要页。
 
@@ -203,19 +203,15 @@ mmr_score = 0.80 * base_score - 0.20 * similarity + group_bonus
 
 ### 遗忘与评分
 
-遗忘不是按时间简单删除。系统综合以下信号评分（`scoring.py:51-67`）：
+正式检索当前使用词法特征、本地哈希向量、置信度、反馈调整、MMR 和 token 预算。时间衰减尚未参与正式排序。
+
+`scoring.py` 会为每条正式召回结果计算一个影子观察值：
 
 ```
-score = relevance × confidence × importance × fresh × reinforcement × scope_match
+shadow_multiplier = exp(-age_days / half_life_days)
 ```
 
-其中 `fresh` 按半衰期衰减（`scoring.py:31-37`）：
-
-```
-fresh = exp(-age_days / half_life_days)
-```
-
-**半衰期按记忆类型定义**（`scoring.py:9-16`）：
+半衰期按记忆类型定义：
 
 | 类型 | 半衰期（天） |
 |------|-------------|
@@ -226,7 +222,17 @@ fresh = exp(-age_days / half_life_days)
 | procedure | 365 |
 | device_fact | 120 |
 
+结果分为 `hot`、`warm`、`cold` 和 `dead`，并明确返回 `shadow_decay.applied: false`。固定记忆的影子倍率不低于 `0.85`。这些值只用于观察和后续评估，不会改变当前结果顺序，也不会自动归档或删除内容。
+
 删除或归档产生墓碑和同步 epoch，离线旧设备不能把已遗忘的内容重新上传。
+
+---
+
+### 本机任务检查点
+
+任何标准 MCP 客户端都可以使用 `memory_checkpoint` 和 `memory_resume`，不需要 Agent 专属 hook，也不读取客户端私有会话文件。
+
+检查点保存在 Sidecar 现有 AES-GCM 本机库中，摘要骨架和完整详情分别加密。`memory_resume` 默认只解密摘要、下一步和阻塞项；明确传入 `include_details=true` 才返回决定、引用和元数据。检查点只服务于当前设备，不会自动进入共享长期记忆。
 
 ---
 

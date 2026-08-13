@@ -14,7 +14,7 @@ from typing import Any, Callable, Sequence
 
 from .auth import Principal
 from .crypto import EncryptedPayload, EncryptionError, EventCipher
-from .crystal_service import mark_crystal_stale, scope_binding_hash
+from .crystal_service import PostgresCrystalCandidatePlanner, mark_crystal_stale, scope_binding_hash
 from .db_pool import PostgresConnectionPool
 from .gbrain_backend import GBrainBackend, GBrainBackendError, GBrainSecurityError
 from .metadata_store import MetadataStoreError
@@ -37,6 +37,30 @@ class ReconcileResult:
         if self.server_revision is not None:
             result["server_revision"] = self.server_revision
         return result
+
+
+@dataclass
+class CrystalPlanSchedule:
+    interval_seconds: float
+    next_at: float = 0.0
+
+    def consume_if_due(self, now: float) -> bool:
+        if now < self.next_at:
+            return False
+        self.next_at = now + self.interval_seconds
+        return True
+
+
+def plan_crystal_candidates(
+    planner: PostgresCrystalCandidatePlanner, *, limit: int
+) -> dict[str, object]:
+    """隔离可选候选规划故障，避免影响既有事件对账。"""
+
+    try:
+        planned = planner.plan(limit=limit)
+    except Exception:
+        return {"status": "crystal_candidate_planning_failed", "error": "PLANNING_FAILED"}
+    return {"status": "crystal_candidates_planned", "count": planned}
 
 
 def reconcile_cycle(worker: "PendingEventWorker", *, once: bool, limit: int) -> list[ReconcileResult]:
@@ -609,6 +633,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         default=5.0,
         help="常驻 worker 两次轮询之间的等待时间，默认 5 秒",
     )
+    parser.add_argument(
+        "--crystal-plan-interval-seconds",
+        type=float,
+        default=300.0,
+        help="常驻 worker 规划结晶候选的间隔，默认 300 秒",
+    )
     args = parser.parse_args(argv)
     if not args.metadata_dsn or not args.gbrain_dsn:
         parser.error("需要元数据库和 GBrain 后端连接串")
@@ -616,6 +646,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error("--once 不能与 --forever 同时使用")
     if not 0.1 <= args.poll_interval_seconds <= 300:
         parser.error("--poll-interval-seconds 必须在 0.1 到 300 之间")
+    if not 30 <= args.crystal_plan_interval_seconds <= 86400:
+        parser.error("--crystal-plan-interval-seconds 必须在 30 到 86400 之间")
     metadata_pool = PostgresConnectionPool.from_environment(
         args.metadata_dsn,
         name="memory-worker-metadata",
@@ -645,17 +677,29 @@ def main(argv: Sequence[str] | None = None) -> None:
             gbrain,
             connection_factory=metadata_pool.connection,
         )
+        planner = PostgresCrystalCandidatePlanner(
+            args.metadata_dsn, connection_factory=metadata_pool.connection
+        )
         if args.forever:
+            crystal_schedule = CrystalPlanSchedule(args.crystal_plan_interval_seconds)
             while True:
                 worker.record_heartbeat()
                 for result in reconcile_cycle(worker, once=False, limit=args.limit):
                     if result.status != "idle":
                         print(result.as_dict(), flush=True)
+                now = time.monotonic()
+                if crystal_schedule.consume_if_due(now):
+                    plan_result = plan_crystal_candidates(planner, limit=args.limit)
+                    if plan_result.get("count") or plan_result.get("error"):
+                        print(plan_result, flush=True)
                 worker.record_heartbeat()
                 time.sleep(args.poll_interval_seconds)
         else:
             for result in reconcile_cycle(worker, once=args.once, limit=args.limit):
                 print(result.as_dict())
+            plan_result = plan_crystal_candidates(planner, limit=args.limit)
+            if plan_result.get("count") or plan_result.get("error"):
+                print(plan_result)
     except KeyboardInterrupt:
         pass
     finally:

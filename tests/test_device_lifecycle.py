@@ -117,11 +117,17 @@ class DeviceLifecycleTests(unittest.TestCase):
             ), mock.patch(
                 "agent_memory_gateway.device_lifecycle.read_file_credential",
                 return_value=("test-user", "test-refresh-value"),
+            ), mock.patch(
+                "agent_memory_gateway.device_lifecycle.LocalSidecarProxy.local_integrity",
+                return_value={"status": "ok", "quick_check": "ok"},
             ):
                 result = diagnose_device("linux", paths)
 
             self.assertEqual(result["status"], "ok")
             self.assertTrue(all(item["status"] == "ok" for item in result["checks"]))
+            self.assertIn(
+                "local_memory_integrity", {item["name"] for item in result["checks"]}
+            )
 
     def test_repair_previews_then_recreates_only_the_missing_mcp_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

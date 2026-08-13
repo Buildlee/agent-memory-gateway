@@ -4,9 +4,15 @@ import unittest
 from unittest import mock
 
 from agent_memory_gateway.sidecar_mcp import _forget_payload
+from agent_memory_gateway.sidecar_mcp import _active_workspace_id
 
 
 class SidecarMcpContractTests(unittest.TestCase):
+    def test_checkpoint_and_resume_require_an_explicit_or_configured_workspace(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "WORKSPACE_ID_REQUIRED"):
+                _active_workspace_id(None)
+
     def test_forget_uses_the_explicit_workspace(self) -> None:
         self.assertEqual(
             _forget_payload("memory-1", False, "workspace-a"),

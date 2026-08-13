@@ -30,6 +30,7 @@ REQUIRED_METADATA_TABLES = frozenset(
         "memory_feedback_events",
         "memory_recall_events",
         "memory_crystals",
+        "crystal_rebuild_candidates",
         "review_operations",
         "review_candidates",
         "schema_migrations",
@@ -63,6 +64,7 @@ REQUIRED_METADATA_COLUMNS = frozenset(
         ("external_memory_bindings", "source_revision"),
         ("pairing_codes", "workspace_id"),
         ("pairing_codes", "workspace_capabilities"),
+        ("crystal_rebuild_candidates", "source_revision"),
     }
 )
 
@@ -165,6 +167,12 @@ def migration_specs(schema_path: str | Path | None = None) -> tuple[MigrationSpe
             MigrationSpec(
                 "2026-08-12.2",
                 schema_directory() / "migrations" / "20260812_2_openclaw_agent_type.sql",
+            )
+        )
+        specs.append(
+            MigrationSpec(
+                "2026-08-13.1",
+                schema_directory() / "migrations" / "20260813_1_crystal_candidates.sql",
             )
         )
     return tuple(specs)
