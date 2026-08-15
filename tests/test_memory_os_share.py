@@ -35,15 +35,23 @@ CREATE TABLE memories (
 
 
 class FakeSidecar:
-    """最小 RPC 代理桩：记录 remember 调用并返回可配置状态。"""
+    """最小 RPC 代理桩：记录 remember 调用，sync 返回可配置回执。"""
 
     def __init__(self, status: str = "applied"):
         self.remembered: list[dict] = []
         self.status = status
+        self.receipts: dict[str, str] = {}
 
     def remember(self, payload):
         self.remembered.append(payload)
         return {"status": self.status, "event_id": payload["event_id"]}
+
+    def sync(self, workspace_id):
+        items = [
+            {"event_id": event_id, "status": status}
+            for event_id, status in self.receipts.items()
+        ]
+        return {"receipts": items, "workspaces": [workspace_id]}
 
 
 def _make_db(path: Path) -> None:
@@ -189,6 +197,45 @@ class ShareSyncFlowTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertFalse(result["shared_available"])
         self.assertEqual(result["skipped"], 2)
+
+    def test_reconcile_writes_back_final_receipts(self):
+        proxy = FakeSidecar(status="pending")
+        first = share_sync(self.db_path, proxy=proxy, limit=20)
+        self.assertEqual(first["pushed"], 2)
+        self.assertEqual(first["reconciled"]["confirmed"], 0)
+
+        # 中枢处理完成后，下一轮对账应把 pending 回写为 applied
+        proxy.receipts = {"mos_1": "applied", "mos_2": "duplicate"}
+        second = share_sync(self.db_path, proxy=proxy, limit=20)
+        self.assertEqual(second["pushed"], 0)
+        self.assertEqual(second["reconciled"]["confirmed"], 2)
+        self.assertEqual(second["reconciled"]["pending_in_flight"], 0)
+
+        connection = sqlite3.connect(self.db_path)
+        statuses = dict(
+            connection.execute("SELECT memory_id, status FROM share_log ORDER BY memory_id")
+        )
+        connection.close()
+        self.assertEqual(statuses[1], "applied")
+        self.assertEqual(statuses[2], "duplicate")
+
+    def test_reconcile_keeps_pending_without_receipt(self):
+        proxy = FakeSidecar(status="pending")
+        first = share_sync(self.db_path, proxy=proxy, limit=20)
+        self.assertEqual(first["pushed"], 2)
+
+        # 无回执时保持 pending，等下一轮
+        second = share_sync(self.db_path, proxy=proxy, limit=20)
+        self.assertEqual(second["reconciled"]["confirmed"], 0)
+        self.assertEqual(second["reconciled"]["pending_in_flight"], 2)
+
+        connection = sqlite3.connect(self.db_path)
+        statuses = dict(
+            connection.execute("SELECT memory_id, status FROM share_log ORDER BY memory_id")
+        )
+        connection.close()
+        self.assertEqual(statuses[1], "pending")
+        self.assertEqual(statuses[2], "pending")
 
 
 if __name__ == "__main__":

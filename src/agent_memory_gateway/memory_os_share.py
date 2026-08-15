@@ -14,6 +14,9 @@ automatic_whitelist）的官方客户端实现。
 - 幂等：event_id = mos_{memory_id} 确定性生成；本机 share_log 表 +
   Gateway external_memory_bindings + gateway_events ON CONFLICT 三重去重，
   重复调用不会产生重复条目。内容变更会自动生成新 source_revision 重新绑定。
+- 回执：推送入队与中枢确认分开记录。入队时 share_log 记 queued/pending，
+  下一轮 share_sync 先对账（sync 回执中 applied/duplicate 回写为终态），
+  不以 pending 数量代替"中枢已接收"。
 - 直通：evidence=user_explicit 走 Gateway 确认写入通道，不堆积审核队列。
   依据：这些记忆已经过本机蒸馏、复习与治理三层门控。
 - 降级：共享 Sidecar 不可用时返回 skipped，不中断调用方。
@@ -178,6 +181,59 @@ def _sidecar_proxy(
     return proxy if proxy.health() else None
 
 
+_CONFIRMED_STATUSES = frozenset({"applied", "duplicate", "source_duplicate"})
+
+
+def reconcile_receipts(
+    connection: sqlite3.Connection,
+    proxy: Any,
+    workspace_id: str,
+) -> dict[str, Any]:
+    """把在途推送的最终回执回写 share_log，返回对账统计。
+
+    只处理非终态记录（pending/queued）：调用 sync 拿回执，
+    applied/duplicate 视为中枢已确认；仍无回执的保持原状等下一轮。
+    """
+
+    in_flight = connection.execute(
+        """
+        SELECT memory_id, event_id FROM share_log
+        WHERE status IN ('pending', 'queued')
+        ORDER BY memory_id
+        """
+    ).fetchall()
+    if not in_flight:
+        return {"confirmed": 0, "pending_in_flight": 0, "receipts_available": True}
+
+    receipts_available = False
+    receipts: dict[str, str] = {}
+    try:
+        sync_result = proxy.sync(workspace_id) or {}
+        for item in sync_result.get("receipts", []) or []:
+            if isinstance(item, dict) and item.get("event_id"):
+                receipts[str(item["event_id"])] = str(item.get("status") or "pending")
+                receipts_available = True
+    except Exception:
+        pass
+
+    confirmed = 0
+    still_pending = 0
+    for row in in_flight:
+        event_id = str(row["event_id"])
+        final_status = receipts.get(event_id)
+        if final_status in _CONFIRMED_STATUSES:
+            _mark(connection, int(row["memory_id"]), event_id, final_status, "")
+            confirmed += 1
+        else:
+            still_pending += 1
+    connection.commit()
+    return {
+        "confirmed": confirmed,
+        "pending_in_flight": still_pending,
+        "receipts_available": receipts_available,
+    }
+
+
 def share_sync(
     db_path: str | Path,
     *,
@@ -192,6 +248,8 @@ def share_sync(
 ) -> dict[str, Any]:
     """把 Memory OS 高置信记忆推送到共享 Gateway；返回统计结果。
 
+    流程分两阶段：先对账上一轮在途推送的最终回执（reconciled），
+    再推送新的候选（pushed 表示入队成功，最终确认见 reconciled）。
     proxy 参数用于测试注入；为 None 时按 sidecar_env_path 派生真实代理。
     """
 
@@ -250,6 +308,7 @@ def share_sync(
         }
 
     scanner = SensitiveContentScanner()
+    reconcile = reconcile_receipts(connection, proxy, workspace_id)
     pushed, skipped, failed = 0, 0, 0
     details: list[dict[str, Any]] = []
     for row in candidates:
@@ -276,7 +335,7 @@ def share_sync(
         status = str(result.get("status") or "unknown")
         error = str(result.get("error") or "")
         if status in {"applied", "duplicate", "source_duplicate", "queued", "pending"}:
-            pushed += 1
+            pushed += 1  # 入队成功；最终确认由下一轮 reconcile 回写
         else:
             failed += 1
         _mark(connection, memory_id, payload["event_id"], status, error)
@@ -291,5 +350,6 @@ def share_sync(
         "pushed": pushed,
         "skipped": skipped,
         "failed": failed,
+        "reconciled": reconcile,
         "details": details,
     }
