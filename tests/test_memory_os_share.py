@@ -29,7 +29,8 @@ CREATE TABLE memories (
   memory_type TEXT NOT NULL,
   content TEXT NOT NULL,
   confidence REAL NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active'
+  status TEXT NOT NULL DEFAULT 'active',
+  share_policy TEXT NOT NULL DEFAULT 'private'
 )
 """
 
@@ -75,6 +76,29 @@ def _seed(
     connection.close()
 
 
+def _seed_full(
+    path: Path,
+    memories: list[tuple[str, str, float, str, str]],
+) -> None:
+    connection = sqlite3.connect(path)
+    connection.executemany(
+        "INSERT INTO memories (memory_type, content, confidence, status, share_policy) VALUES (?, ?, ?, ?, ?)",
+        memories,
+    )
+    connection.commit()
+    connection.close()
+
+
+def _mark_shared(path: Path, memory_ids: list[int]) -> None:
+    connection = sqlite3.connect(path)
+    connection.executemany(
+        "UPDATE memories SET share_policy = 'shared' WHERE id = ?",
+        [(mid,) for mid in memory_ids],
+    )
+    connection.commit()
+    connection.close()
+
+
 class CandidateSelectionTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -95,15 +119,27 @@ class CandidateSelectionTests(unittest.TestCase):
         _cleanup_tmp(self.tmp)
 
     def test_candidates_respect_gates(self):
+        _mark_shared(self.db_path, [1, 2])
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         rows = _candidates(connection, 20)
         connection.close()
         ids = [int(row["id"]) for row in rows]
-        # 只留下 conf>=0.8 + 白名单类型 + active 的两条
+        # 只留下 shared + conf>=0.8 + 白名单类型 + active 的两条
         self.assertEqual(sorted(ids), [1, 2])
 
+    def test_private_memories_are_excluded(self):
+        _mark_shared(self.db_path, [1])
+        connection = sqlite3.connect(self.db_path)
+        connection.row_factory = sqlite3.Row
+        rows = _candidates(connection, 20)
+        connection.close()
+        ids = [int(row["id"]) for row in rows]
+        # 仅显式 shared 的 #1 进候选，private 的 #2 被排除
+        self.assertEqual(ids, [1])
+
     def test_pushed_memories_are_excluded(self):
+        _mark_shared(self.db_path, [1, 2])
         share_sync(
             self.db_path,
             proxy=FakeSidecar(),
@@ -162,6 +198,7 @@ class ShareSyncFlowTests(unittest.TestCase):
                 ("decision", "共享 Gateway 冻结扩展", 0.88, "active"),
             ],
         )
+        _mark_shared(self.db_path, [1, 2])
 
     def tearDown(self):
         _cleanup_tmp(self.tmp)
@@ -186,11 +223,27 @@ class ShareSyncFlowTests(unittest.TestCase):
         self.assertEqual(len(proxy.remembered), 2)
 
     def test_sensitive_candidate_is_skipped(self):
-        _seed(self.db_path, [("fact", "password=not-for-memory", 0.9, "active")])
+        _seed_full(self.db_path, [("fact", "password=not-for-memory", 0.9, "active", "shared")])
         proxy = FakeSidecar()
         result = share_sync(self.db_path, proxy=proxy, limit=20)
         self.assertEqual(result["skipped"], 1)
         self.assertFalse(any("password" in str(p["content"]) for p in proxy.remembered))
+
+    def test_private_and_sensitive_never_leave(self):
+        # private 与 sensitive 记忆即使高置信也不进候选，更不会被推送
+        _seed_full(
+            self.db_path,
+            [
+                ("fact", "私密内容不应共享", 0.95, "active", "private"),
+                ("fact", "sensitive 内容也不推", 0.95, "active", "sensitive"),
+            ],
+        )
+        proxy = FakeSidecar()
+        result = share_sync(self.db_path, proxy=proxy, limit=20)
+        # 只有 setUp 里显式 shared 的 2 条被推，private/sensitive 不出现
+        self.assertEqual(result["candidate_count"], 2)
+        pushed_contents = [str(p["content"]) for p in proxy.remembered]
+        self.assertFalse(any("私密" in c or "sensitive" in c for c in pushed_contents))
 
     def test_unavailable_sidecar_degrades(self):
         result = share_sync(self.db_path, sidecar_env_path=None, limit=20)

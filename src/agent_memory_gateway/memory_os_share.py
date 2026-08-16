@@ -84,7 +84,11 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 
 
 def _candidates(connection: sqlite3.Connection, limit: int) -> list[sqlite3.Row]:
-    """返回满足门控且未推送过的候选记忆。"""
+    """返回满足门控且未推送过的候选记忆。
+
+    共享策略门控：只推送显式声明 share_policy='shared' 的记忆；
+    private（默认）与 sensitive 永不出本机。
+    """
     placeholders = ",".join("?" for _ in SHARE_TYPES)
     return connection.execute(
         f"""
@@ -94,6 +98,7 @@ def _candidates(connection: sqlite3.Connection, limit: int) -> list[sqlite3.Row]
         WHERE m.status = 'active'
           AND m.confidence >= 0.8
           AND m.memory_type IN ({placeholders})
+          AND COALESCE(m.share_policy, 'private') = 'shared'
           AND s.memory_id IS NULL
         ORDER BY m.id DESC
         LIMIT ?
