@@ -358,3 +358,71 @@ def share_sync(
         "reconciled": reconcile,
         "details": details,
     }
+
+
+def forget_shared(
+    db_path: str | Path,
+    memory_id: int,
+    content: str,
+    *,
+    sidecar_url: str = DEFAULT_SIDECAR_URL,
+    sidecar_env_path: str | Path | None = None,
+    agent_installation_id: str = "",
+    workspace_id: str = DEFAULT_WORKSPACE,
+    proxy: Any | None = None,
+) -> dict[str, Any]:
+    """本机遗忘后尽力撤销远端副本；失败不影响本机遗忘（返回 remote 状态）。
+
+    定位远端条目的方式：按推送原文在 Gateway 检索结果中精确匹配
+    content，命中即拿到 backend_ref（Gateway 侧 memory_id），再调
+    forget 归档。查不到时返回 not_located，调用方可提示人工撤销。
+    """
+
+    db = Path(db_path)
+    connection = _connect(db)
+    row = connection.execute(
+        "SELECT event_id, status FROM share_log WHERE memory_id = ?",
+        (int(memory_id),),
+    ).fetchone()
+    if row is None:
+        connection.close()
+        return {"remote": "not_shared", "memory_id": int(memory_id)}
+    event_id = str(row["event_id"])
+    if str(row["status"]) == "forgotten":
+        connection.close()
+        return {"remote": "already_forgotten", "memory_id": int(memory_id)}
+
+    if proxy is None:
+        env_path = Path(sidecar_env_path) if sidecar_env_path else None
+        if env_path is None:
+            connection.close()
+            return {"remote": "unavailable", "hint": "未提供 Sidecar 环境文件"}
+        proxy = _sidecar_proxy(sidecar_url, env_path, agent_installation_id)
+    if proxy is None:
+        connection.close()
+        return {"remote": "unavailable", "hint": "共享 Sidecar 不可用"}
+
+    target: str | None = None
+    try:
+        result = proxy.search(
+            {"query": str(content)[:120], "limit": 20, "workspace_id": workspace_id}
+        )
+        for item in result.get("memories", []) or []:
+            if str(item.get("content") or "").strip() == str(content).strip():
+                target = str(item.get("memory_id") or "")
+                break
+    except Exception:
+        target = None
+    if not target:
+        connection.close()
+        return {"remote": "not_located", "hint": "远端未定位到原文，可手动用 memory_forget 撤销"}
+
+    try:
+        gateway = proxy.forget({"workspace_id": workspace_id, "memory_id": target})
+    except Exception as exc:
+        connection.close()
+        return {"remote": "forget_failed", "error": type(exc).__name__}
+    _mark(connection, int(memory_id), event_id, "forgotten", str(target))
+    connection.commit()
+    connection.close()
+    return {"remote": "archived", "backend_ref": target, "gateway": gateway}

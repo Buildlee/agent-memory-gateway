@@ -9,6 +9,7 @@ from agent_memory_gateway.memory_os_share import (
     _candidates,
     _payload,
     _sensitive_skip,
+    forget_shared,
     share_sync,
 )
 from agent_memory_gateway.security import SensitiveContentScanner
@@ -36,12 +37,14 @@ CREATE TABLE memories (
 
 
 class FakeSidecar:
-    """最小 RPC 代理桩：记录 remember 调用，sync 返回可配置回执。"""
+    """最小 RPC 代理桩：记录 remember/forget 调用，sync 返回可配置回执。"""
 
     def __init__(self, status: str = "applied"):
         self.remembered: list[dict] = []
         self.status = status
         self.receipts: dict[str, str] = {}
+        self.forgotten: list[dict] = []
+        self.search_results: list[dict] = []
 
     def remember(self, payload):
         self.remembered.append(payload)
@@ -53,6 +56,13 @@ class FakeSidecar:
             for event_id, status in self.receipts.items()
         ]
         return {"receipts": items, "workspaces": [workspace_id]}
+
+    def search(self, payload):
+        return {"memories": list(self.search_results)}
+
+    def forget(self, payload):
+        self.forgotten.append(payload)
+        return {"memory_id": payload["memory_id"], "status": "archived"}
 
 
 def _make_db(path: Path) -> None:
@@ -289,6 +299,55 @@ class ShareSyncFlowTests(unittest.TestCase):
         connection.close()
         self.assertEqual(statuses[1], "pending")
         self.assertEqual(statuses[2], "pending")
+
+
+class ForgetSharedTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "memory.db"
+        _make_db(self.db_path)
+        _seed_full(
+            self.db_path,
+            [("preference", "要撤销的远端内容", 0.9, "active", "shared")],
+        )
+        self.proxy = FakeSidecar()
+        share_sync(self.db_path, proxy=self.proxy, limit=20)
+
+    def tearDown(self):
+        _cleanup_tmp(self.tmp)
+
+    def test_forget_archives_remote_when_located(self):
+        self.proxy.search_results = [
+            {"memory_id": "gbrain:fact:777", "content": "要撤销的远端内容", "status": "confirmed"}
+        ]
+        result = forget_shared(self.db_path, 1, "要撤销的远端内容", proxy=self.proxy)
+        self.assertEqual(result["remote"], "archived")
+        self.assertEqual(result["backend_ref"], "gbrain:fact:777")
+        self.assertEqual(len(self.proxy.forgotten), 1)
+
+        connection = sqlite3.connect(self.db_path)
+        status = connection.execute("SELECT status FROM share_log WHERE memory_id = 1").fetchone()[0]
+        connection.close()
+        self.assertEqual(status, "forgotten")
+
+    def test_forget_reports_not_located_when_content_missing(self):
+        result = forget_shared(self.db_path, 1, "要撤销的远端内容", proxy=self.proxy)
+        self.assertEqual(result["remote"], "not_located")
+        self.assertEqual(self.proxy.forgotten, [])
+
+    def test_forget_reports_not_shared_when_never_pushed(self):
+        result = forget_shared(self.db_path, 999, "从未推送", proxy=self.proxy)
+        self.assertEqual(result["remote"], "not_shared")
+
+    def test_forget_is_idempotent(self):
+        self.proxy.search_results = [
+            {"memory_id": "gbrain:fact:777", "content": "要撤销的远端内容", "status": "confirmed"}
+        ]
+        first = forget_shared(self.db_path, 1, "要撤销的远端内容", proxy=self.proxy)
+        self.assertEqual(first["remote"], "archived")
+        second = forget_shared(self.db_path, 1, "要撤销的远端内容", proxy=self.proxy)
+        self.assertEqual(second["remote"], "already_forgotten")
+        self.assertEqual(len(self.proxy.forgotten), 1)
 
 
 if __name__ == "__main__":
