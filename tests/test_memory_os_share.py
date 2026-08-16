@@ -9,6 +9,7 @@ from agent_memory_gateway.memory_os_share import (
     _candidates,
     _payload,
     _sensitive_skip,
+    forget_shared,
     share_sync,
 )
 from agent_memory_gateway.security import SensitiveContentScanner
@@ -29,18 +30,21 @@ CREATE TABLE memories (
   memory_type TEXT NOT NULL,
   content TEXT NOT NULL,
   confidence REAL NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active'
+  status TEXT NOT NULL DEFAULT 'active',
+  share_policy TEXT NOT NULL DEFAULT 'private'
 )
 """
 
 
 class FakeSidecar:
-    """最小 RPC 代理桩：记录 remember 调用，sync 返回可配置回执。"""
+    """最小 RPC 代理桩：记录 remember/forget 调用，sync 返回可配置回执。"""
 
     def __init__(self, status: str = "applied"):
         self.remembered: list[dict] = []
         self.status = status
         self.receipts: dict[str, str] = {}
+        self.forgotten: list[dict] = []
+        self.search_results: list[dict] = []
 
     def remember(self, payload):
         self.remembered.append(payload)
@@ -52,6 +56,13 @@ class FakeSidecar:
             for event_id, status in self.receipts.items()
         ]
         return {"receipts": items, "workspaces": [workspace_id]}
+
+    def search(self, payload):
+        return {"memories": list(self.search_results)}
+
+    def forget(self, payload):
+        self.forgotten.append(payload)
+        return {"memory_id": payload["memory_id"], "status": "archived"}
 
 
 def _make_db(path: Path) -> None:
@@ -70,6 +81,29 @@ def _seed(
     connection.executemany(
         "INSERT INTO memories (memory_type, content, confidence, status) VALUES (?, ?, ?, ?)",
         memories,
+    )
+    connection.commit()
+    connection.close()
+
+
+def _seed_full(
+    path: Path,
+    memories: list[tuple[str, str, float, str, str]],
+) -> None:
+    connection = sqlite3.connect(path)
+    connection.executemany(
+        "INSERT INTO memories (memory_type, content, confidence, status, share_policy) VALUES (?, ?, ?, ?, ?)",
+        memories,
+    )
+    connection.commit()
+    connection.close()
+
+
+def _mark_shared(path: Path, memory_ids: list[int]) -> None:
+    connection = sqlite3.connect(path)
+    connection.executemany(
+        "UPDATE memories SET share_policy = 'shared' WHERE id = ?",
+        [(mid,) for mid in memory_ids],
     )
     connection.commit()
     connection.close()
@@ -95,15 +129,27 @@ class CandidateSelectionTests(unittest.TestCase):
         _cleanup_tmp(self.tmp)
 
     def test_candidates_respect_gates(self):
+        _mark_shared(self.db_path, [1, 2])
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         rows = _candidates(connection, 20)
         connection.close()
         ids = [int(row["id"]) for row in rows]
-        # 只留下 conf>=0.8 + 白名单类型 + active 的两条
+        # 只留下 shared + conf>=0.8 + 白名单类型 + active 的两条
         self.assertEqual(sorted(ids), [1, 2])
 
+    def test_private_memories_are_excluded(self):
+        _mark_shared(self.db_path, [1])
+        connection = sqlite3.connect(self.db_path)
+        connection.row_factory = sqlite3.Row
+        rows = _candidates(connection, 20)
+        connection.close()
+        ids = [int(row["id"]) for row in rows]
+        # 仅显式 shared 的 #1 进候选，private 的 #2 被排除
+        self.assertEqual(ids, [1])
+
     def test_pushed_memories_are_excluded(self):
+        _mark_shared(self.db_path, [1, 2])
         share_sync(
             self.db_path,
             proxy=FakeSidecar(),
@@ -162,6 +208,7 @@ class ShareSyncFlowTests(unittest.TestCase):
                 ("decision", "共享 Gateway 冻结扩展", 0.88, "active"),
             ],
         )
+        _mark_shared(self.db_path, [1, 2])
 
     def tearDown(self):
         _cleanup_tmp(self.tmp)
@@ -186,11 +233,27 @@ class ShareSyncFlowTests(unittest.TestCase):
         self.assertEqual(len(proxy.remembered), 2)
 
     def test_sensitive_candidate_is_skipped(self):
-        _seed(self.db_path, [("fact", "password=not-for-memory", 0.9, "active")])
+        _seed_full(self.db_path, [("fact", "password=not-for-memory", 0.9, "active", "shared")])
         proxy = FakeSidecar()
         result = share_sync(self.db_path, proxy=proxy, limit=20)
         self.assertEqual(result["skipped"], 1)
         self.assertFalse(any("password" in str(p["content"]) for p in proxy.remembered))
+
+    def test_private_and_sensitive_never_leave(self):
+        # private 与 sensitive 记忆即使高置信也不进候选，更不会被推送
+        _seed_full(
+            self.db_path,
+            [
+                ("fact", "私密内容不应共享", 0.95, "active", "private"),
+                ("fact", "sensitive 内容也不推", 0.95, "active", "sensitive"),
+            ],
+        )
+        proxy = FakeSidecar()
+        result = share_sync(self.db_path, proxy=proxy, limit=20)
+        # 只有 setUp 里显式 shared 的 2 条被推，private/sensitive 不出现
+        self.assertEqual(result["candidate_count"], 2)
+        pushed_contents = [str(p["content"]) for p in proxy.remembered]
+        self.assertFalse(any("私密" in c or "sensitive" in c for c in pushed_contents))
 
     def test_unavailable_sidecar_degrades(self):
         result = share_sync(self.db_path, sidecar_env_path=None, limit=20)
@@ -236,6 +299,55 @@ class ShareSyncFlowTests(unittest.TestCase):
         connection.close()
         self.assertEqual(statuses[1], "pending")
         self.assertEqual(statuses[2], "pending")
+
+
+class ForgetSharedTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "memory.db"
+        _make_db(self.db_path)
+        _seed_full(
+            self.db_path,
+            [("preference", "要撤销的远端内容", 0.9, "active", "shared")],
+        )
+        self.proxy = FakeSidecar()
+        share_sync(self.db_path, proxy=self.proxy, limit=20)
+
+    def tearDown(self):
+        _cleanup_tmp(self.tmp)
+
+    def test_forget_archives_remote_when_located(self):
+        self.proxy.search_results = [
+            {"memory_id": "gbrain:fact:777", "content": "要撤销的远端内容", "status": "confirmed"}
+        ]
+        result = forget_shared(self.db_path, 1, "要撤销的远端内容", proxy=self.proxy)
+        self.assertEqual(result["remote"], "archived")
+        self.assertEqual(result["backend_ref"], "gbrain:fact:777")
+        self.assertEqual(len(self.proxy.forgotten), 1)
+
+        connection = sqlite3.connect(self.db_path)
+        status = connection.execute("SELECT status FROM share_log WHERE memory_id = 1").fetchone()[0]
+        connection.close()
+        self.assertEqual(status, "forgotten")
+
+    def test_forget_reports_not_located_when_content_missing(self):
+        result = forget_shared(self.db_path, 1, "要撤销的远端内容", proxy=self.proxy)
+        self.assertEqual(result["remote"], "not_located")
+        self.assertEqual(self.proxy.forgotten, [])
+
+    def test_forget_reports_not_shared_when_never_pushed(self):
+        result = forget_shared(self.db_path, 999, "从未推送", proxy=self.proxy)
+        self.assertEqual(result["remote"], "not_shared")
+
+    def test_forget_is_idempotent(self):
+        self.proxy.search_results = [
+            {"memory_id": "gbrain:fact:777", "content": "要撤销的远端内容", "status": "confirmed"}
+        ]
+        first = forget_shared(self.db_path, 1, "要撤销的远端内容", proxy=self.proxy)
+        self.assertEqual(first["remote"], "archived")
+        second = forget_shared(self.db_path, 1, "要撤销的远端内容", proxy=self.proxy)
+        self.assertEqual(second["remote"], "already_forgotten")
+        self.assertEqual(len(self.proxy.forgotten), 1)
 
 
 if __name__ == "__main__":
