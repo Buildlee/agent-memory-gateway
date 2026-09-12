@@ -132,6 +132,9 @@ function Quote-TaskArgument([string]$Value) {
 $arguments = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
+    # 隐藏宿主窗口：计划任务每 5 分钟恢复触发会反复拉起 pwsh，
+    # 不隐藏时桌面会出现持续可见的 Sidecar 控制台窗口。
+    "-WindowStyle", "Hidden",
     "-File", (Quote-TaskArgument $startScript),
     "-GatewayUrl", (Quote-TaskArgument $GatewayUrl),
     "-AllowedAgents", (Quote-TaskArgument $AllowedAgents),
