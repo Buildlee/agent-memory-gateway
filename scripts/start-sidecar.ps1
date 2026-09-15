@@ -94,6 +94,14 @@ $env:MEMORY_OUTBOX_KEY_VERSION = $keyValues["MEMORY_OUTBOX_KEY_VERSION"]
 $env:MEMORY_HOME = $MemoryHome
 $env:MEMORY_SIDECAR_PORT = [string]$Port
 
+# Sidecar 只与本机可达的内网 Gateway 通信，必须清掉外部代理变量：
+# 环境里的 HTTP_PROXY/ALL_PROXY 会让 Python 请求绕到代理（代理未运行时报
+# GATEWAY_UNAVAILABLE），而 NO_PROXY 常见的 "192.168.*" 通配写法 Python
+# 并不识别（只匹配精确主机名或 .域名后缀）。只影响本脚本启动的进程。
+foreach ($proxyName in @("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")) {
+    Remove-Item -LiteralPath "Env:$proxyName" -ErrorAction SilentlyContinue
+}
+
 $pythonCommand = Get-Command -Name $PythonExecutable -ErrorAction SilentlyContinue
 if (-not $pythonCommand) {
     throw "找不到 Python 解释器：$PythonExecutable"
