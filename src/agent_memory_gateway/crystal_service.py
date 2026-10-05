@@ -54,7 +54,7 @@ class PostgresCrystalCandidatePlanner:
                       AND lifecycle.scope_binding_hash IS NOT NULL
                     GROUP BY lifecycle.scope_binding_hash, lifecycle.tenant_id, lifecycle.user_id,
                              lifecycle.workspace_id, lifecycle.scope, lifecycle.namespace_key,
-                             crystal.status, crystal.generated_server_revision
+                             crystal.scope_binding_hash, crystal.status, crystal.generated_server_revision
                     HAVING COUNT(*) >= 2
                        AND (
                          crystal.scope_binding_hash IS NULL
