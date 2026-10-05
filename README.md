@@ -257,6 +257,8 @@ python -m compileall -q src tests
 git diff --check
 ```
 
+结晶候选的 PostgreSQL 回归需设置 `MEMORY_TEST_POSTGRES_DSN`，指向已完成元数据库迁移且允许创建临时表的验证账号，再运行 `python -m pytest tests/test_crystal_service.py -v`。测试只写连接内的临时表，关闭连接后自动清理；未设置连接时，这四项明确跳过，不计作数据库验证通过。不要为运行测试扩大生产账号权限。
+
 ## 🤝 参与贡献
 
 欢迎提交可复现的问题和脱敏后的改进建议。涉及协议、权限、迁移或安全边界的改动请同步更新测试和文档。不要在 issue、提交信息、示例或日志中粘贴真实凭据。
