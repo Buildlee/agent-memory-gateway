@@ -302,3 +302,31 @@ class CrystalPlannerPostgresTests(unittest.TestCase):
         self.add_sources("older", revision=10)
         self.assertEqual(self.planner.plan(limit=1), 1)
         self.assertEqual(self.candidates()[0][0], "older")
+
+    def test_archiving_older_source_refreshes_refs_without_changing_max_revision(self):
+        self.add_sources("missing", count=3, revision=10)
+        self.assertEqual(self.planner.plan(), 1)
+        self.connection.execute(
+            "UPDATE memory_lifecycle SET status = 'archived', updated_server_revision = 11 "
+            "WHERE backend_ref = 'gbrain:fact:missing-0'"
+        )
+        self.assertEqual(self.planner.plan(), 1)
+        self.assertEqual(self.candidates(), [
+            ("missing", "missing", ["gbrain:fact:missing-1", "gbrain:fact:missing-2"],
+             2, 10, "pending"),
+        ])
+        self.assertEqual(self.planner.plan(), 0)
+
+    def test_source_removal_reopens_dismissed_candidate_without_revision_increase(self):
+        self.add_sources("missing", count=3, revision=10)
+        self.assertEqual(self.planner.plan(), 1)
+        self.connection.execute("UPDATE crystal_rebuild_candidates SET status = 'dismissed'")
+        self.assertEqual(self.planner.plan(), 0)
+        self.connection.execute(
+            "UPDATE memory_lifecycle SET status = 'superseded', updated_server_revision = 11 "
+            "WHERE backend_ref = 'gbrain:fact:missing-0'"
+        )
+        self.assertEqual(self.planner.plan(), 1)
+        self.assertEqual(self.candidates()[0][2:],
+                         (["gbrain:fact:missing-1", "gbrain:fact:missing-2"], 2, 10, "pending"))
+        self.assertEqual(self.planner.plan(), 0)
