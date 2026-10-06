@@ -98,9 +98,12 @@ class PostgresCrystalCandidatePlanner:
                           status = CASE
                             WHEN crystal_rebuild_candidates.status = 'dismissed'
                               AND crystal_rebuild_candidates.source_revision >= EXCLUDED.source_revision
+                              AND crystal_rebuild_candidates.source_refs
+                                  IS NOT DISTINCT FROM EXCLUDED.source_refs
                             THEN 'dismissed' ELSE 'pending' END,
                           updated_at = now()
                         WHERE crystal_rebuild_candidates.source_revision <> EXCLUDED.source_revision
+                           OR crystal_rebuild_candidates.source_refs IS DISTINCT FROM EXCLUDED.source_refs
                            OR crystal_rebuild_candidates.reason <> EXCLUDED.reason
                            OR crystal_rebuild_candidates.status = 'rebuilt'
                         """,
