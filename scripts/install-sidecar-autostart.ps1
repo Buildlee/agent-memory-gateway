@@ -75,7 +75,15 @@ function Test-ManagedSidecarTask($Task) {
     if ($actions.Count -ne 1) {
         return $false
     }
-    return $actions[0].Arguments -match '(?i)(?:^|\s)-File\s+"?[^"]*\\scripts\\start-sidecar(?:-host)?\.ps1"?'
+    # 旧形态：任务直接跑 pwsh -File start-sidecar.ps1
+    if ($actions[0].Arguments -match '(?i)(?:^|\s)-File\s+"?[^"]*\\scripts\\(?:start-sidecar(?:-host)?|ensure-sidecar)\.ps1"?') {
+        return $true
+    }
+    # 现行形态：wscript 隐藏拉起 local\launchers\sidecar-hidden.vbs
+    if ($actions[0].Execute -match '(?i)(?:^|\\)wscript\.exe$' -and $actions[0].Arguments -match '(?i)sidecar-hidden[^"]*\.vbs') {
+        return $true
+    }
+    return $false
 }
 
 $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -104,9 +112,9 @@ if ($existingTask) {
 }
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$startScript = Join-Path $PSScriptRoot "start-sidecar.ps1"
+$startScript = Join-Path $PSScriptRoot "ensure-sidecar.ps1"
 if (-not (Test-Path -LiteralPath $startScript -PathType Leaf)) {
-    throw "找不到 Sidecar 启动脚本：$startScript"
+    throw "找不到 Sidecar 幂等启动脚本：$startScript"
 }
 if (-not (Test-Path -LiteralPath $SidecarKeyFile -PathType Leaf)) {
     throw "找不到本机 Sidecar key 文件：$SidecarKeyFile"
@@ -132,7 +140,7 @@ function Quote-TaskArgument([string]$Value) {
 $arguments = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
-    # 隐藏宿主窗口：计划任务每 5 分钟恢复触发会反复拉起 pwsh，
+    # 隐藏宿主窗口：计划任务每 5 分钟触发会反复拉起 pwsh，
     # 不隐藏时桌面会出现持续可见的 Sidecar 控制台窗口。
     "-WindowStyle", "Hidden",
     "-File", (Quote-TaskArgument $startScript),
@@ -149,7 +157,28 @@ $arguments = @(
     "-PythonExecutable", (Quote-TaskArgument $PythonExecutable)
 ) -join " "
 
-$action = New-ScheduledTaskAction -Execute $taskHost -Argument $arguments -WorkingDirectory $projectRoot
+# 计划任务动作指向 .cmd/.ps1 时，系统都会给动作进程分配控制台（桌面闪黑框），
+# 只有 wscript 能以"窗口样式 0"真正隐藏。VBS 由本安装器生成，内容不含任何非 ASCII
+# 字面量（路径经参数传入并转义），避免 wscript 按 ANSI 解析脚本时的编码问题。
+$launcherDir = Join-Path $env:LOCALAPPDATA "memory-gateway\launchers"
+if (-not (Test-Path -LiteralPath $launcherDir)) {
+    New-Item -ItemType Directory -Path $launcherDir -Force | Out-Null
+}
+$launcherPath = Join-Path $launcherDir "sidecar-hidden.vbs"
+$vbsCommand = (Quote-TaskArgument $taskHost) + " " + $arguments
+$vbsBody = @"
+Option Explicit
+Dim shell, result
+Set shell = CreateObject("WScript.Shell")
+shell.CurrentDirectory = "$projectRoot"
+' NOTE: parentheses are REQUIRED when you take Run's return value in an assignment.
+' Without them VBScript fails to compile and wscript exits 1 without writing any log.
+result = shell.Run("$($vbsCommand.Replace('"', '""'))", 0, True)
+WScript.Quit result
+"@
+[System.IO.File]::WriteAllText($launcherPath, $vbsBody, (New-Object System.Text.UnicodeEncoding($false, $true)))
+
+$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ("//B //NoLogo " + (Quote-TaskArgument $launcherPath)) -WorkingDirectory $projectRoot
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $taskUser
 $recoveryTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 365)
 $principal = New-ScheduledTaskPrincipal -UserId $taskUser -LogonType Interactive -RunLevel Limited
@@ -169,6 +198,8 @@ Register-ScheduledTask @registration -Force | Out-Null
     user = $taskUser
     trigger = "AtLogOn"
     recovery_check = "every 5 minutes"
+    launcher = $launcherPath
+    launch_mode = "wscript 隐藏窗口 + 幂等检查（健康则直接退出）"
     gateway_url = $GatewayUrl
     default_workspace = $DefaultWorkspace
     gateway_ca_certificate = $GatewayCaCertificate

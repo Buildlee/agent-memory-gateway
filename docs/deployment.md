@@ -194,6 +194,18 @@ Windows 计划任务从发布副本启动 Sidecar 时，优先使用该副本的
 
 一台设备接入多个 Agent 时，计划任务还需要一个明确的心跳身份。安装向导会默认使用第一条 `-Agent`；手动调用 `start-sidecar.ps1` 或 `install-sidecar-autostart.ps1` 时，必须传入属于 `AllowedAgents` 的 `-HeartbeatAgent`，避免回退到历史默认身份。
 
+### Windows 计划任务是幂等检查，不是常驻进程
+
+`install-sidecar-autostart.ps1` 注册的任务每 5 分钟触发一次，动作是 `wscript.exe //B //NoLogo %LOCALAPPDATA%\memory-gateway\launchers\sidecar-hidden.vbs`，由该启动器调用 `scripts/ensure-sidecar.ps1`。每次运行只做三件事：
+
+1. **已健康就直接退出**（`/health` 应答即视为存活，返回 0）；
+2. 端口空闲则用 `start-sidecar.ps1` **脱离任务进程树**拉起守护进程（`Start-Process` 不等待，子进程输出写入 `%LOCALAPPDATA%\memory-gateway\logs\sidecar-start.*.log`）；
+3. 端口在听但不应答时，只认命令行含 `agent_memory_gateway.sidecar_daemon` 的进程；连续 10 分钟都不健康（`-TakeoverAfterMin`）才结束并重启，避免误杀繁忙进程或占用同端口的其它程序。
+
+任务实例因此每次都在数秒内正常结束（`LastTaskResult=0`）。不要让任务动作直接常驻运行 `start-sidecar.ps1`：那样实例永远处于 Running，后续每次触发都被 `MultipleInstances=IgnoreNew` 拒绝，调度器记成 `0x800710E0`（请求被拒绝），而且守护进程假死时没有任何自愈机会。
+
+启动器用 VBS 而不是把 `.cmd`/`.ps1` 直接交给任务，是为了避免每次触发都弹出控制台窗口；生成 VBS 时**必须**用 `result = shell.Run(...)` 的带括号写法，省略括号会让 VBScript 编译失败、wscript 直接以退出码 1 结束且不写任何日志。`ensure-sidecar.ps1` 的日志在 `%LOCALAPPDATA%\memory-gateway\logs\sidecar-ensure.log`。
+
 ### deploy-fn-release.ps1 说明
 
 `scripts/deploy-fn-release.ps1` 默认使用 `slim` 布局，并要求 `-AdminEnvironmentFile` 指向远端受保护的管理环境文件。传入 `-DeploymentProfile split` 可使用高隔离布局。脚本默认使用 SSH 22 端口；服务器改用其他端口时，显式传入 `-SshPort <端口>`（范围 1–65535）。
